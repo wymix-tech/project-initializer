@@ -12,7 +12,9 @@ main:
         - name: unit-test-and-coverage
           script: mvn -B verify
         - name: pit-mutation-test
-          script: mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
+          script: |-
+            mvn -B -DskipTests install -pl initializer-api,initializer-core,initializer-app
+            mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
   pull_request:
     - name: pr-quality-gate
       docker:
@@ -21,7 +23,9 @@ main:
         - name: unit-test-and-coverage
           script: mvn -B verify
         - name: pit-mutation-test
-          script: mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
+          script: |-
+            mvn -B -DskipTests install -pl initializer-api,initializer-core,initializer-app
+            mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
 
 "feat/*":
   push:
@@ -34,4 +38,6 @@ main:
         - name: unit-test-and-coverage
           script: mvn -B verify
         - name: pit-mutation-test
-          script: mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
+          script: |-
+            mvn -B -DskipTests install -pl initializer-api,initializer-core,initializer-app
+            mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
