@@ -10,7 +10,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *
  * <p>线程安全性：Spring 环境管理，无需关注。
  */
-@SpringBootApplication
+@SpringBootApplication(exclude = org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration.class)
 public class InitializerApplication {
 
     /**

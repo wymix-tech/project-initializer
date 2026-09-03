@@ -30,6 +30,8 @@
         <pitest.version>1.16.1</pitest.version>
         <pitest-junit5.version>1.2.1</pitest-junit5.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <freemarker.version>2.3.32</freemarker.version>
+        <commons-compress.version>1.26.2</commons-compress.version>
     </properties>
 
     <dependencyManagement>
@@ -45,6 +47,16 @@
                 <groupId>com.baomidou</groupId>
                 <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
                 <version>${mybatis-plus.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.freemarker</groupId>
+                <artifactId>freemarker</artifactId>
+                <version>${freemarker.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-compress</artifactId>
+                <version>${commons-compress.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.junit</groupId>
