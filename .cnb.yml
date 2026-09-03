@@ -18,6 +18,8 @@ main:
       docker:
         image: maven:3.9-eclipse-temurin-17
       stages:
+        - name: build
+          script: mvn -B -DskipTests install
         - name: unit-test-and-coverage
           script: mvn -B verify
         - name: pit-mutation-test
