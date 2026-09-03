@@ -1,0 +1,18 @@
+# 校验规则配置：Group / Artifact / Package 命名规范
+# 修改本文件即可调整校验规则，无需改动代码
+rules:
+  group:
+    # Maven groupId 规范：小写字母开头，段间以 . 分隔，段内允许字母数字与下划线
+    pattern: "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    tooShortMessage: "groupId 至少需要两段，如 com.example"
+    defaultMessage: "groupId 不符合 Maven 规范：小写字母开头，点分段，段内仅小写字母/数字/下划线"
+  artifact:
+    # Maven artifactId 规范：小写字母开头，仅小写字母数字与中划线
+    pattern: "^[a-z][a-z0-9]*(-[a-z][a-z0-9]*)*$"
+    tooShortMessage: "artifactId 不能为空"
+    defaultMessage: "artifactId 不符合 Maven 规范：小写字母开头，仅小写字母/数字/中划线"
+  package:
+    # Java 包名规范：小写字母开头，点分段，段内仅小写字母数字与下划线
+    pattern: "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    tooShortMessage: "package 至少需要两段，如 com.example.demo"
+    defaultMessage: "package 不符合 Java 规范：小写字母开头，点分段，段内仅小写字母/数字/下划线"
