@@ -1,0 +1,31 @@
+# 元数据配置：Java 版本、Boot 官方版本、兼容矩阵（ID 引用成有向图）
+# 修改本文件即可调整版本联动规则，无需改动代码
+javaVersions:
+  - id: "8"
+    label: "Java 8"
+    deprecated: false
+    recommendedBootVersion: "2.7.18"
+  - id: "11"
+    label: "Java 11"
+    deprecated: false
+    recommendedBootVersion: "2.7.18"
+  - id: "17"
+    label: "Java 17"
+    deprecated: false
+    recommendedBootVersion: "3.2.5"
+  - id: "21"
+    label: "Java 21"
+    deprecated: false
+    recommendedBootVersion: "3.2.5"
+
+bootVersions:
+  - id: "2.7.18"
+    label: "Spring Boot 2.7.18"
+    official: true
+    supportedJavaVersions: ["8", "11"]
+    starters: ["web", "data-jpa", "data-redis", "actuator"]
+  - id: "3.2.5"
+    label: "Spring Boot 3.2.5"
+    official: true
+    supportedJavaVersions: ["17", "21"]
+    starters: ["web", "data-jpa", "data-redis", "actuator"]
