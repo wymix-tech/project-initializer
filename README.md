@@ -25,3 +25,13 @@ mvn org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-ap
 ```
 
 Ref: #4（里程碑 M1）、#3（技术方案）
+
+## CI 门禁详情（.cnb.yml）
+
+| 门禁 | 工具 | 卡点 |
+|---|---|---|
+| 门禁1：单元测试 | JUnit5 + JaCoCo | 成功率 100%，行/分支覆盖 ≥ 80% |
+| 门禁2：突变测试 | PIT (pitest-maven) | 杀死率 ≥ 70% |
+| 门禁3：注释一致性 | PR 评审项 | 公共 API 强制 Javadoc，语义偏离一票否决 |
+
+门禁事件覆盖：`main` push、`main` pull_request、`feat/*` push。
