@@ -13,7 +13,7 @@ main:
           script: mvn -B verify
         - name: pit-mutation-test
           script: |-
-            mvn -B -DskipTests install -pl initializer-api,initializer-core,initializer-app
+            mvn -B -DskipTests install
             mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
   pull_request:
     - name: pr-quality-gate
@@ -24,7 +24,7 @@ main:
           script: mvn -B verify
         - name: pit-mutation-test
           script: |-
-            mvn -B -DskipTests install -pl initializer-api,initializer-core,initializer-app
+            mvn -B -DskipTests install
             mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
 
 "feat/*":
@@ -39,5 +39,5 @@ main:
           script: mvn -B verify
         - name: pit-mutation-test
           script: |-
-            mvn -B -DskipTests install -pl initializer-api,initializer-core,initializer-app
+            mvn -B -DskipTests install
             mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
