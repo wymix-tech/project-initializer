@@ -1,0 +1,37 @@
+# project-initializer CI 流水线
+# 门禁：UT 成功率 100% + 行/分支覆盖 ≥ 80%（JaCoCo）；PIT 突变杀死率 ≥ 70%（pitest）
+# 注释一致性门禁：PR 评审项，公共 API 必须有 Javadoc 且与实现语义一致（一票否决）
+main:
+  push:
+    - name: build-and-quality-gate
+      docker:
+        image: maven:3.9-eclipse-temurin-17
+      stages:
+        - name: build
+          script: mvn -B -DskipTests install
+        - name: unit-test-and-coverage
+          script: mvn -B verify
+        - name: pit-mutation-test
+          script: mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
+  pull_request:
+    - name: pr-quality-gate
+      docker:
+        image: maven:3.9-eclipse-temurin-17
+      stages:
+        - name: unit-test-and-coverage
+          script: mvn -B verify
+        - name: pit-mutation-test
+          script: mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
+
+"feat/*":
+  push:
+    - name: build-and-quality-gate
+      docker:
+        image: maven:3.9-eclipse-temurin-17
+      stages:
+        - name: build
+          script: mvn -B -DskipTests install
+        - name: unit-test-and-coverage
+          script: mvn -B verify
+        - name: pit-mutation-test
+          script: mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
