@@ -3,6 +3,7 @@ package com.wymix.initializer.app.generator;
 import com.wymix.initializer.core.generator.ProjectGenerator;
 import com.wymix.initializer.core.generator.TemplateRenderer;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
+import com.wymix.initializer.core.starter.StarterCatalog;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -23,12 +24,14 @@ public class GeneratorConfig {
     }
 
     /**
-     * @param catalog  元数据目录（复用 {@code MetadataCatalogConfig} 装配的 Bean）
-     * @param renderer 模板渲染器
+     * @param catalog        元数据目录（复用 {@code MetadataCatalogConfig} 装配的 Bean）
+     * @param renderer       模板渲染器
+     * @param starterCatalog starter 清单（复用 {@code StarterCatalogConfig} 装配的 Bean，M2.3 联动规则来源）
      * @return 生成引擎单例
      */
     @Bean
-    public ProjectGenerator projectGenerator(MetadataCatalog catalog, TemplateRenderer renderer) {
-        return new ProjectGenerator(catalog, renderer);
+    public ProjectGenerator projectGenerator(MetadataCatalog catalog, TemplateRenderer renderer,
+                                             StarterCatalog starterCatalog) {
+        return new ProjectGenerator(catalog, renderer, starterCatalog);
     }
 }

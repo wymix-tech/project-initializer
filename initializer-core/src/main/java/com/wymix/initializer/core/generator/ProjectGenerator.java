@@ -5,6 +5,10 @@ import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.core.metadata.BootVersion;
 import com.wymix.initializer.core.metadata.MavenDependency;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
+import com.wymix.initializer.core.starter.DependencyCoord;
+import com.wymix.initializer.core.starter.LinkageRenderer;
+import com.wymix.initializer.core.starter.StarterCatalog;
+import com.wymix.initializer.core.starter.YmlFragmentMerger;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
 
@@ -27,23 +31,37 @@ import java.util.Set;
  *   <li>commons-compress zip 流式输出，文件名 {@code {artifact}.zip}</li>
  * </ol>
  *
- * <p>产物清单：pom.xml、启动类、application.yml、README.md，包结构与元信息一致。
+ * <p>产物清单：pom.xml、启动类、application.yml、README.md，包结构与元信息一致；
+ * M2.3 起接入联动渲染管线（{@link LinkageRenderer}）：starter yml 声明的模板联动、
+ * application.yml 片段合并、抽象类引用随选中 starter 自动生成。
  *
  * <p>线程安全性：无状态单例（Renderer 与 Catalog 均不可变），线程安全。
  */
 public class ProjectGenerator {
 
-    /** 生成上下文：产物路径 → 渲染后的文件内容。 */
     private final MetadataCatalog catalog;
     private final TemplateRenderer renderer;
+    private final LinkageRenderer linkageRenderer;
 
     /**
      * @param catalog  元数据目录（版本合法性校验）
      * @param renderer 模板渲染器
+     * @param starterCatalog starter 清单（联动规则来源；M2.3 新增，禁 null）
      */
+    public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, StarterCatalog starterCatalog) {
+        this(catalog, renderer, new LinkageRenderer(starterCatalog, renderer));
+    }
+
+    /** @deprecated M2.3 前旧签名，仅保留给无联动场景的旧调用方过渡；新代码应传 starterCatalog。 */
+    @Deprecated(since = "0.1.0", forRemoval = true)
     public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer) {
+        this(catalog, renderer, new LinkageRenderer(StarterCatalog.of(List.of()), renderer));
+    }
+
+    private ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, LinkageRenderer linkageRenderer) {
         this.catalog = catalog;
         this.renderer = renderer;
+        this.linkageRenderer = linkageRenderer;
     }
 
     /**
@@ -101,15 +119,42 @@ public class ProjectGenerator {
         }
     }
 
+    /**
+     * starter → Maven 依赖坐标解析（M2.3 起配置驱动：优先 starter 清单 yml 的 dependencies 节，
+     * 未登记的回退 metadata.yml starters 节坐标映射）。
+     *
+     * @param starterIds starter ID 清单
+     * @return 依赖坐标模型清单（保持请求顺序，去重）
+     */
+    private List<Map<String, String>> resolveStarterDependencies(List<String> starterIds) {
+        List<Map<String, String>> deps = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (DependencyCoord dep : linkageRenderer.resolveDependencies(starterIds)) {
+            if (seen.add(dep.groupId() + ":" + dep.artifactId())) {
+                deps.add(Map.of("groupId", dep.groupId(), "artifactId", dep.artifactId()));
+            }
+        }
+        for (String id : starterIds) {
+            if (!starterRegistered(id)) {
+                MavenDependency dep = catalog.starterDefinition(id).dependency();
+                if (seen.add(dep.groupId() + ":" + dep.artifactId())) {
+                    deps.add(Map.of("groupId", dep.groupId(), "artifactId", dep.artifactId()));
+                }
+            }
+        }
+        return deps;
+    }
+
+    private boolean starterRegistered(String starterId) {
+        return linkageRenderer.registered(starterId);
+    }
+
     private Map<String, byte[]> renderAll(GenerateRequest request) {
         Map<String, Object> model = buildModel(request);
         String packagePath = (String) model.get(TemplateRenderer.K_PACKAGE_PATH);
-        String basePackage = (String) model.get(TemplateRenderer.K_BASE_PACKAGE);
 
         Map<String, RenderTask> tasks = new LinkedHashMap<>();
         tasks.put("pom.xml", new RenderTask("pom.xml.ftl", request.artifact() + "/pom.xml"));
-        tasks.put("application.yml", new RenderTask("application.yml.ftl",
-                request.artifact() + "/src/main/resources/application.yml"));
         tasks.put("README.md", new RenderTask("README.md.ftl", request.artifact() + "/README.md"));
         tasks.put("Application.java", new RenderTask("Application.java.ftl",
                 request.artifact() + "/src/main/java/" + packagePath + "/"
@@ -125,6 +170,30 @@ public class ProjectGenerator {
                         "模板产物路径冲突: " + entry.getValue().target());
             }
         }
+
+        // 联动渲染管线（M2.3）：starter 模板联动 + application.yml 片段合并 + 抽象类引用
+        LinkageRenderer.LinkageResult linkage = linkageRenderer.render(request.starters(), model);
+        for (Map.Entry<String, byte[]> entry : linkage.templateFiles().entrySet()) {
+            byte[] prev = files.put(request.artifact() + "/" + entry.getKey(), entry.getValue());
+            if (prev != null) {
+                throw new BusinessException(ErrorCode.TEMPLATE_TARGET_CONFLICT,
+                        "模板产物路径冲突: " + entry.getKey());
+            }
+        }
+        // application.yml：基础模板渲染后叠加合并 yml 片段；无片段时保持基础模板产物
+        ByteArrayOutputStream baseYml = new ByteArrayOutputStream();
+        renderer.render("application.yml.ftl", model, baseYml);
+        String applicationYml = new String(baseYml.toByteArray(), StandardCharsets.UTF_8);
+        Map<String, Object> mergedTree = linkage.mergedYml();
+        if (mergedTree != null) {
+            Map<String, Object> baseTree = YamlFacade.parse(applicationYml);
+            applicationYml = YmlFragmentMerger.toYaml(YmlFragmentMerger.merge(baseTree,
+                    List.of(new YmlFragmentMerger.Fragment(mergedTree,
+                            com.wymix.initializer.core.starter.YmlFragmentLinkage.MergeStrategy.APPEND,
+                            "linkage-merged"))));
+        }
+        files.put(request.artifact() + "/src/main/resources/application.yml",
+                applicationYml.getBytes(StandardCharsets.UTF_8));
         return files;
     }
 
@@ -139,21 +208,6 @@ public class ProjectGenerator {
         model.put(TemplateRenderer.K_STARTERS, new ArrayList<>(request.starters()));
         model.put(TemplateRenderer.K_STARTER_DEPENDENCIES, resolveStarterDependencies(request.starters()));
         return model;
-    }
-
-    /**
-     * starter → Maven 依赖坐标解析（配置驱动，来自 metadata.yml starters 节），供 pom.xml 模板渲染。
-     *
-     * @param starterIds starter ID 清单
-     * @return 依赖坐标模型清单（保持请求顺序）
-     */
-    private List<Map<String, String>> resolveStarterDependencies(List<String> starterIds) {
-        List<Map<String, String>> deps = new ArrayList<>();
-        for (String id : starterIds) {
-            MavenDependency dep = catalog.starterDefinition(id).dependency();
-            deps.add(Map.of("groupId", dep.groupId(), "artifactId", dep.artifactId()));
-        }
-        return deps;
     }
 
     /**

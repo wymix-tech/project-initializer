@@ -1,0 +1,19 @@
+id: xxx-redis-spring-boot-starter
+category: middleware
+maintainer: internal
+description: 内部 Redis 封装 starter（联动渲染测试用）
+dependencies:
+  - groupId: com.company
+    artifactId: xxx-redis-spring-boot-starter
+    version: "1.2.0"
+linkages:
+  config-package: "{basePackage}.config"
+  templates:
+    - source: "starters/xxx-redis/RedisConfig.java.ftl"
+      target: "src/main/java/{packagePath}/config/RedisConfig.java"
+  application-yml-fragments:
+    - source: "starters/xxx-redis/application-redis.yml"
+      merge-strategy: append
+  abstract-classes:
+    - fqcn: "com.company.redis.RedisSupport"
+      alias: redisSupport
