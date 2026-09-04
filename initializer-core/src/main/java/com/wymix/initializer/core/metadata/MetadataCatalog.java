@@ -154,4 +154,19 @@ public class MetadataCatalog {
         }
         return sd;
     }
+
+    /**
+     * 按 ID 查询 starter 元信息（宽松版，M3.1 新增）。
+     *
+     * @param starterId starter ID
+     * @return starter 定义；未登记返回 {@code null}
+     */
+    public StarterDefinition starterDefinitionOrNull(String starterId) {
+        return starterDefinitions.get(starterId);
+    }
+
+    /** @return 全部已登记 starter ID 集合（M3.1 交叉校验用，不可变） */
+    public java.util.Set<String> startersDefinitionIds() {
+        return java.util.Collections.unmodifiableSet(starterDefinitions.keySet());
+    }
 }

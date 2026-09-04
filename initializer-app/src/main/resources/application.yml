@@ -4,3 +4,23 @@ server:
 spring:
   application:
     name: project-initializer
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+      data-locations: classpath:db/data.sql
+  datasource:
+    # M3.1 持久化接线：管理端配置存储（文件 H2，可替换为任意 JDBC 数据源）
+    url: jdbc:h2:file:./data/initializer;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+initializer:
+  admin:
+    # 管理端内置管理员 token（M3.1 轻量鉴权；生产环境通过环境变量覆盖）
+    token: ${INITIALIZER_ADMIN_TOKEN:admin-dev-token}

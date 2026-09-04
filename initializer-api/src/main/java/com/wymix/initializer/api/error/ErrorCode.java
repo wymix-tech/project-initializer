@@ -9,6 +9,7 @@ package com.wymix.initializer.api.error;
  *   <li>10xx —— 参数校验类</li>
  *   <li>20xx —— 元数据/兼容性类</li>
  *   <li>30xx —— 生成引擎类</li>
+ *   <li>40xx —— 管理配置类（M3.1）</li>
  *   <li>90xx —— 系统内部错误</li>
  * </ul>
  *
@@ -45,6 +46,21 @@ public enum ErrorCode {
 
     /** starter 清单配置非法（加载/校验失败，启动即失败） */
     STARTER_CATALOG_INVALID(9002, "starter 清单配置非法"),
+
+    /** 管理端草稿不存在（kind 非法或未初始化） */
+    CONFIG_DRAFT_NOT_FOUND(4001, "配置草稿不存在"),
+
+    /** 发布前校验失败（明细随异常文案输出，草稿保留可继续编辑） */
+    CONFIG_VALIDATION_FAILED(4002, "配置发布校验失败"),
+
+    /** 草稿乐观锁冲突：草稿已被他人修改，需刷新后重试 */
+    CONFIG_CONCURRENT_MODIFY(4003, "配置草稿已被他人修改，请刷新后重试"),
+
+    /** 未授权访问管理接口（404/4004 语义） */
+    FORBIDDEN(4004, "未授权访问"),
+
+    /** 配置热刷新失败（保留旧快照，明细随异常文案输出） */
+    CONFIG_REFRESH_FAILED(4006, "配置热刷新失败"),
 
     /** 系统内部未知错误 */
     INTERNAL_ERROR(9001, "系统内部错误");

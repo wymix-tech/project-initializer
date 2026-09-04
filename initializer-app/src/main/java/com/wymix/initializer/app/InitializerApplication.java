@@ -1,5 +1,6 @@
 package com.wymix.initializer.app;
 
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
@@ -7,11 +8,13 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * 平台服务启动入口。
  *
  * <p>仅做装配与 HTTP 层，核心逻辑位于 initializer-core。
+ * M3.1 起接入持久化（MyBatis-Plus，管理端配置存储），移除 M1 的
+ * {@code DataSourceAutoConfiguration} 排除项并扫描 Mapper。
  *
  * <p>线程安全性：Spring 环境管理，无需关注。
  */
-// M1 无持久化场景，MyBatis-Plus 在 classpath 但无 DataSource，排除 JDBC 自动配置避免启动失败；M2 接入持久化时移除该排除
-@SpringBootApplication(exclude = org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration.class)
+@SpringBootApplication
+@MapperScan("com.wymix.initializer.app.admin.mapper")
 public class InitializerApplication {
 
     /**
