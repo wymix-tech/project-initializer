@@ -17,6 +17,7 @@ import java.util.Map;
  *   <li>{@link #javaVersions()} —— 全量 Java 版本清单</li>
  *   <li>{@link #compatibleBootVersions(String)} —— 按 Java 版本过滤 Boot 版本</li>
  *   <li>{@link #starters(String)} —— 按 Boot 版本列出可用 starter</li>
+ *   <li>{@link #starterDefinition(String)} —— starter 完整元信息（展示名 + Maven 依赖坐标）</li>
  * </ul>
  *
  * <p>线程安全性：不可变对象，线程安全。
@@ -25,6 +26,7 @@ public class MetadataCatalog {
 
     private final Map<String, JavaVersion> javaVersions = new LinkedHashMap<>();
     private final Map<String, BootVersion> bootVersions = new LinkedHashMap<>();
+    private final Map<String, StarterDefinition> starterDefinitions = new LinkedHashMap<>();
 
     /**
      * 从 YAML 输入流装载元数据目录。
@@ -35,10 +37,10 @@ public class MetadataCatalog {
      */
     public static MetadataCatalog load(InputStream yaml) {
         YamlMetadataParser.ParsedMetadata parsed = YamlMetadataParser.parse(yaml);
-        return new MetadataCatalog(parsed.javaVersions(), parsed.bootVersions());
+        return new MetadataCatalog(parsed.javaVersions(), parsed.bootVersions(), parsed.starters());
     }
 
-    private MetadataCatalog(List<JavaVersion> javaList, List<BootVersion> bootList) {
+    private MetadataCatalog(List<JavaVersion> javaList, List<BootVersion> bootList, List<StarterDefinition> starterList) {
         for (JavaVersion jv : javaList) {
             if (javaVersions.putIfAbsent(jv.id(), jv) != null) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Java 版本 ID 重复: " + jv.id());
@@ -52,6 +54,19 @@ public class MetadataCatalog {
                 if (!javaVersions.containsKey(javaId)) {
                     throw new BusinessException(ErrorCode.INTERNAL_ERROR,
                             "Boot 版本 " + bv.id() + " 引用了未定义的 Java 版本: " + javaId);
+                }
+            }
+        }
+        // YAML 映射键天然唯一（重复键由解析层覆盖），此处无需重复 ID 校验
+        for (StarterDefinition sd : starterList) {
+            starterDefinitions.put(sd.id(), sd);
+        }
+        // 悬空引用校验：bootVersions.starters 引用的 starter 必须在 starters 节登记
+        for (BootVersion bv : bootList) {
+            for (String starterId : bv.starters()) {
+                if (!starterDefinitions.containsKey(starterId)) {
+                    throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                            "Boot 版本 " + bv.id() + " 引用了未定义的 starter: " + starterId);
                 }
             }
         }
@@ -123,5 +138,20 @@ public class MetadataCatalog {
      */
     public List<String> starters(String bootVersionId) {
         return Collections.unmodifiableList(bootVersion(bootVersionId).starters());
+    }
+
+    /**
+     * 按 ID 查询 starter 完整元信息（展示名 + Maven 依赖坐标）。
+     *
+     * @param starterId starter ID，如 {@code web}
+     * @return starter 定义
+     * @throws BusinessException 未登记（错误码 {@link ErrorCode#METADATA_NOT_FOUND}）
+     */
+    public StarterDefinition starterDefinition(String starterId) {
+        StarterDefinition sd = starterDefinitions.get(starterId);
+        if (sd == null) {
+            throw new BusinessException(ErrorCode.METADATA_NOT_FOUND, "未知 starter: " + starterId);
+        }
+        return sd;
     }
 }

@@ -119,6 +119,25 @@ class GenerateControllerTest {
         assertThat(resp.getBody()).contains("1001");
     }
 
+    @Test
+    void invalidVersionShouldReturn422BeforeStreaming() {
+        // 流式接口：校验失败发生在写流之前，响应仍是完整 JSON 错误体而非半截 zip
+        String body = """
+                {
+                  "group": "com.example",
+                  "artifact": "demo-app",
+                  "packageName": "com.example.demo",
+                  "javaVersion": "8",
+                  "bootVersion": "3.2.5",
+                  "starters": ["web"]
+                }
+                """;
+        ResponseEntity<String> resp = rest.postForEntity("/api/generate", jsonEntity(body), String.class);
+        assertThat(resp.getStatusCode().value()).isEqualTo(422);
+        assertThat(resp.getBody()).contains("2001");
+        assertThat(resp.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+    }
+
     private HttpEntity<String> jsonEntity(String body) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);

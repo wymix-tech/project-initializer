@@ -20,30 +20,13 @@
     </properties>
 
     <dependencies>
-        <#if starters?seq_contains("web")>
+        <#-- starter 依赖由 metadata.yml starters 节的坐标映射驱动，新增 starter 无需改模板 -->
+        <#list starterDependencies as dep>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <groupId>${dep.groupId}</groupId>
+            <artifactId>${dep.artifactId}</artifactId>
         </dependency>
-        </#if>
-        <#if starters?seq_contains("data-jpa")>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-        </#if>
-        <#if starters?seq_contains("data-redis")>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-redis</artifactId>
-        </dependency>
-        </#if>
-        <#if starters?seq_contains("actuator")>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-        </#if>
+        </#list>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

@@ -25,6 +25,7 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+        <!-- M1 预置未实际使用：引入是为锁定 classpath 一致性，JDBC 自动配置已在 InitializerApplication 排除；M2 接入持久化时启用 -->
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>

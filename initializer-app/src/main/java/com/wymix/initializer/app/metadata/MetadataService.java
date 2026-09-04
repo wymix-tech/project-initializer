@@ -5,6 +5,7 @@ import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.core.metadata.BootVersion;
 import com.wymix.initializer.core.metadata.JavaVersion;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
+import com.wymix.initializer.core.metadata.StarterDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -64,24 +65,11 @@ public class MetadataService {
      */
     public List<StarterDto> listStarters(String bootVersionId) {
         return catalog.starters(bootVersionId).stream()
-                .map(id -> new StarterDto(id, starterLabel(id)))
+                .map(id -> {
+                    StarterDefinition sd = catalog.starterDefinition(id);
+                    return new StarterDto(sd.id(), sd.label());
+                })
                 .toList();
-    }
-
-    /**
-     * starter 展示名映射：当前配置仅含 starter ID，展示名按约定规则推导，后续可配置化。
-     *
-     * @param id starter ID，如 {@code web}
-     * @return 展示名，如 {@code Spring Web}
-     */
-    private static String starterLabel(String id) {
-        return switch (id) {
-            case "web" -> "Spring Web";
-            case "data-jpa" -> "Spring Data JPA";
-            case "data-redis" -> "Spring Data Redis";
-            case "actuator" -> "Spring Boot Actuator";
-            default -> id;
-        };
     }
 
     /** Java 版本 DTO。 */

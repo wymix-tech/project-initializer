@@ -33,6 +33,19 @@ class TemplateRendererTest {
     }
 
     @Test
+    void pomShouldRenderStarterDependenciesFromModel() {
+        // starter 依赖坐标由模型驱动（K_STARTER_DEPENDENCIES），不再依赖模板内硬编码分支
+        Map<String, Object> m = model();
+        m.put(TemplateRenderer.K_STARTER_DEPENDENCIES, List.of(
+                Map.of("groupId", "org.springframework.boot", "artifactId", "spring-boot-starter-web")));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        renderer.render("pom.xml.ftl", m, out);
+        assertThat(out.toString(StandardCharsets.UTF_8))
+                .contains("<groupId>org.springframework.boot</groupId>")
+                .contains("<artifactId>spring-boot-starter-web</artifactId>");
+    }
+
+    @Test
     void shouldRenderTemplate() {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         renderer.render("application.yml.ftl", model(), out);

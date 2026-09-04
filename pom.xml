@@ -29,6 +29,7 @@
         <jacoco.version>0.8.12</jacoco.version>
         <pitest.version>1.16.1</pitest.version>
         <pitest-junit5.version>1.2.1</pitest-junit5.version>
+        <!-- MyBatis-Plus 预置版本收口：M1 无持久化场景仅做依赖管理，M2 接入持久化时启用，勿误删 -->
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <freemarker.version>2.3.32</freemarker.version>
         <commons-compress.version>1.26.2</commons-compress.version>
@@ -43,6 +44,8 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+            <!-- 按里程碑要求预置的 ORM 依赖管理：M1 未实际使用（无持久化需求），
+                 由 InitializerApplication 排除 DataSourceAutoConfiguration 规避启动失败；M2 接入持久化时移除该排除并补配置 -->
             <dependency>
                 <groupId>com.baomidou</groupId>
                 <artifactId>mybatis-plus-spring-boot3-starter</artifactId>

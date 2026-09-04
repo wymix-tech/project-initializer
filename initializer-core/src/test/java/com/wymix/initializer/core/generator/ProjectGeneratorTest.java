@@ -127,6 +127,25 @@ class ProjectGeneratorTest {
     }
 
     @Test
+    void streamingGenerateShouldWriteSameZipBytes() throws Exception {
+        // 流式输出与内存输出产物一致，且先校验后写流：失败时不写任何字节
+        byte[] buffered = generate(List.of("web"));
+        java.io.ByteArrayOutputStream streamed = new java.io.ByteArrayOutputStream();
+        generator.generate(request(List.of("web")), streamed);
+        assertThat(streamed.toByteArray()).isEqualTo(buffered);
+    }
+
+    @Test
+    void streamingGenerateFailureShouldWriteNothing() {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        GenerateRequest bad = new GenerateRequest("com.example", "demo-app", "com.example.demo",
+                "8", "3.2.5", List.of("web"));
+        assertThatThrownBy(() -> generator.generate(bad, out))
+                .isInstanceOf(BusinessException.class);
+        assertThat(out.size()).as("校验失败时输出流不应被写入").isZero();
+    }
+
+    @Test
     void zipFileNameShouldFollowConvention() {
         assertThat(ProjectGenerator.zipFileName(request(List.of()))).isEqualTo("demo-app.zip");
     }

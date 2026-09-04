@@ -90,7 +90,16 @@ class MetadataServiceTest {
     }
 
     @Test
-    void starterLabel_unknownIdFallsBackToRaw() {
+    void starterLabel_comesFromConfiguredStartersSection() {
+        // 展示名来自 metadata.yml starters 节（配置驱动），而非代码硬编码
+        assertThat(service.listStarters("3.2.5"))
+                .extracting(MetadataService.StarterDto::label)
+                .contains("Spring Web", "Spring Data JPA");
+    }
+
+    @Test
+    void starterLabel_danglingStarterReferenceFailsAtLoad() {
+        // bootVersions.starters 引用未登记的 starter → 装载即失败
         String yaml = """
                 javaVersions:
                   - id: "8"
@@ -99,18 +108,8 @@ class MetadataServiceTest {
                     supportedJavaVersions: ["8"]
                     starters: ["custom-starter"]
                 """;
-        MetadataService svc = new MetadataService(
-                com.wymix.initializer.core.metadata.MetadataCatalog.load(
-                        new java.io.ByteArrayInputStream(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))));
-        assertThat(svc.listStarters("2.7.18"))
-                .extracting(MetadataService.StarterDto::label)
-                .containsExactly("custom-starter");
-    }
-
-    @Test
-    void starterLabel_knownAndUnknownIds() {
-        assertThat(service.listStarters("3.2.5"))
-                .extracting(MetadataService.StarterDto::label)
-                .contains("Spring Web", "Spring Data JPA");
+        assertThatThrownBy(() -> com.wymix.initializer.core.metadata.MetadataCatalog.load(
+                        new java.io.ByteArrayInputStream(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))))
+                .isInstanceOf(BusinessException.class);
     }
 }

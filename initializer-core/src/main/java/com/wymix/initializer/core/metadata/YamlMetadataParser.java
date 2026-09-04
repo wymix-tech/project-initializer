@@ -23,8 +23,9 @@ final class YamlMetadataParser {
     private YamlMetadataParser() {
     }
 
-    /** 解析结果载体：Java 版本与 Boot 版本清单。 */
-    record ParsedMetadata(List<JavaVersion> javaVersions, List<BootVersion> bootVersions) {
+    /** 解析结果载体：Java 版本、Boot 版本与 starter 元信息清单。 */
+    record ParsedMetadata(List<JavaVersion> javaVersions, List<BootVersion> bootVersions,
+                          List<StarterDefinition> starters) {
     }
 
     /**
@@ -44,7 +45,8 @@ final class YamlMetadataParser {
         if (root == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "metadata.yml 内容为空");
         }
-        return new ParsedMetadata(parseJavaVersions(root.get("javaVersions")), parseBootVersions(root.get("bootVersions")));
+        return new ParsedMetadata(parseJavaVersions(root.get("javaVersions")), parseBootVersions(root.get("bootVersions")),
+                parseStarters(root.get("starters")));
     }
 
     @SuppressWarnings("unchecked")
@@ -74,6 +76,40 @@ final class YamlMetadataParser {
             List<String> javaIds = toStringList(map.get("supportedJavaVersions"), "bootVersions[].supportedJavaVersions");
             List<String> starters = toStringList(map.get("starters"), "bootVersions[].starters");
             result.add(new BootVersion(id, label, official, javaIds, starters));
+        }
+        return result;
+    }
+
+    /**
+     * 解析 starters 节：starter ID → {label, dependency{groupId, artifactId}}。
+     *
+     * @param node starters 节点（Map 结构；缺失时为空清单）
+     * @return starter 定义清单（按配置顺序）
+     * @throws BusinessException 结构非法或缺少必需字段（错误码 {@link ErrorCode#INTERNAL_ERROR}）
+     */
+    @SuppressWarnings("unchecked")
+    private static List<StarterDefinition> parseStarters(Object node) {
+        if (node == null) {
+            return List.of();
+        }
+        if (!(node instanceof Map)) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "metadata.yml 字段类型非法: starters");
+        }
+        List<StarterDefinition> result = new ArrayList<>();
+        for (Map.Entry<String, Object> entry : ((Map<String, Object>) node).entrySet()) {
+            String id = entry.getKey();
+            if (!(entry.getValue() instanceof Map)) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "metadata.yml 字段类型非法: starters." + id);
+            }
+            Map<String, Object> map = (Map<String, Object>) entry.getValue();
+            String label = requireString(map, "label", "starters." + id + ".label");
+            if (!(map.get("dependency") instanceof Map)) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "metadata.yml 缺少必需字段: starters." + id + ".dependency");
+            }
+            Map<String, Object> dep = (Map<String, Object>) map.get("dependency");
+            String groupId = requireString(dep, "groupId", "starters." + id + ".dependency.groupId");
+            String artifactId = requireString(dep, "artifactId", "starters." + id + ".dependency.artifactId");
+            result.add(new StarterDefinition(id, label, new MavenDependency(groupId, artifactId)));
         }
         return result;
     }

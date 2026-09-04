@@ -45,6 +45,17 @@ class MetadataCatalogTest {
                 official: false
                 supportedJavaVersions: ["17"]
                 starters: ["web"]
+            starters:
+              web:
+                label: "Spring Web"
+                dependency:
+                  groupId: "org.springframework.boot"
+                  artifactId: "spring-boot-starter-web"
+              data-jpa:
+                label: "Spring Data JPA"
+                dependency:
+                  groupId: "org.springframework.boot"
+                  artifactId: "spring-boot-starter-data-jpa"
             """;
 
     private static MetadataCatalog catalog(String yaml) {
@@ -214,6 +225,37 @@ class MetadataCatalogTest {
             MetadataCatalog c = catalog(VALID_YAML);
             assertThat(c.javaVersion("17").recommendedBootVersion()).isEqualTo("3.2.5");
             assertThat(c.javaVersion("8").recommendedBootVersion()).isEqualTo("2.7.18");
+        }
+
+        @Test
+        void starterDefinition_returnsConfiguredMetadata() {
+            var sd = catalog(VALID_YAML).starterDefinition("web");
+            assertThat(sd.id()).isEqualTo("web");
+            assertThat(sd.label()).isEqualTo("Spring Web");
+            assertThat(sd.dependency().groupId()).isEqualTo("org.springframework.boot");
+            assertThat(sd.dependency().artifactId()).isEqualTo("spring-boot-starter-web");
+        }
+
+        @Test
+        void starterDefinition_unknownId_throwsMetadataNotFound() {
+            assertThatThrownBy(() -> catalog(VALID_YAML).starterDefinition("no-such"))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.METADATA_NOT_FOUND));
+        }
+
+        @Test
+        void load_danglingStarterReference_throwsInternalError() {
+            String yaml = """
+                    javaVersions:
+                      - id: "8"
+                    bootVersions:
+                      - id: "2.7.18"
+                        supportedJavaVersions: ["8"]
+                        starters: ["ghost"]
+                    """;
+            assertThatThrownBy(() -> catalog(yaml))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getMessage()).contains("ghost"));
         }
 
         @Test
