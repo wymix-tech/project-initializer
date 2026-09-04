@@ -21,7 +21,8 @@ class MetadataServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         try (InputStream in = getClass().getClassLoader().getResourceAsStream("catalog/metadata.yml")) {
-            service = new MetadataService(com.wymix.initializer.core.metadata.MetadataCatalog.load(in));
+            service = new MetadataService(com.wymix.initializer.core.metadata.MetadataCatalog.load(in),
+                    com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
         }
     }
 
@@ -83,7 +84,8 @@ class MetadataServiceTest {
                 """;
         MetadataService svc = new MetadataService(
                 com.wymix.initializer.core.metadata.MetadataCatalog.load(
-                        new java.io.ByteArrayInputStream(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+                        new java.io.ByteArrayInputStream(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+                com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
         assertThatThrownBy(() -> svc.listCompatibleBootVersions("25"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INCOMPATIBLE_VERSION));

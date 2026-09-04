@@ -21,6 +21,8 @@ export interface BootVersion {
 export interface Starter {
   id: string
   label: string
+  /** 维护方：official 官方 / internal 内部 */
+  maintainer: 'official' | 'internal'
 }
 
 /** 元信息校验结果：POST /api/validate */

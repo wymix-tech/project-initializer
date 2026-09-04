@@ -1,0 +1,10 @@
+id: bad
+category: middleware
+maintainer: internal
+dependencies:
+  - groupId: com.company
+    artifactId: bad
+linkages:
+  templates:
+    - source: "a.ftl"
+      target: "src/{customVar}/a.java"
