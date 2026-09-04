@@ -34,6 +34,9 @@ public enum ErrorCode {
     /** zip 打包失败 */
     ZIP_PACK_FAILED(3003, "产物打包失败"),
 
+    /** starter 清单配置非法（加载/校验失败，启动即失败） */
+    STARTER_CATALOG_INVALID(9002, "starter 清单配置非法"),
+
     /** 系统内部未知错误 */
     INTERNAL_ERROR(9001, "系统内部错误");
 

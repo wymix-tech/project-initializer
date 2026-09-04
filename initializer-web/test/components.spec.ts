@@ -124,8 +124,8 @@ describe('StepBoot', () => {
 
 describe('StepStarters', () => {
   const starters: Starter[] = [
-    { id: 'web', label: 'Spring Web' },
-    { id: 'data-jpa', label: 'Spring Data JPA' },
+    { id: 'web', label: 'Spring Web', maintainer: 'official' as const },
+    { id: 'data-jpa', label: 'Spring Data JPA', maintainer: 'official' as const },
   ]
 
   it('点击 checkbox 切换选中', async () => {
@@ -137,6 +137,15 @@ describe('StepStarters', () => {
     expect(wizard.selectedStarters.has('web')).toBe(true)
     await wrapper.findAll('input[type="checkbox"]')[0].setValue(false)
     expect(wizard.selectedStarters.has('web')).toBe(false)
+  })
+
+  it('内部 starter 渲染维护方标签', async () => {
+    const wrapper = mountWithPinia(StepStarters)
+    const wizard = useWizardStore()
+    wizard.starters = [{ id: 'xxx-redis', label: '内部 Redis', maintainer: 'internal' as const }]
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('内部')
+    expect(wrapper.findAll('.maintainer-tag')).toHaveLength(1)
   })
 
   it('选中项渲染 checked 样式与 id', async () => {

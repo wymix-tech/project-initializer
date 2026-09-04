@@ -1,0 +1,9 @@
+# Spring 官方 web starter：无联动规则，仅依赖坐标（M2.1：官方与内部 starter 统一入清单）
+id: web
+category: web
+maintainer: official
+description: Spring MVC + 内嵌 Tomcat
+dependencies:
+  - groupId: org.springframework.boot
+    artifactId: spring-boot-starter-web
+linkages: {}

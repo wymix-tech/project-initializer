@@ -16,6 +16,7 @@ const wizard = useWizardStore()
             @change="wizard.toggleStarter(st.id)"
           />
           <span>{{ st.label }}</span>
+          <span v-if="st.maintainer === 'internal'" class="maintainer-tag">内部</span>
           <code class="starter-id">{{ st.id }}</code>
         </label>
       </li>
@@ -32,4 +33,8 @@ h2 { font-size: 16px; margin-bottom: 12px; }
 }
 .starter.checked { border-color: #0969da; background: #ddf4ff; }
 .starter-id { margin-left: auto; color: #57606a; font-size: 12px; }
+.maintainer-tag {
+  font-size: 11px; color: #8250df; border: 1px solid #d2a8ff;
+  border-radius: 10px; padding: 0 6px; line-height: 16px;
+}
 </style>

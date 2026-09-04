@@ -6,6 +6,8 @@ import com.wymix.initializer.core.metadata.BootVersion;
 import com.wymix.initializer.core.metadata.JavaVersion;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
 import com.wymix.initializer.core.metadata.StarterDefinition;
+import com.wymix.initializer.core.starter.Maintainer;
+import com.wymix.initializer.core.starter.StarterCatalog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -23,12 +25,15 @@ public class MetadataService {
     private static final Logger log = LoggerFactory.getLogger(MetadataService.class);
 
     private final MetadataCatalog catalog;
+    private final StarterCatalog starterCatalog;
 
     /**
-     * @param catalog 元数据目录（由 {@link MetadataCatalogConfig} 装配）
+     * @param catalog        元数据目录（由 {@link MetadataCatalogConfig} 装配）
+     * @param starterCatalog starter 清单（由 {@link StarterCatalogConfig} 装配，M2.1 新增）
      */
-    public MetadataService(MetadataCatalog catalog) {
+    public MetadataService(MetadataCatalog catalog, StarterCatalog starterCatalog) {
         this.catalog = catalog;
+        this.starterCatalog = starterCatalog;
     }
 
     /**
@@ -67,7 +72,7 @@ public class MetadataService {
         return catalog.starters(bootVersionId).stream()
                 .map(id -> {
                     StarterDefinition sd = catalog.starterDefinition(id);
-                    return new StarterDto(sd.id(), sd.label());
+                    return StarterDto.of(sd.id(), sd.label(), maintainerOf(id));
                 })
                 .toList();
     }
@@ -88,7 +93,23 @@ public class MetadataService {
         }
     }
 
-    /** Starter DTO。 */
-    public record StarterDto(String id, String label) {
+    /** Starter DTO（M2.1 补充维护方标注：官方/内部统一入清单）。 */
+    public record StarterDto(String id, String label, String maintainer) {
+
+        static StarterDto of(String id, String label, Maintainer maintainer) {
+            return new StarterDto(id, label, maintainer.name().toLowerCase());
+        }
+    }
+
+    /**
+     * 查询 starter 维护方：优先 starter 清单（M2.1），未登记的回退为官方。
+     *
+     * @param starterId starter ID
+     * @return 维护方
+     */
+    private Maintainer maintainerOf(String starterId) {
+        return starterCatalog.contains(starterId)
+                ? starterCatalog.entry(starterId).maintainer()
+                : Maintainer.OFFICIAL;
     }
 }

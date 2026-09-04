@@ -9,6 +9,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.io.InputStream;
+import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -24,7 +25,8 @@ class MetadataControllerTest {
     @BeforeEach
     void setUp() throws Exception {
         try (InputStream in = getClass().getClassLoader().getResourceAsStream("catalog/metadata.yml")) {
-            MetadataService service = new MetadataService(MetadataCatalog.load(in));
+            MetadataService service = new MetadataService(MetadataCatalog.load(in),
+                    com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
             mockMvc = MockMvcBuilders.standaloneSetup(new MetadataController(service))
                     .setControllerAdvice(new GlobalExceptionHandler())
                     .build();
@@ -75,7 +77,8 @@ class MetadataControllerTest {
     void starters_boot325_returnsList() throws Exception {
         mockMvc.perform(get("/api/metadata/starters").param("boot", "3.2.5"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.id == 'web')].label").value("Spring Web"));
+                .andExpect(jsonPath("$[?(@.id == 'web')].label").value("Spring Web"))
+                .andExpect(jsonPath("$[?(@.id == 'web')].maintainer").value("official"));
     }
 
     @Test

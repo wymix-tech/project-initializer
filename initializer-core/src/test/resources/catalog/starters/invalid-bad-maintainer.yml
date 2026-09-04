@@ -1,0 +1,7 @@
+id: bad
+category: middleware
+maintainer: third-party
+dependencies:
+  - groupId: com.company
+    artifactId: bad
+linkages: {}
