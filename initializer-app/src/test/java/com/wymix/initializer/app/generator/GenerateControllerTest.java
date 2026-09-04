@@ -105,6 +105,24 @@ class GenerateControllerTest {
     }
 
     @Test
+    void unknownStarterShouldReturn422With2003() {
+        // 2003 UNKNOWN_STARTER：starter 不在所选 Boot 版本清单
+        String body = """
+                {
+                  "group": "com.example",
+                  "artifact": "demo-app",
+                  "packageName": "com.example.demo",
+                  "javaVersion": "17",
+                  "bootVersion": "3.2.5",
+                  "starters": ["nosuch"]
+                }
+                """;
+        ResponseEntity<String> resp = rest.postForEntity("/api/generate", jsonEntity(body), String.class);
+        assertThat(resp.getStatusCode().value()).isEqualTo(422);
+        assertThat(resp.getBody()).contains("2003");
+    }
+
+    @Test
     void missingFieldShouldReturn422() {
         String body = """
                 {

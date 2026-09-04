@@ -120,4 +120,80 @@ class LinkageRendererTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.YML_MERGE_CONFLICT));
     }
+
+    @Test
+    void aliasConflictShouldThrowExplicitly() {
+        // 评审修复：两个 starter 声明同 alias 不同 fqcn → 显式报错，不静默覆盖
+        String a = """
+                id: alias-a-starter
+                category: tool
+                maintainer: internal
+                description: 别名冲突用例 A
+                dependencies:
+                  - groupId: com.company
+                    artifactId: alias-a
+                linkages:
+                  abstract-classes:
+                    - fqcn: "com.company.a.SupportA"
+                      alias: support
+                """;
+        String b = """
+                id: alias-b-starter
+                category: tool
+                maintainer: internal
+                description: 别名冲突用例 B
+                dependencies:
+                  - groupId: com.company
+                    artifactId: alias-b
+                linkages:
+                  abstract-classes:
+                    - fqcn: "com.company.b.SupportB"
+                      alias: support
+                """;
+        StarterCatalog catalog = StarterCatalog.of(List.of(
+                YamlStarterParser.parse(new java.io.ByteArrayInputStream(a.getBytes(StandardCharsets.UTF_8))),
+                YamlStarterParser.parse(new java.io.ByteArrayInputStream(b.getBytes(StandardCharsets.UTF_8)))));
+        LinkageRenderer conflict = new LinkageRenderer(catalog, new TemplateRenderer());
+        assertThatThrownBy(() -> conflict.render(List.of("alias-a-starter", "alias-b-starter"), model))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.TEMPLATE_TARGET_CONFLICT));
+    }
+
+    @Test
+    void sameAliasSameFqcnShouldBeAllowed() {
+        // 同 alias 同 fqcn 视为合法重复，不报错
+        String a = """
+                id: alias-same-a
+                category: tool
+                maintainer: internal
+                description: 合法重复用例 A
+                dependencies:
+                  - groupId: com.company
+                    artifactId: alias-same-a
+                linkages:
+                  abstract-classes:
+                    - fqcn: "com.company.same.Support"
+                      alias: support
+                """;
+        String b = """
+                id: alias-same-b
+                category: tool
+                maintainer: internal
+                description: 合法重复用例 B
+                dependencies:
+                  - groupId: com.company
+                    artifactId: alias-same-b
+                linkages:
+                  abstract-classes:
+                    - fqcn: "com.company.same.Support"
+                      alias: support
+                """;
+        StarterCatalog catalog = StarterCatalog.of(List.of(
+                YamlStarterParser.parse(new java.io.ByteArrayInputStream(a.getBytes(StandardCharsets.UTF_8))),
+                YamlStarterParser.parse(new java.io.ByteArrayInputStream(b.getBytes(StandardCharsets.UTF_8)))));
+        LinkageRenderer ok = new LinkageRenderer(catalog, new TemplateRenderer());
+        LinkageRenderer.LinkageResult result = ok.render(List.of("alias-same-a", "alias-same-b"), model);
+        assertThat(result.templateFiles()).isEmpty();
+        assertThat(result.mergedYml()).isNull();
+    }
 }

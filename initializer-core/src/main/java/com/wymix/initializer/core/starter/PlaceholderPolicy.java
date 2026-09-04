@@ -52,13 +52,17 @@ public final class PlaceholderPolicy {
     }
 
     /**
-     * 白名单占位符替换：按取值表替换 {@code {name}}，未在取值表中的白名单占位符原样保留
-     * （如 {@code {bootVersion}} 在联动渲染阶段无需取值时）。
+     * 白名单占位符替换：按取值表替换 {@code {name}}。
+     *
+     * <p>白名单内但取值表缺失的占位符视为配置错误（如 target 路径写了 {@code {bootVersion}}
+     * 而模型未提供取值），立即抛 {@link IllegalArgumentException} 暴露问题，
+     * 避免生成带 {@code {name}} 字面量的文件路径。
      *
      * @param value 含占位符的原始值
      * @param values 占位符取值表（键为占位符名，如 basePackage）
      * @return 替换后的值
-     * @throws IllegalArgumentException 值中含越界占位符（清单装载期应已拦截，此处兜底）
+     * @throws IllegalArgumentException 值中含越界占位符（清单装载期应已拦截，此处兜底），
+     *                                  或白名单占位符缺少取值
      */
     public static String replace(String value, Map<String, ?> values) {
         Set<String> unknown = unknownPlaceholders(value);
@@ -71,7 +75,10 @@ public final class PlaceholderPolicy {
         while (m.find()) {
             String name = m.group(1);
             Object replacement = values.get(name);
-            m.appendReplacement(sb, Matcher.quoteReplacement(replacement == null ? m.group(0) : String.valueOf(replacement)));
+            if (replacement == null) {
+                throw new IllegalArgumentException("占位符 {" + name + "} 缺少取值（value=" + value + "）");
+            }
+            m.appendReplacement(sb, Matcher.quoteReplacement(String.valueOf(replacement)));
         }
         m.appendTail(sb);
         return sb.toString();

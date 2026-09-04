@@ -22,8 +22,11 @@ public enum ErrorCode {
     /** 版本组合不兼容（如 Java 8 搭配 Boot 3.x） */
     INCOMPATIBLE_VERSION(2001, "版本组合不兼容"),
 
-    /** 请求的版本或 starter 不存在 */
+    /** 请求的版本或元数据不存在 */
     METADATA_NOT_FOUND(2002, "请求的元数据不存在"),
+
+    /** 请求的 starter 不在所选 Boot 版本清单内（M2.0 设计对齐：与 2002 元数据缺失区分） */
+    UNKNOWN_STARTER(2003, "请求的 starter 不存在"),
 
     /** 生成过程中模板渲染失败 */
     TEMPLATE_RENDER_FAILED(3001, "模板渲染失败"),
