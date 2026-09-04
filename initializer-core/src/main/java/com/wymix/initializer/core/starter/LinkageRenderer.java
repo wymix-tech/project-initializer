@@ -60,8 +60,31 @@ public class LinkageRenderer {
         return new LinkageResult(templateFiles, mergedYml);
     }
 
+    /**
+     * 抽象类别名跨 starter 冲突校验（评审修复）：
+     * 多个 starter 声明同 alias 不同 fqcn 时显式报错（不静默覆盖），
+     * 与「冲突显式失败」的整体原则保持一致。同 alias 同 fqcn 视为合法重复。
+     */
+    private void validateAliasConflicts(List<String> starterIds) {
+        Map<String, String> owner = new LinkedHashMap<>();
+        for (String starterId : starterIds) {
+            if (!starterCatalog.contains(starterId)) {
+                continue;
+            }
+            for (AbstractClassLinkage linkage : starterCatalog.entry(starterId).linkages().abstractClasses()) {
+                String previous = owner.putIfAbsent(linkage.alias(), linkage.fqcn());
+                if (previous != null && !previous.equals(linkage.fqcn())) {
+                    throw new BusinessException(ErrorCode.TEMPLATE_TARGET_CONFLICT,
+                            "抽象类别名冲突: " + linkage.alias() + "（" + previous
+                                    + " 与 " + linkage.fqcn() + "，starter " + starterId + "）");
+                }
+            }
+        }
+    }
+
     /** 逐 starter 渲染模板联动，并做 target 路径冲突检测。 */
     private Map<String, byte[]> renderTemplates(List<String> starterIds, Map<String, Object> model) {
+        validateAliasConflicts(starterIds);
         Map<String, byte[]> files = new LinkedHashMap<>();
         Map<String, String> targetOwner = new LinkedHashMap<>();
         for (String starterId : starterIds) {
@@ -121,7 +144,7 @@ public class LinkageRenderer {
         return YmlFragmentMerger.merge(null, fragments);
     }
 
-    /** 抽象类联动：alias → fqcn 映射，注入模板 context。 */
+    /** 抽象类联动：alias → fqcn 映射，注入模板 context（跨 starter 冲突已由 {@link #validateAliasConflicts} 前置拦截）。 */
     private Map<String, Object> abstractClassAliases(String starterId) {
         if (!starterCatalog.contains(starterId)) {
             return Map.of();

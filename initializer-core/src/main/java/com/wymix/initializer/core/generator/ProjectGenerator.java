@@ -141,7 +141,7 @@ public class ProjectGenerator {
         Set<String> available = new LinkedHashSet<>(catalog.starters(request.bootVersion()));
         for (String starter : request.starters()) {
             if (!available.contains(starter)) {
-                throw new BusinessException(ErrorCode.METADATA_NOT_FOUND,
+                throw new BusinessException(ErrorCode.UNKNOWN_STARTER,
                         "Boot 版本 " + request.bootVersion() + " 不支持 starter: " + starter);
             }
         }
@@ -156,6 +156,9 @@ public class ProjectGenerator {
      */
     private List<Map<String, String>> resolveStarterDependencies(List<String> starterIds) {
         List<Map<String, String>> deps = new ArrayList<>();
+        // 跨来源统一去重：同一 G:A 坐标可能在 starter 清单与 metadata.yml 两边声明。
+        // 约定：先遍历 starter 清单来源（含 version，Gradle GAV 透传），再遍历 metadata.yml 来源，
+        // 同坐标冲突时清单声明优先——去重键统一为 groupId:artifactId。
         Set<String> seen = new LinkedHashSet<>();
         for (DependencyCoord dep : linkageRenderer.resolveDependencies(starterIds)) {
             if (seen.add(dep.groupId() + ":" + dep.artifactId())) {

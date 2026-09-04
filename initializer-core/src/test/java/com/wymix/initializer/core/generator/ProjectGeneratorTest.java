@@ -120,6 +120,31 @@ class ProjectGeneratorTest {
     }
 
     @Test
+    void sameCoordAcrossSourcesShouldDeduplicate() throws Exception {
+        // 评审修复：web 同时登记在 starter 清单（catalog/starters/web-starter.yml）
+        // 与 metadata.yml starters 节，同 G:A 坐标跨来源必须显式去重且清单声明优先（保留 version）
+        String pom = readEntry(generate(List.of("web")), "demo-app/pom.xml");
+        assertThat(countOccurrences(pom, "spring-boot-starter-web</artifactId>"))
+                .as("同坐标跨来源只输出一次").isEqualTo(1);
+        // 清单声明优先：依赖坐标保留 version 透传（Gradle GAV），Maven pom 模板忽略 version 走 Boot BOM
+        String gradle = readEntry(generator.generate(gradleRequest(List.of("web"))), "demo-app/build.gradle");
+        assertThat(gradle).contains("org.springframework.boot:spring-boot-starter-web");
+        long gavLines = gradle.lines().filter(l -> l.contains("spring-boot-starter-web")).count();
+        assertThat(gavLines).as("gradle 中 spring-boot-starter-web 仅一条 implementation").isEqualTo(1);
+    }
+
+    /** 统计子串出现次数。 */
+    private static int countOccurrences(String text, String needle) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = text.indexOf(needle, idx)) != -1) {
+            count++;
+            idx += needle.length();
+        }
+        return count;
+    }
+
+    @Test
     void unknownBootVersionShouldThrow2002() {
         GenerateRequest bad = new GenerateRequest("com.example", "demo-app", "com.example.demo",
                 "17", "9.9.9", List.of("web"));
@@ -129,12 +154,13 @@ class ProjectGeneratorTest {
     }
 
     @Test
-    void unknownStarterShouldThrow2002() {
+    void unknownStarterShouldThrow2003() {
+        // 2003 UNKNOWN_STARTER：starter 不在所选 Boot 版本清单（与 2002 元数据缺失区分）
         GenerateRequest bad = new GenerateRequest("com.example", "demo-app", "com.example.demo",
                 "17", "3.2.5", List.of("nosuch"));
         assertThatThrownBy(() -> generator.generate(bad))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.METADATA_NOT_FOUND));
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.UNKNOWN_STARTER));
     }
 
     @Test
