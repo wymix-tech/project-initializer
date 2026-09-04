@@ -251,7 +251,7 @@ describe('步骤导航', () => {
     const wizard = useWizardStore()
     wizard.step = STEP_META
     expect(wizard.canNext).toBe(false)
-    wizard.meta = { group: 'g', artifact: 'a', packageName: 'p', packageTouched: true }
+    wizard.meta = { group: 'g', artifact: 'a', packageName: 'p', packageTouched: true, buildTool: 'maven' }
     expect(wizard.canNext).toBe(true)
   })
 
@@ -279,7 +279,7 @@ describe('生成提交', () => {
     wizard.selectedJava = '17'
     wizard.selectedBoot = '3.2.5'
     wizard.selectedStarters = new Set(['web'])
-    wizard.meta = { group: 'com.example', artifact: 'demo', packageName: 'com.example.demo', packageTouched: true }
+    wizard.meta = { group: 'com.example', artifact: 'demo', packageName: 'com.example.demo', packageTouched: true, buildTool: 'maven' }
     return wizard
   }
 
@@ -295,6 +295,7 @@ describe('生成提交', () => {
       javaVersion: '17',
       bootVersion: '3.2.5',
       starters: ['web'],
+      buildTool: 'maven',
     })
   })
 

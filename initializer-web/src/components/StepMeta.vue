@@ -77,11 +77,26 @@ onBeforeUnmount(() => {
         {{ wizard.validationErrors.packageName }}
       </p>
     </div>
+    <div class="field">
+      <label>构建工具</label>
+      <div class="radio-row">
+        <label class="radio" for="build-tool-maven">
+          <input id="build-tool-maven" type="radio" value="maven" v-model="wizard.meta.buildTool" />
+          Maven
+        </label>
+        <label class="radio" for="build-tool-gradle">
+          <input id="build-tool-gradle" type="radio" value="gradle" v-model="wizard.meta.buildTool" />
+          Gradle
+        </label>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 h2 { font-size: 16px; margin-bottom: 12px; }
+.radio-row { display: flex; gap: 16px; }
+.radio { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 .field { margin-bottom: 14px; display: flex; flex-direction: column; gap: 4px; }
 .field label { font-size: 13px; color: #57606a; }
 .field input {

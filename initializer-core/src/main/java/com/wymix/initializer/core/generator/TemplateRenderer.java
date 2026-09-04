@@ -35,7 +35,7 @@ public class TemplateRenderer {
     public static final String K_JAVA_VERSION = "javaVersion";
     /** 模板数据模型键：starter 清单。 */
     public static final String K_STARTERS = "starters";
-    /** 模板数据模型键：starter Maven 依赖坐标清单（元素含 groupId/artifactId）。 */
+    /** 模板数据模型键：starter 依赖坐标清单（元素含 groupId/artifactId，Gradle 模板还读取可选的 version）。 */
     public static final String K_STARTER_DEPENDENCIES = "starterDependencies";
 
     /** 模板集 classpath 根目录。 */

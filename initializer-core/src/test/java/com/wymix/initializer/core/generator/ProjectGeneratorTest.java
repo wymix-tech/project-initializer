@@ -191,6 +191,72 @@ class ProjectGeneratorTest {
                 .contains("spring-boot-starter-web");
     }
 
+    private static GenerateRequest gradleRequest(List<String> starters) {
+        return GenerateRequest.of("com.example", "demo-app", "com.example.demo",
+                "17", "3.2.5", starters, "gradle");
+    }
+
+    @Test
+    void gradleRequestShouldRenderBuildAndSettingsGradle() throws Exception {
+        // M2.4：gradle 请求产出 build.gradle + settings.gradle，且不含 pom.xml
+        byte[] zip = generator.generate(gradleRequest(List.of("web")));
+        try (ZipInputStream z = new ZipInputStream(new java.io.ByteArrayInputStream(zip))) {
+            java.util.List<String> names = new java.util.ArrayList<>();
+            ZipEntry e;
+            while ((e = z.getNextEntry()) != null) {
+                names.add(e.getName());
+            }
+            assertThat(names).contains("demo-app/build.gradle", "demo-app/settings.gradle")
+                    .doesNotContain("demo-app/pom.xml");
+        }
+    }
+
+    @Test
+    void gradleBuildScriptShouldContainPluginsAndDependencies() throws Exception {
+        byte[] zip = generator.generate(gradleRequest(List.of("web", "xxx-redis-spring-boot-starter")));
+        String build = readEntry(zip, "demo-app/build.gradle");
+        assertThat(build).contains("id 'org.springframework.boot' version '3.2.5'")
+                .contains("group = 'com.example'")
+                .contains("sourceCompatibility = JavaVersion.toVersion('17')")
+                .contains("implementation 'org.springframework.boot:spring-boot-starter-web'")
+                .contains("implementation 'com.company:xxx-redis-spring-boot-starter:1.2.0'")
+                .contains("testImplementation 'org.springframework.boot:spring-boot-starter-test'")
+                .doesNotContain("<dependency>");
+    }
+
+    @Test
+    void gradleSettingsShouldContainRootProjectName() throws Exception {
+        byte[] zip = generator.generate(gradleRequest(List.of("web")));
+        String settings = readEntry(zip, "demo-app/settings.gradle");
+        assertThat(settings).contains("rootProject.name = 'demo-app'");
+    }
+
+    @Test
+    void gradleRequestShouldKeepLinkagePipelineOutputs() throws Exception {
+        // M2.4：构建脚本双轨不影响联动管线——配置类 + yml 合并产物一致
+        byte[] zip = generator.generate(gradleRequest(List.of("web", "xxx-redis-spring-boot-starter")));
+        String config = readEntry(zip, "demo-app/src/main/java/com/example/demo/config/RedisConfig.java");
+        assertThat(config).contains("package com.example.demo.config;").contains("RedisSupport");
+        String yml = readEntry(zip, "demo-app/src/main/resources/application.yml");
+        assertThat(yml).contains("redis").contains("name: demo-app");
+    }
+
+    @Test
+    void invalidBuildToolShouldThrow1004() {
+        // M2.4：buildTool 非法取值 → 1004
+        assertThatThrownBy(() -> GenerateRequest.of("com.example", "demo-app", "com.example.demo",
+                "17", "3.2.5", List.of("web"), "buck"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INVALID_BUILD_TOOL));
+    }
+
+    @Test
+    void legacyRequestShouldDefaultToMaven() throws Exception {
+        // M2.4：6 参兼容构造器默认 maven，产物保持 pom.xml
+        byte[] zip = generate(List.of("web"));
+        assertThat(readEntry(zip, "demo-app/pom.xml")).contains("<project");
+    }
+
     private static String readEntry(byte[] zipBytes, String entryName) throws Exception {
         try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(zipBytes))) {
             ZipEntry entry;

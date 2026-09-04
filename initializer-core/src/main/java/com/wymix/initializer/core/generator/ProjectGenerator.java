@@ -31,7 +31,8 @@ import java.util.Set;
  *   <li>commons-compress zip 流式输出，文件名 {@code {artifact}.zip}</li>
  * </ol>
  *
- * <p>产物清单：pom.xml、启动类、application.yml、README.md，包结构与元信息一致；
+ * <p>产物清单：构建脚本（M2.4 起 Maven pom.xml / Gradle build.gradle + settings.gradle 双轨，
+ * 由请求 buildTool 决定）、启动类、application.yml、README.md，包结构与元信息一致；
  * M2.3 起接入联动渲染管线（{@link LinkageRenderer}）：starter yml 声明的模板联动、
  * application.yml 片段合并、抽象类引用随选中 starter 自动生成。
  *
@@ -42,6 +43,10 @@ public class ProjectGenerator {
     private final MetadataCatalog catalog;
     private final TemplateRenderer renderer;
     private final LinkageRenderer linkageRenderer;
+    /** Maven 构建脚本渲染实现（M2.4，双轨之一）。 */
+    private final BuildScriptRenderer mavenRenderer;
+    /** Gradle 构建脚本渲染实现（M2.4，双轨之一）。 */
+    private final BuildScriptRenderer gradleRenderer;
 
     /**
      * @param catalog  元数据目录（版本合法性校验）
@@ -52,6 +57,20 @@ public class ProjectGenerator {
         this(catalog, renderer, new LinkageRenderer(starterCatalog, renderer));
     }
 
+    /**
+     * M2.4 全参构造：允许注入自定义构建脚本渲染实现（SPI 扩展点）。
+     *
+     * @param catalog       元数据目录
+     * @param renderer      模板渲染器
+     * @param starterCatalog starter 清单（联动规则来源）
+     * @param mavenRenderer Maven 渲染实现
+     * @param gradleRenderer Gradle 渲染实现
+     */
+    public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, StarterCatalog starterCatalog,
+                            BuildScriptRenderer mavenRenderer, BuildScriptRenderer gradleRenderer) {
+        this(catalog, renderer, new LinkageRenderer(starterCatalog, renderer), mavenRenderer, gradleRenderer);
+    }
+
     /** @deprecated M2.3 前旧签名，仅保留给无联动场景的旧调用方过渡；新代码应传 starterCatalog。 */
     @Deprecated(since = "0.1.0", forRemoval = true)
     public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer) {
@@ -59,9 +78,16 @@ public class ProjectGenerator {
     }
 
     private ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, LinkageRenderer linkageRenderer) {
+        this(catalog, renderer, linkageRenderer, new MavenRenderer(), new GradleRenderer());
+    }
+
+    private ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, LinkageRenderer linkageRenderer,
+                             BuildScriptRenderer mavenRenderer, BuildScriptRenderer gradleRenderer) {
         this.catalog = catalog;
         this.renderer = renderer;
         this.linkageRenderer = linkageRenderer;
+        this.mavenRenderer = mavenRenderer;
+        this.gradleRenderer = gradleRenderer;
     }
 
     /**
@@ -69,7 +95,8 @@ public class ProjectGenerator {
      *
      * @param request 生成请求
      * @return zip 字节流（完整可用，失败时抛异常而非返回半成品）
-     * @throws BusinessException 版本不兼容（2001）、版本未知（2002）、starter 非法（2002）、渲染失败（3001）
+     * @throws BusinessException 版本不兼容（2001）、版本未知（2002）、starter 非法（2002）、
+     *         构建工具非法（1004）、渲染失败（3001）
      */
     public byte[] generate(GenerateRequest request) {
         validateRequest(request);
@@ -86,7 +113,8 @@ public class ProjectGenerator {
      *
      * @param request 生成请求
      * @param out     zip 输出流（本方法写入后不关闭，由调用方管理）
-     * @throws BusinessException 版本不兼容（2001）、版本未知（2002）、starter 非法（2002）、渲染失败（3001）、打包失败（3003）
+     * @throws BusinessException 版本不兼容（2001）、版本未知（2002）、starter 非法（2002）、
+     *         构建工具非法（1004）、渲染失败（3001）、打包失败（3003）
      */
     public void generate(GenerateRequest request, OutputStream out) {
         validateRequest(request);
@@ -131,7 +159,14 @@ public class ProjectGenerator {
         Set<String> seen = new LinkedHashSet<>();
         for (DependencyCoord dep : linkageRenderer.resolveDependencies(starterIds)) {
             if (seen.add(dep.groupId() + ":" + dep.artifactId())) {
-                deps.add(Map.of("groupId", dep.groupId(), "artifactId", dep.artifactId()));
+                // M2.4：version 透传给 Gradle 模板（GAV 形式）；Maven 模板忽略 version 走 Boot BOM
+                Map<String, String> coord = new LinkedHashMap<>();
+                coord.put("groupId", dep.groupId());
+                coord.put("artifactId", dep.artifactId());
+                if (dep.version() != null && !dep.version().isBlank()) {
+                    coord.put("version", dep.version());
+                }
+                deps.add(coord);
             }
         }
         for (String id : starterIds) {
@@ -153,8 +188,18 @@ public class ProjectGenerator {
         Map<String, Object> model = buildModel(request);
         String packagePath = (String) model.get(TemplateRenderer.K_PACKAGE_PATH);
 
+        // M2.4：构建脚本按 buildTool 双轨分派，写法差异隔离在 BuildScriptRenderer 之下
+        BuildScriptRenderer buildScriptRenderer = request.buildTool() == BuildTool.GRADLE
+                ? gradleRenderer : mavenRenderer;
+
         Map<String, RenderTask> tasks = new LinkedHashMap<>();
-        tasks.put("pom.xml", new RenderTask("pom.xml.ftl", request.artifact() + "/pom.xml"));
+        tasks.put(buildScriptRenderer.buildScriptPath(),
+                new RenderTask(buildScriptRenderer.buildScriptTemplate(), request.artifact() + "/" + buildScriptRenderer.buildScriptPath()));
+        if (buildScriptRenderer.settingsTemplate() != null) {
+            tasks.put(buildScriptRenderer.settingsPath(),
+                    new RenderTask(buildScriptRenderer.settingsTemplate(),
+                            request.artifact() + "/" + buildScriptRenderer.settingsPath()));
+        }
         tasks.put("README.md", new RenderTask("README.md.ftl", request.artifact() + "/README.md"));
         tasks.put("Application.java", new RenderTask("Application.java.ftl",
                 request.artifact() + "/src/main/java/" + packagePath + "/"
