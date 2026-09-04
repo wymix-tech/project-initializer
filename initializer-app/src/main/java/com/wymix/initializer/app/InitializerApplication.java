@@ -3,6 +3,7 @@ package com.wymix.initializer.app;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 平台服务启动入口。
@@ -14,6 +15,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * <p>线程安全性：Spring 环境管理，无需关注。
  */
 @SpringBootApplication
+@EnableScheduling
 @MapperScan("com.wymix.initializer.app.admin.mapper")
 public class InitializerApplication {
 

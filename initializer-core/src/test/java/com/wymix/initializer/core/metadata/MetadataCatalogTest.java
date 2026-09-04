@@ -63,6 +63,48 @@ class MetadataCatalogTest {
     }
 
     @Nested
+    class AdditionalStarters {
+
+        @Test
+        void withAdditionalStarters_appendsToAllBootVersionsAndDefinitions() {
+            MetadataCatalog c = catalog(VALID_YAML);
+            MetadataCatalog extended = c.withAdditionalStarters(
+                    List.of(new StarterDefinition("xxx-oss", "内部 OSS",
+                            new MavenDependency("com.company", "xxx-oss"))),
+                    List.of("xxx-oss"));
+            // 原 catalog 不变（不可变语义）
+            assertThat(c.starterDefinitionIds()).doesNotContain("xxx-oss");
+            // 全部 Boot 版本可选 + 元信息登记
+            for (BootVersion bv : extended.bootVersions()) {
+                assertThat(bv.starters()).contains("xxx-oss");
+            }
+            assertThat(extended.starterDefinition("xxx-oss").dependency().groupId())
+                    .isEqualTo("com.company");
+            assertThat(extended.starterDefinitionIds()).contains("xxx-oss");
+            // 原有条目保留
+            assertThat(extended.starterDefinitionIds()).contains("web", "data-jpa");
+        }
+
+        @Test
+        void withAdditionalStarters_existingIdNotDuplicatedInBootStarters() {
+            MetadataCatalog c = catalog(VALID_YAML);
+            MetadataCatalog extended = c.withAdditionalStarters(
+                    List.of(new StarterDefinition("web", "dup", new MavenDependency("g", "a"))),
+                    List.of("web"));
+            // 已存在的 ID 不会重复追加进 starters 节
+            for (BootVersion bv : extended.bootVersions()) {
+                assertThat(bv.starters().stream().filter("web"::equals).count()).isEqualTo(1);
+            }
+        }
+
+        @Test
+        void startersDefinitionIds_aliasMatchesStarterDefinitionIds() {
+            MetadataCatalog c = catalog(VALID_YAML);
+            assertThat(c.startersDefinitionIds()).isEqualTo(c.starterDefinitionIds());
+        }
+    }
+
+    @Nested
     class LoadAndValidate {
 
         @Test

@@ -47,7 +47,8 @@ class AdminApiControllerTest {
                         new AdminApiController(new ConfigService(
                                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.ConfigRepository.class),
                                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogRefresher.class),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder.class))))
+                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder.class)),
+                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class)))
                 .build();
     }
 
@@ -103,7 +104,8 @@ class AdminApiControllerTest {
                         new AdminApiController(new ConfigService(
                                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.ConfigRepository.class),
                                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogRefresher.class),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder.class))))
+                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder.class)),
+                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class)))
                 .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
                 .build();
         mockMvc.perform(get("/api/admin/config/unknown-kind"))

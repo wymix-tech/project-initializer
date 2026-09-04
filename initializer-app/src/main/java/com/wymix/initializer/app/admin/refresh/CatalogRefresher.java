@@ -3,7 +3,10 @@ package com.wymix.initializer.app.admin.refresh;
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.core.generator.TemplateRenderer;
+import com.wymix.initializer.core.metadata.MavenDependency;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
+import com.wymix.initializer.core.metadata.StarterDefinition;
+import com.wymix.initializer.core.starter.DependencyCoord;
 import com.wymix.initializer.core.starter.StarterCatalog;
 import com.wymix.initializer.core.starter.StarterCatalogEntry;
 import com.wymix.initializer.core.starter.YamlStarterParser;
@@ -61,6 +64,9 @@ public class CatalogRefresher {
         MetadataCatalog metadataCatalog = parseMetadata(metadataYaml);
         StarterCatalog starterCatalog = parseStarters(starterYaml);
         Map<String, String> templateOverrides = parseTemplates(templateYaml);
+        // M3.3 自动补位：starter 清单条目未在 metadata 登记时，追加为全部 Boot 版本可选
+        // （制品库同步条目可见性；手工 yml 条目原本也可只登记清单——行为升级为自动可选）
+        metadataCatalog = extendWithUnregistered(metadataCatalog, starterCatalog);
         // 交叉校验：metadata.bootVersions.starters 引用的 starter 必须在 starter 清单登记
         validateCrossReferences(metadataCatalog, starterCatalog);
         return new CatalogSnapshot(metadataCatalog, starterCatalog, templateOverrides);
@@ -76,6 +82,64 @@ public class CatalogRefresher {
      */
     public CatalogSnapshot validateAndBuild(String metadataYaml, String starterYaml) {
         return validateAndBuild(metadataYaml, starterYaml, null);
+    }
+
+
+/**
+     * M3.3：解析 starter 清单 yml（多文档）中登记的全部条目 ID（不做清单级校验）。
+     *
+     * <p>供同步链路构建「手工配置保留集」与识别同步来源条目；解析失败视为空清单
+     * （手工草稿在发布期已被校验拦截，此处宽松读取以同步链路可用性优先）。
+     *
+     * @param starterYaml starter 配置全文（多文档，可空）
+     * @return 条目 ID 集合（保持配置顺序，去重）
+     */
+    public java.util.Set<String> parseStarterIds(String starterYaml) {
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        if (starterYaml == null || starterYaml.isBlank()) {
+            return ids;
+        }
+        for (String document : splitDocuments(starterYaml)) {
+            try {
+                Object root = new Yaml(new SafeConstructor(new LoaderOptions())).load(document);
+                if (root instanceof Map<?, ?> map && map.get("id") != null) {
+                    ids.add(map.get("id").toString());
+                }
+            } catch (RuntimeException e) {
+                log.warn("starter 清单 ID 解析跳过（宽松读取）: {}", e.getMessage());
+            }
+        }
+        return ids;
+    }
+
+        /**
+     * M3.3：metadata 自动补位——将 starter 清单中未登记 metadata 的条目追加为
+     * 全部 Boot 版本可选（展示名取描述，坐标取首条依赖）。
+     *
+     * @param metadataCatalog 解析后的元数据目录
+     * @param starterCatalog  解析后的 starter 清单
+     * @return 原目录（全部已登记）或补位后的新目录
+     */
+    private MetadataCatalog extendWithUnregistered(MetadataCatalog metadataCatalog, StarterCatalog starterCatalog) {
+        List<String> missingIds = starterCatalog.all().stream()
+                .filter(entry -> !metadataCatalog.starterDefinitionIds().contains(entry.id()))
+                .map(StarterCatalogEntry::id)
+                .toList();
+        if (missingIds.isEmpty()) {
+            return metadataCatalog;
+        }
+        List<StarterDefinition> addedDefs = starterCatalog.all().stream()
+                .filter(entry -> missingIds.contains(entry.id()))
+                .map(entry -> {
+                    String label = entry.description() == null || entry.description().isBlank()
+                            ? entry.id() : entry.description();
+                    DependencyCoord primary = entry.dependencies().get(0);
+                    return new StarterDefinition(entry.id(), label,
+                            new MavenDependency(primary.groupId(), primary.artifactId()));
+                })
+                .toList();
+        log.info("starter 清单自动补位 metadata: {} 个条目（全部 Boot 版本可选）", missingIds.size());
+        return metadataCatalog.withAdditionalStarters(addedDefs, missingIds);
     }
 
     /**

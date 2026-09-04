@@ -4,6 +4,7 @@ import com.wymix.initializer.app.admin.entity.ConfigKind;
 import com.wymix.initializer.app.admin.entity.ConfigReleaseEntity;
 import com.wymix.initializer.app.admin.security.AdminAuthFilter;
 import com.wymix.initializer.app.admin.service.ConfigService;
+import com.wymix.initializer.app.admin.sync.CatalogSyncService;
 import com.wymix.initializer.app.admin.service.ConfigService.DraftView;
 import com.wymix.initializer.app.admin.service.ConfigService.PublishResult;
 import jakarta.validation.Valid;
@@ -39,12 +40,15 @@ public class AdminApiController {
     public static final String IF_MATCH_HEADER = "If-Match";
 
     private final ConfigService configService;
+    private final CatalogSyncService syncService;
 
     /**
      * @param configService 配置应用服务
+     * @param syncService   制品库同步应用服务（M3.3）
      */
-    public AdminApiController(ConfigService configService) {
+    public AdminApiController(ConfigService configService, CatalogSyncService syncService) {
         this.configService = configService;
+        this.syncService = syncService;
     }
 
     /**
@@ -98,6 +102,18 @@ public class AdminApiController {
         return configService.rollback(releaseId, request.operator());
     }
 
+    /**
+     * 手动触发制品库同步（M3.3）：拉取 → 合并（同名手工优先）→ 同步层草稿重建 →
+     * 快照增量重建热生效。
+     *
+     * @param request 同步请求（操作人必填）
+     * @return 同步结果概况（各通道采纳/覆盖计数）
+     */
+    @PostMapping("/sync")
+    public CatalogSyncService.SyncOutcome sync(@Valid @RequestBody SyncRequest request) {
+        return syncService.syncAll(request.operator());
+    }
+
     /** @return 发布历史（最新在前） */
     @GetMapping("/releases")
     public List<ReleaseView> releases() {
@@ -113,6 +129,11 @@ public class AdminApiController {
     /** 草稿保存请求体。 */
     public record SaveDraftRequest(
             @NotNull(message = "contentYaml 不能为空") String contentYaml,
+            @NotNull(message = "operator 不能为空") String operator) {
+    }
+
+    /** 手动同步请求体（M3.3）。 */
+    public record SyncRequest(
             @NotNull(message = "operator 不能为空") String operator) {
     }
 

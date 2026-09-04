@@ -7,3 +7,7 @@ WHERE NOT EXISTS (SELECT 1 FROM config_draft WHERE kind = 'METADATA');
 INSERT INTO config_draft (kind, content_yaml, version, updated_by, updated_at)
 SELECT 'STARTER', NULL, 0, 'system', CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM config_draft WHERE kind = 'STARTER');
+
+INSERT INTO config_draft (kind, content_yaml, version, updated_by, updated_at)
+SELECT 'STARTER_SYNC', NULL, 0, 'system', CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM config_draft WHERE kind = 'STARTER_SYNC');

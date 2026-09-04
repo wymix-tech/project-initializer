@@ -4,10 +4,12 @@ import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
 
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 元数据目录：加载 {@code catalog/metadata.yml}，提供版本清单与兼容矩阵查询。
@@ -165,8 +167,42 @@ public class MetadataCatalog {
         return starterDefinitions.get(starterId);
     }
 
-    /** @return 全部已登记 starter ID 集合（M3.1 交叉校验用，不可变） */
+/**
+     * M3.3：starter 清单条目自动补位——将未在 metadata 登记的 starter 追加进清单
+     * 返回扩展后的新目录（原对象不变）。
+     *
+     * <p>用途：制品库同步条目（及任何仅在 starter yml 登记的条目）默认对全部 Boot
+     * 版本可选，无需手工维护 metadata 联动；调用方（发布链路自动补位）保证只传未被
+     * 手工配置占用的条目。重建过程复用私有构造的悬空引用校验，合法性与装载期一致。
+     *
+     * @param added      追加的 starter 元信息（展示名 + 坐标）
+     * @param starterIds 追加进全部 Boot 版本 starters 节的 ID 清单
+     * @return 扩展后的新元数据目录
+     */
+    public MetadataCatalog withAdditionalStarters(List<StarterDefinition> added, List<String> starterIds) {
+        List<StarterDefinition> defs = new ArrayList<>(starterDefinitions.values());
+        defs.addAll(added);
+        List<BootVersion> bootList = new ArrayList<>();
+        for (BootVersion bv : bootVersions.values()) {
+            List<String> starters = new ArrayList<>(bv.starters());
+            for (String starterId : starterIds) {
+                if (!starters.contains(starterId)) {
+                    starters.add(starterId);
+                }
+            }
+            bootList.add(new BootVersion(bv.id(), bv.label(), bv.official(),
+                    bv.supportedJavaVersions(), starters));
+        }
+        return new MetadataCatalog(List.copyOf(javaVersions.values()), bootList, defs);
+    }
+
+    /** @return 全部已登记 starter ID 集合（M3.3 同步保留集计算用，不可变） */
+    public Set<String> starterDefinitionIds() {
+        return Collections.unmodifiableSet(starterDefinitions.keySet());
+    }
+
+    /** @return 全部已登记 starter ID 集合（M3.1 交叉校验用，{@link #starterDefinitionIds()} 别名） */
     public java.util.Set<String> startersDefinitionIds() {
-        return java.util.Collections.unmodifiableSet(starterDefinitions.keySet());
+        return starterDefinitionIds();
     }
 }
