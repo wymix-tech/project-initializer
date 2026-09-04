@@ -25,7 +25,9 @@ class GeneratorServiceTest {
     void setUp() throws Exception {
         try (InputStream in = getClass().getResourceAsStream("/catalog/metadata.yml")) {
             var catalog = com.wymix.initializer.core.metadata.MetadataCatalog.load(in);
-            ProjectGenerator generator = new ProjectGenerator(catalog, new com.wymix.initializer.core.generator.TemplateRenderer());
+            var starterCatalog = com.wymix.initializer.core.starter.StarterCatalog.of(java.util.List.of());
+            ProjectGenerator generator = new ProjectGenerator(catalog,
+                    new com.wymix.initializer.core.generator.TemplateRenderer(), starterCatalog);
             service = new GeneratorService(generator, new ValidationService(
                     com.wymix.initializer.core.validation.ValidationRules.load(
                             getClass().getResourceAsStream("/catalog/validation.yml"))));

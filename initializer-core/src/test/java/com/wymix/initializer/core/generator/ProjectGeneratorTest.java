@@ -26,10 +26,21 @@ class ProjectGeneratorTest {
     static void setUp() {
         try (InputStream in = ProjectGeneratorTest.class.getResourceAsStream("/catalog/metadata.yml")) {
             MetadataCatalog catalog = MetadataCatalog.load(in);
-            generator = new ProjectGenerator(catalog, new TemplateRenderer());
+            generator = new ProjectGenerator(catalog, new TemplateRenderer(), testStarterCatalog());
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    /** 测试用 starter 清单：官方 web + 内部 xxx-redis（复用主资源，联动渲染断言用）。 */
+    private static com.wymix.initializer.core.starter.StarterCatalog testStarterCatalog() throws Exception {
+        List<com.wymix.initializer.core.starter.StarterCatalogEntry> entries = new java.util.ArrayList<>();
+        for (String name : List.of("web-starter.yml", "xxx-redis-spring-boot-starter.yml")) {
+            try (InputStream in = ProjectGeneratorTest.class.getResourceAsStream("/catalog/starters/" + name)) {
+                entries.add(com.wymix.initializer.core.starter.YamlStarterParser.parse(in));
+            }
+        }
+        return com.wymix.initializer.core.starter.StarterCatalog.of(entries);
     }
 
     private static GenerateRequest request(List<String> starters) {
@@ -162,6 +173,22 @@ class ProjectGeneratorTest {
         GenerateRequest req = new GenerateRequest("com.example", "demo", "com.example.demo",
                 "17", "3.2.5", null);
         assertThat(req.starters()).isEmpty();
+    }
+
+    @Test
+    void linkageStarterShouldRenderConfigClassAndMergeYml() throws Exception {
+        // M2.3 联动管线：勾选内部 redis starter → 配置类 + application.yml 片段合并 + 依赖坐标
+        byte[] zip = generate(List.of("web", "xxx-redis-spring-boot-starter"));
+        String config = readEntry(zip,
+                "demo-app/src/main/java/com/example/demo/config/RedisConfig.java");
+        assertThat(config).contains("package com.example.demo.config;")
+                .contains("RedisSupport").contains("@Configuration");
+        String yml = readEntry(zip, "demo-app/src/main/resources/application.yml");
+        assertThat(yml).contains("redis").contains("${REDIS_HOST:localhost}")
+                .contains("name: demo-app");
+        String pom = readEntry(zip, "demo-app/pom.xml");
+        assertThat(pom).contains("xxx-redis-spring-boot-starter").contains("com.company")
+                .contains("spring-boot-starter-web");
     }
 
     private static String readEntry(byte[] zipBytes, String entryName) throws Exception {

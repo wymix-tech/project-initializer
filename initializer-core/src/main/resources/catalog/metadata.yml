@@ -23,15 +23,20 @@ bootVersions:
     label: "Spring Boot 2.7.18"
     official: true
     supportedJavaVersions: ["8", "11"]
-    starters: ["web", "data-jpa", "data-redis", "actuator"]
+    starters: ["web", "data-jpa", "data-redis", "actuator", "xxx-redis-spring-boot-starter"]
   - id: "3.2.5"
     label: "Spring Boot 3.2.5"
     official: true
     supportedJavaVersions: ["17", "21"]
-    starters: ["web", "data-jpa", "data-redis", "actuator"]
+    starters: ["web", "data-jpa", "data-redis", "actuator", "xxx-redis-spring-boot-starter"]
 
 # starter 元信息：展示名 + Maven 依赖坐标映射（配置驱动，新增 starter 只改本节 + bootVersions.starters）
 starters:
+  xxx-redis-spring-boot-starter:
+    label: "内部 Redis 封装 starter"
+    dependency:
+      groupId: "com.company"
+      artifactId: "xxx-redis-spring-boot-starter"
   web:
     label: "Spring Web"
     dependency:

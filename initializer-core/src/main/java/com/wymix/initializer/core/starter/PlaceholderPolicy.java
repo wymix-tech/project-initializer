@@ -1,6 +1,7 @@
 package com.wymix.initializer.core.starter;
 
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -48,5 +49,31 @@ public final class PlaceholderPolicy {
     /** @return 白名单占位符的可读清单 */
     public static String allowed() {
         return String.join(", ", ALLOWED.stream().sorted().map(n -> "{" + n + "}").toList());
+    }
+
+    /**
+     * 白名单占位符替换：按取值表替换 {@code {name}}，未在取值表中的白名单占位符原样保留
+     * （如 {@code {bootVersion}} 在联动渲染阶段无需取值时）。
+     *
+     * @param value 含占位符的原始值
+     * @param values 占位符取值表（键为占位符名，如 basePackage）
+     * @return 替换后的值
+     * @throws IllegalArgumentException 值中含越界占位符（清单装载期应已拦截，此处兜底）
+     */
+    public static String replace(String value, Map<String, ?> values) {
+        Set<String> unknown = unknownPlaceholders(value);
+        if (!unknown.isEmpty()) {
+            throw new IllegalArgumentException("存在越界占位符 " + String.join(", ", unknown)
+                    + "（仅允许 " + allowed() + "）");
+        }
+        Matcher m = PLACEHOLDER.matcher(value);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String name = m.group(1);
+            Object replacement = values.get(name);
+            m.appendReplacement(sb, Matcher.quoteReplacement(replacement == null ? m.group(0) : String.valueOf(replacement)));
+        }
+        m.appendTail(sb);
+        return sb.toString();
     }
 }
