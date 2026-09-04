@@ -1,0 +1,74 @@
+# 元数据配置：Java 版本、Boot 官方版本、兼容矩阵（ID 引用成有向图）
+# 修改本文件即可调整版本联动规则，无需改动代码
+javaVersions:
+  - id: "8"
+    label: "Java 8"
+    deprecated: false
+    recommendedBootVersion: "2.7.18"
+  - id: "11"
+    label: "Java 11"
+    deprecated: false
+    recommendedBootVersion: "2.7.18"
+  - id: "17"
+    label: "Java 17"
+    deprecated: false
+    recommendedBootVersion: "3.2.5"
+  - id: "21"
+    label: "Java 21"
+    deprecated: false
+    recommendedBootVersion: "3.2.5"
+
+bootVersions:
+  - id: "2.7.18"
+    label: "Spring Boot 2.7.18"
+    official: true
+    supportedJavaVersions: ["8", "11"]
+    starters: ["web", "data-jpa", "data-redis", "actuator", "xxx-redis-spring-boot-starter", "xxx-redis-e2e-spring-boot-starter", "another-redis-e2e-spring-boot-starter", "yml-conflict-e2e-starter"]
+  - id: "3.2.5"
+    label: "Spring Boot 3.2.5"
+    official: true
+    supportedJavaVersions: ["17", "21"]
+    starters: ["web", "data-jpa", "data-redis", "actuator", "xxx-redis-spring-boot-starter", "xxx-redis-e2e-spring-boot-starter", "another-redis-e2e-spring-boot-starter", "yml-conflict-e2e-starter"]
+
+# starter 元信息：展示名 + Maven 依赖坐标映射（配置驱动，新增 starter 只改本节 + bootVersions.starters）
+starters:
+  xxx-redis-spring-boot-starter:
+    label: "内部 Redis 封装 starter"
+    dependency:
+      groupId: "com.company"
+      artifactId: "xxx-redis-spring-boot-starter"
+  web:
+    label: "Spring Web"
+    dependency:
+      groupId: "org.springframework.boot"
+      artifactId: "spring-boot-starter-web"
+  data-jpa:
+    label: "Spring Data JPA"
+    dependency:
+      groupId: "org.springframework.boot"
+      artifactId: "spring-boot-starter-data-jpa"
+  data-redis:
+    label: "Spring Data Redis"
+    dependency:
+      groupId: "org.springframework.boot"
+      artifactId: "spring-boot-starter-data-redis"
+  actuator:
+    label: "Spring Boot Actuator"
+    dependency:
+      groupId: "org.springframework.boot"
+      artifactId: "spring-boot-starter-actuator"
+  xxx-redis-e2e-spring-boot-starter:
+    label: "内部 Redis 封装 starter（E2E 快照用）"
+    dependency:
+      groupId: "com.company"
+      artifactId: "xxx-redis-e2e-spring-boot-starter"
+  another-redis-e2e-spring-boot-starter:
+    label: "内部 Redis 封装 starter 变体（E2E 冲突用）"
+    dependency:
+      groupId: "com.company"
+      artifactId: "another-redis-e2e-spring-boot-starter"
+  yml-conflict-e2e-starter:
+    label: "yml 片段冲突专用 starter（E2E 冲突用）"
+    dependency:
+      groupId: "com.company"
+      artifactId: "yml-conflict-e2e-starter"
