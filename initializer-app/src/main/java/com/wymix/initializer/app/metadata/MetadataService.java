@@ -7,6 +7,7 @@ import com.wymix.initializer.core.metadata.BootVersion;
 import com.wymix.initializer.core.metadata.JavaVersion;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
 import com.wymix.initializer.core.metadata.StarterDefinition;
+import com.wymix.initializer.core.search.StarterQueryEngine;
 import com.wymix.initializer.core.starter.Maintainer;
 import com.wymix.initializer.core.starter.StarterCatalog;
 import org.slf4j.Logger;
@@ -21,6 +22,10 @@ import java.util.List;
  * <p>M3.2 清单热刷新：读路径改为从 {@link CatalogSnapshotHolder} 当前快照取数，
  * 管理端发布成功后元数据清单即时热生效，无需重启；快照不可变，请求期间视图一致。
  *
+ * <p>M3.4 搜索与分类：starter 清单支持 {@code ?q=}（关键字，匹配 ID/展示名）
+ * 与 {@code ?category=}（分类过滤），由 {@link StarterQueryEngine} 纯内存计算；q 匹配 ID/展示名/描述；
+ * 未传参数时行为与全量清单一致（接口向后兼容）。
+ *
  * <p>线程安全性：无状态单例（快照不可变），线程安全。
  */
 @Service
@@ -32,6 +37,8 @@ public class MetadataService {
     /** 兜底快照（classpath 内置清单）：快照未发布时使用，行为与 M3.1 前一致 */
     private final MetadataCatalog fallbackCatalog;
     private final StarterCatalog fallbackStarterCatalog;
+    /** M3.4：starter 内存检索引擎（无状态） */
+    private final StarterQueryEngine queryEngine = new StarterQueryEngine();
 
     /**
      * M3.2 构造：读路径走快照持有器。
@@ -73,20 +80,30 @@ public class MetadataService {
     }
 
     /**
-     * 指定 Boot 版本下可用的 starter 清单。
+     * 指定 Boot 版本下可用的 starter 清单（无检索条件，M3.4 前兼容入口）。
      *
      * @param bootVersionId Boot 版本 ID
      * @return starter DTO 列表
      * @throws BusinessException Boot 版本未知（404 语义，错误码 2002）
      */
     public List<StarterDto> listStarters(String bootVersionId) {
+        return listStarters(bootVersionId, null, null);
+    }
+
+    /**
+     * 指定 Boot 版本下可用的 starter 清单，支持关键字与分类过滤（M3.4）。
+     *
+     * @param bootVersionId Boot 版本 ID
+     * @param q             关键字（可空）：匹配 starter ID/展示名/描述，忽略大小写
+     * @param category      分类（可空）：精确匹配，忽略大小写；未知分类返回空列表
+     * @return starter DTO 列表
+     * @throws BusinessException Boot 版本未知（404 语义，错误码 2002）
+     */
+    public List<StarterDto> listStarters(String bootVersionId, String q, String category) {
         MetadataCatalog catalog = catalog();
         StarterCatalog starterCatalog = starterCatalog();
-        return catalog.starters(bootVersionId).stream()
-                .map(id -> {
-                    StarterDefinition sd = catalog.starterDefinition(id);
-                    return StarterDto.of(sd.id(), sd.label(), maintainerOf(starterCatalog, id));
-                })
+        return queryEngine.search(catalog, starterCatalog, bootVersionId, q, category).stream()
+                .map(StarterDto::from)
                 .toList();
     }
 
@@ -106,11 +123,20 @@ public class MetadataService {
         }
     }
 
-    /** Starter DTO（M2.1 补充维护方标注：官方/内部统一入清单）。 */
-    public record StarterDto(String id, String label, String maintainer) {
+    /**
+     * Starter DTO（M2.1 补充维护方标注；M3.4 补充分类与描述，供前端分类展示与检索）。
+     */
+    public record StarterDto(String id, String label, String maintainer, String category, String description) {
+
+        static StarterDto from(StarterQueryEngine.StarterSearchItem item) {
+            return new StarterDto(item.id(), item.label(),
+                    item.maintainer().name().toLowerCase(),
+                    item.category(),
+                    item.description());
+        }
 
         static StarterDto of(String id, String label, Maintainer maintainer) {
-            return new StarterDto(id, label, maintainer.name().toLowerCase());
+            return new StarterDto(id, label, maintainer.name().toLowerCase(), null, null);
         }
     }
 
@@ -132,18 +158,5 @@ public class MetadataService {
     private StarterCatalog starterCatalog() {
         var snapshot = snapshotHolder.current();
         return snapshot != null ? snapshot.starterCatalog() : fallbackStarterCatalog;
-    }
-
-    /**
-     * 查询 starter 维护方：优先 starter 清单（M2.1），未登记的回退为官方。
-     *
-     * @param starterCatalog 生效 starter 清单
-     * @param starterId      starter ID
-     * @return 维护方
-     */
-    private Maintainer maintainerOf(StarterCatalog starterCatalog, String starterId) {
-        return starterCatalog.contains(starterId)
-                ? starterCatalog.entry(starterId).maintainer()
-                : Maintainer.OFFICIAL;
     }
 }
