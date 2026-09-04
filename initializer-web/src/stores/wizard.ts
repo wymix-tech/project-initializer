@@ -29,6 +29,7 @@ export const useWizardStore = defineStore('wizard', {
       artifact: '',
       packageName: '',
       packageTouched: false,
+      buildTool: 'maven',
     } as ProjectMeta,
     validationErrors: {} as Record<string, string>,
     submitState: 'idle' as SubmitState,
@@ -67,6 +68,7 @@ export const useWizardStore = defineStore('wizard', {
         javaVersion: state.selectedJava,
         bootVersion: state.selectedBoot,
         starters: [...state.selectedStarters],
+        buildTool: state.meta.buildTool,
       }
     },
   },
@@ -122,12 +124,12 @@ export const useWizardStore = defineStore('wizard', {
     },
 
     /** 更新元信息字段；group/artifact 变化且用户未手改包名时自动推导。 */
-    async updateMeta(field: keyof ProjectMeta, value: string): Promise<void> {
+    async updateMeta(field: Exclude<keyof ProjectMeta, 'packageTouched'> | 'packageTouched', value: string): Promise<void> {
       if (field === 'packageTouched') {
         this.meta.packageTouched = value === 'true'
         return
       }
-      this.meta[field] = value
+      ;(this.meta as Record<string, unknown>)[field] = value
       if ((field === 'group' || field === 'artifact') && !this.meta.packageTouched) {
         if (this.meta.group !== '' && this.meta.artifact !== '') {
           try {

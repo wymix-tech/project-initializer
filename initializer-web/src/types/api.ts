@@ -36,6 +36,9 @@ export interface DerivePackageResponse {
   packageName: string
 }
 
+/** 构建工具：maven（默认）/ gradle */
+export type BuildTool = 'maven' | 'gradle'
+
 /** 生成请求体：POST /api/generate */
 export interface GenerateRequest {
   group: string
@@ -44,6 +47,8 @@ export interface GenerateRequest {
   javaVersion: string
   bootVersion: string
   starters: string[]
+  /** 构建工具（M2.4）：缺省由后端回退 maven */
+  buildTool?: BuildTool
 }
 
 /** 后端统一错误体：ErrorResponse{code,message,timestamp} */
@@ -59,4 +64,6 @@ export interface ProjectMeta {
   artifact: string
   packageName: string
   packageTouched: boolean
+  /** 构建工具（M2.4）：默认 maven */
+  buildTool: BuildTool
 }

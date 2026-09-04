@@ -63,6 +63,7 @@ public class GenerateController {
      * @param javaVersion Java 版本 ID
      * @param bootVersion Boot 版本 ID
      * @param starters    starter 清单（可选）
+     * @param buildTool   构建工具：maven / gradle（M2.4，可空回退 maven，非法抛 1004）
      */
     public record GenerateRequestBody(
             @NotBlank(message = "group 不能为空") String group,
@@ -70,16 +71,17 @@ public class GenerateController {
             @NotBlank(message = "packageName 不能为空") String packageName,
             @NotBlank(message = "javaVersion 不能为空") String javaVersion,
             @NotBlank(message = "bootVersion 不能为空") String bootVersion,
-            List<String> starters) {
+            List<String> starters,
+            String buildTool) {
 
         /**
-         * 转核心域生成请求。
+         * 转核心域生成请求：buildTool 走宽松解析归一化（1004 由核心域收敛）。
          *
          * @return 核心域 GenerateRequest
          */
         public com.wymix.initializer.core.generator.GenerateRequest toDomain() {
-            return new com.wymix.initializer.core.generator.GenerateRequest(
-                    group, artifact, packageName, javaVersion, bootVersion, starters);
+            return com.wymix.initializer.core.generator.GenerateRequest.of(
+                    group, artifact, packageName, javaVersion, bootVersion, starters, buildTool);
         }
     }
 }

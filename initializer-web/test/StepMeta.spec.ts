@@ -89,6 +89,21 @@ describe('StepMeta', () => {
   })
 })
 
+describe('构建工具选择（M2.4）', () => {
+  it('默认选中 Maven，可切换为 Gradle', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(StepMeta, { global: { plugins: [pinia] } })
+    const wizard = useWizardStore()
+    expect(wizard.meta.buildTool).toBe('maven')
+    expect((wrapper.find('#build-tool-maven').element as HTMLInputElement).checked).toBe(true)
+    await wrapper.find('#build-tool-gradle').setValue()
+    expect(wizard.meta.buildTool).toBe('gradle')
+    await wrapper.find('#build-tool-maven').setValue()
+    expect(wizard.meta.buildTool).toBe('maven')
+  })
+})
+
 describe('WizardForm', () => {
   it('第四步渲染生成按钮，校验失败时禁用', async () => {
     mockApi.validate.mockResolvedValue({ valid: false, errors: { group: 'group 非法' } })
@@ -116,7 +131,7 @@ describe('WizardForm', () => {
     const wrapper = mountPage()
     const wizard = useWizardStore()
     wizard.step = 4
-    wizard.meta = { group: 'g', artifact: 'a', packageName: 'p', packageTouched: true }
+    wizard.meta = { group: 'g', artifact: 'a', packageName: 'p', packageTouched: true, buildTool: 'maven' }
     wizard.validationErrors = {}
     wizard.submitState = 'generating'
     await wrapper.vm.$nextTick()
@@ -130,7 +145,7 @@ describe('WizardForm', () => {
     const wrapper = mountPage()
     const wizard = useWizardStore()
     wizard.step = 4
-    wizard.meta = { group: 'g', artifact: 'a', packageName: 'p', packageTouched: true }
+    wizard.meta = { group: 'g', artifact: 'a', packageName: 'p', packageTouched: true, buildTool: 'maven' }
     wizard.validationErrors = {}
     wizard.errorMessage = '生成失败：[2001] 版本组合不兼容'
     await wrapper.vm.$nextTick()

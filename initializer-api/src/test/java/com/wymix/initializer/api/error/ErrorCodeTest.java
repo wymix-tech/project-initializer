@@ -17,6 +17,11 @@ class ErrorCodeTest {
     }
 
     @Test
+    void invalidBuildTool_codeIs1004() {
+        assertThat(ErrorCode.INVALID_BUILD_TOOL.getCode()).isEqualTo(1004);
+    }
+
+    @Test
     void businessException_usesDetailWhenPresent() {
         BusinessException e = new BusinessException(ErrorCode.INVALID_METADATA, "group 非法");
         assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INVALID_METADATA);
