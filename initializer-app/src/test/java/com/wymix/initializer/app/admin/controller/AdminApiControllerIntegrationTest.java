@@ -177,6 +177,69 @@ class AdminApiControllerIntegrationTest {
     }
 
     @Test
+    void publish_newConfig_takesEffectImmediatelyOnReadPaths() {
+        // M3.2 核心验收：发布后元数据/生成读路径即时热生效（无需重启）
+        // 发布带自定义 label 的草稿（与内置 metadata.yml 不同的新 Java 版本集）
+        assertThat(publish(VALID_METADATA).getStatusCode().value()).isEqualTo(200);
+
+        HttpHeaders jsonHeaders = new HttpHeaders();
+        jsonHeaders.setContentType(MediaType.APPLICATION_JSON);
+
+        // 元数据读路径即时反映新快照：内置清单有 4 个 Java 版本，新快照仅 1 个
+        ResponseEntity<String> versions = rest.exchange("/api/metadata/java-versions",
+                HttpMethod.GET, new HttpEntity<>(jsonHeaders), String.class);
+        assertThat(versions.getStatusCode().value()).isEqualTo(200);
+        assertThat(versions.getBody()).contains("\"id\":\"17\"");
+        assertThat(versions.getBody()).doesNotContain("\"id\":\"8\"");
+
+        // 生成链路同样走新快照：仅新快照定义的版本组合可用
+        String generateBody = """
+                {
+                  "group": "com.example",
+                  "artifact": "hot-app",
+                  "packageName": "com.example.hot",
+                  "javaVersion": "17",
+                  "bootVersion": "3.2.5",
+                  "starters": ["web"]
+                }
+                """;
+        ResponseEntity<String> generate = rest.exchange("/api/generate", HttpMethod.POST,
+                new HttpEntity<>(generateBody, jsonHeaders), String.class);
+        assertThat(generate.getStatusCode().value())
+                .as("generate 响应: %s", generate.getBody())
+                .isEqualTo(200);
+
+        // 不在新快照版本集中的旧版本组合 → 新快照语义拒绝（2002 语义）
+        String staleBody = generateBody.replace("\"javaVersion\": \"17\"", "\"javaVersion\": \"8\"");
+        ResponseEntity<String> stale = rest.exchange("/api/generate", HttpMethod.POST,
+                new HttpEntity<>(staleBody, jsonHeaders), String.class);
+        assertThat(stale.getStatusCode().value()).isEqualTo(422);
+        assertThat(stale.getBody()).contains("2001");
+    }
+
+    @Test
+    void rollback_endpoint_roundTripsThroughHttp() {
+        // 发布两次 → 回滚到第一版
+        assertThat(publish(VALID_METADATA).getStatusCode().value()).isEqualTo(200);
+        String body = "{\"operator\":\"tester\",\"remark\":\"回滚集成测试\"}";
+        // 取发布历史第一条（最新）
+        ResponseEntity<String> releases = rest.exchange("/api/admin/releases",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        String firstId = releases.getBody().replaceAll(".*\"id\":(\\d+).*", "$1");
+
+        ResponseEntity<String> rolled = rest.exchange("/api/admin/releases/" + firstId + "/rollback",
+                HttpMethod.POST, new HttpEntity<>(body, adminHeaders()), String.class);
+        assertThat(rolled.getStatusCode().value()).isEqualTo(200);
+        assertThat(rolled.getBody()).contains("releaseId");
+
+        // 未知发布 ID 回滚 → 4002
+        ResponseEntity<String> unknown = rest.exchange("/api/admin/releases/-1/rollback",
+                HttpMethod.POST, new HttpEntity<>(body, adminHeaders()), String.class);
+        assertThat(unknown.getStatusCode().value()).isEqualTo(422);
+        assertThat(unknown.getBody()).contains("4002");
+    }
+
+    @Test
     void publish_withoutMetadataDraft_returns422With4002() {
         // TEMPLATE kind 未发布过且无 metadata 内容缺失路径——直接用新库语义：publish 校验缺失 metadata 草稿
         // 注意：前置发布可能已写入 METADATA 草稿，此处仅验证空内容草稿路径（contentYaml 为 null 的 kind 不影响）

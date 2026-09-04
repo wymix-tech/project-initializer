@@ -28,7 +28,8 @@ class GeneratorServiceTest {
             var starterCatalog = com.wymix.initializer.core.starter.StarterCatalog.of(java.util.List.of());
             ProjectGenerator generator = new ProjectGenerator(catalog,
                     new com.wymix.initializer.core.generator.TemplateRenderer(), starterCatalog);
-            service = new GeneratorService(generator, new ValidationService(
+            service = new GeneratorService(new com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder(),
+                    generator, new ValidationService(
                     com.wymix.initializer.core.validation.ValidationRules.load(
                             getClass().getResourceAsStream("/catalog/validation.yml"))));
         }

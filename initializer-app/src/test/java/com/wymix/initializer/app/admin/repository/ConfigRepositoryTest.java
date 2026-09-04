@@ -62,7 +62,7 @@ class ConfigRepositoryTest {
 
     @Test
     void insertRelease_andListReleases() {
-        repository.insertRelease("m: 1", "s: 1", "tester", "首次发布");
+        repository.insertRelease("m: 1", "s: 1", null, "tester", "首次发布");
         List<ConfigReleaseEntity> releases = repository.listReleases();
         assertThat(releases).isNotEmpty();
         assertThat(releases.get(0).getMetadataYaml()).isEqualTo("m: 1");

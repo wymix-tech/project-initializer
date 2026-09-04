@@ -25,6 +25,9 @@ public class ConfigReleaseEntity {
     /** 发布时的 starter 配置全文（YAML） */
     private String starterYaml;
 
+    /** 发布时的 template 配置全文（YAML 多文档，M3.2；可空 = 无模板覆盖） */
+    private String templateYaml;
+
     /** 发布人 */
     private String releasedBy;
 
@@ -52,6 +55,14 @@ public class ConfigReleaseEntity {
 
     public String getStarterYaml() {
         return starterYaml;
+    }
+
+    public String getTemplateYaml() {
+        return templateYaml;
+    }
+
+    public void setTemplateYaml(String templateYaml) {
+        this.templateYaml = templateYaml;
     }
 
     public void setStarterYaml(String starterYaml) {
