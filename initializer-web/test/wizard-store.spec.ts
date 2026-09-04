@@ -34,8 +34,8 @@ const bootVersions: BootVersion[] = [
   { id: '3.2.5', label: '3.2.5', official: true },
 ]
 const starters: Starter[] = [
-  { id: 'web', label: 'Spring Web', maintainer: 'official' as const },
-  { id: 'data-jpa', label: 'Spring Data JPA', maintainer: 'official' as const },
+  { id: 'web', label: 'Spring Web', maintainer: 'official' as const, category: 'web', description: 'Spring MVC' },
+  { id: 'data-jpa', label: 'Spring Data JPA', maintainer: 'official' as const, category: 'data', description: 'JPA' },
 ]
 
 beforeEach(() => {

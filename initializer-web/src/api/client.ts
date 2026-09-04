@@ -62,9 +62,12 @@ export const api = {
     )
   },
 
-  /** 指定 Boot 版本下可用 starter 清单。 */
-  listStarters(boot: string): Promise<Starter[]> {
-    return fetch(`/api/metadata/starters?${queryString({ boot })}`).then(
+  /** 指定 Boot 版本下可用 starter 清单（M3.4：q/category 可选过滤）。 */
+  listStarters(boot: string, q?: string, category?: string): Promise<Starter[]> {
+    const params: Record<string, string> = { boot }
+    if (q) params.q = q
+    if (category) params.category = category
+    return fetch(`/api/metadata/starters?${queryString(params)}`).then(
       handleResponse<Starter[]>,
     )
   },

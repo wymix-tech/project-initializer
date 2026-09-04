@@ -21,6 +21,9 @@ export const useWizardStore = defineStore('wizard', {
     javaVersions: [] as JavaVersion[],
     bootVersions: [] as BootVersion[],
     starters: [] as Starter[],
+    /** M3.4：starter 搜索关键字与分类过滤条件 */
+    starterKeyword: '' as string,
+    starterCategory: '' as string,
     selectedJava: '' as string,
     selectedBoot: '' as string,
     selectedStarters: new Set<string>() as Set<string>,
@@ -102,13 +105,32 @@ export const useWizardStore = defineStore('wizard', {
       }
     },
 
-    /** 选择 Boot 版本：联动拉取 starter 清单。 */
+    /** 选择 Boot 版本：联动拉取 starter 清单（携带当前搜索条件）。 */
     async selectBoot(bootId: string): Promise<void> {
       this.selectedBoot = bootId
       this.selectedStarters = new Set()
+      this.starterKeyword = ''
+      this.starterCategory = ''
       this.loading = true
       try {
         this.starters = await api.listStarters(bootId)
+      } finally {
+        this.loading = false
+      }
+    },
+
+    /** M3.4：更新搜索条件并按条件重新拉取 starter 清单。 */
+    async setSearch(keyword: string, category: string): Promise<void> {
+      this.starterKeyword = keyword
+      this.starterCategory = category
+      if (this.selectedBoot === '') return
+      this.loading = true
+      try {
+        this.starters = await api.listStarters(
+          this.selectedBoot,
+          keyword || undefined,
+          category || undefined,
+        )
       } finally {
         this.loading = false
       }

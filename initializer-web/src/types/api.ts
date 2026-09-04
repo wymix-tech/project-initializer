@@ -17,12 +17,16 @@ export interface BootVersion {
   official: boolean
 }
 
-/** starter 清单项：GET /api/metadata/starters?boot= */
+/** starter 清单项：GET /api/metadata/starters?boot=&q=&category= */
 export interface Starter {
   id: string
   label: string
   /** 维护方：official 官方 / internal 内部 */
   maintainer: 'official' | 'internal'
+  /** 分类（M3.4）：web / data / middleware / tool；清单未登记时为 null */
+  category: string | null
+  /** 描述（M3.4）：清单未登记时为 null */
+  description: string | null
 }
 
 /** 元信息校验结果：POST /api/validate */
