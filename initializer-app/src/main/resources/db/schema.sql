@@ -1,4 +1,4 @@
--- project-initializer 管理端配置存储（M3.1）
+-- project-initializer 管理端配置存储（M3.1/M3.2）
 -- H2 兼容 DDL；生产替换数据源时需按目标方言调整
 
 CREATE TABLE IF NOT EXISTS config_draft (
@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS config_release (
     id            BIGINT AUTO_INCREMENT PRIMARY KEY,
     metadata_yaml CLOB,
     starter_yaml  CLOB,
+    template_yaml CLOB,
     released_by   VARCHAR(64),
     released_at   TIMESTAMP,
     remark        VARCHAR(512)

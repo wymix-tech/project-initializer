@@ -168,6 +168,83 @@ class CatalogRefresherTest {
     }
 
     @Test
+    void validateAndBuild_templateOverrides_builtIntoSnapshot() {
+        String templateYaml = """
+                name: README.md.ftl
+                content: |
+                  # ${artifact}（管理端自定义模板）
+                ---
+                name: starters/xxx-redis/RedisConfig.java.ftl
+                content: |
+                  // 自定义 Redis 配置 ${basePackage}
+                """;
+        CatalogSnapshot snapshot = refresher.validateAndBuild(METADATA_YAML, STARTER_YAML, templateYaml);
+        assertThat(snapshot.templateOverrides()).containsOnlyKeys(
+                "README.md.ftl", "starters/xxx-redis/RedisConfig.java.ftl");
+        assertThat(snapshot.templateOverrides().get("README.md.ftl")).contains("管理端自定义模板");
+    }
+
+    @Test
+    void validateAndBuild_nullTemplateYaml_emptyOverrides() {
+        CatalogSnapshot snapshot = refresher.validateAndBuild(METADATA_YAML, STARTER_YAML, null);
+        assertThat(snapshot.templateOverrides()).isEmpty();
+    }
+
+    @Test
+    void validateAndBuild_templateMissingName_throws4002() {
+        String bad = "content: |\n  hello\n";
+        assertThatThrownBy(() -> refresher.validateAndBuild(METADATA_YAML, STARTER_YAML, bad))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED))
+                .hasMessageContaining("name");
+    }
+
+    @Test
+    void validateAndBuild_templateMissingContent_throws4002() {
+        String bad = "name: README.md.ftl\n";
+        assertThatThrownBy(() -> refresher.validateAndBuild(METADATA_YAML, STARTER_YAML, bad))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED))
+                .hasMessageContaining("content");
+    }
+
+    @Test
+    void validateAndBuild_templateDuplicateName_throws4002() {
+        String bad = """
+                name: README.md.ftl
+                content: |
+                  v1
+                ---
+                name: README.md.ftl
+                content: |
+                  v2
+                """;
+        assertThatThrownBy(() -> refresher.validateAndBuild(METADATA_YAML, STARTER_YAML, bad))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED))
+                .hasMessageContaining("重复");
+    }
+
+    @Test
+    void validateAndBuild_templateBadFreemarkerSyntax_throws4002() {
+        // 未闭合的 FreeMarker 指令 → 发布期语法预校验拒绝，坏模板不进快照
+        String bad = "name: README.md.ftl\ncontent: |\n  <#if broken>\n";
+        assertThatThrownBy(() -> refresher.validateAndBuild(METADATA_YAML, STARTER_YAML, bad))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED))
+                .hasMessageContaining("语法非法");
+    }
+
+    @Test
+    void validateAndBuild_templateTopLevelNotMap_throws4002() {
+        String bad = "- just\n- a list\n";
+        assertThatThrownBy(() -> refresher.validateAndBuild(METADATA_YAML, STARTER_YAML, bad))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED))
+                .hasMessageContaining("映射结构");
+    }
+
+    @Test
     void realClasspathFixtures_passValidation() throws Exception {
         // 真实资源回归：classpath 内置清单通过同一校验器（保证发布链路与启动装载口径一致）
         try (InputStream metadataIn = getClass().getResourceAsStream("/catalog/metadata.yml")) {

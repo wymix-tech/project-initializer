@@ -53,6 +53,47 @@ class TemplateRendererTest {
     }
 
     @Test
+    void overrideTemplate_takesPrecedenceOverClasspath() {
+        TemplateRenderer overridden = new TemplateRenderer(Map.of(
+                "application.yml.ftl", "spring:\n  application:\n    name: overridden-name\n"));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        overridden.render("application.yml.ftl", model(), out);
+        assertThat(out.toString(StandardCharsets.UTF_8)).contains("name: overridden-name");
+    }
+
+    @Test
+    void overrideTemplate_uncoveredFallsBackToClasspath() {
+        // 覆盖映射只含 README：pom.xml 仍走 classpath 内置模板（兜底语义）
+        TemplateRenderer partial = new TemplateRenderer(Map.of("README.md.ftl", "x"));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        partial.render("application.yml.ftl", model(), out);
+        assertThat(out.toString(StandardCharsets.UTF_8)).contains("name: demo-app");
+    }
+
+    @Test
+    void overrideTemplate_emptyMap_equivalentToDefault() {
+        TemplateRenderer empty = new TemplateRenderer(Map.of());
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        empty.render("application.yml.ftl", model(), out);
+        assertThat(out.toString(StandardCharsets.UTF_8)).contains("name: demo-app");
+    }
+
+    @Test
+    void validate_badSyntax_throws3001() {
+        TemplateRenderer renderer = new TemplateRenderer();
+        assertThatThrownBy(() -> renderer.validate("bad.ftl", "<#if unclosed>"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.TEMPLATE_RENDER_FAILED))
+                .hasMessageContaining("bad.ftl");
+    }
+
+    @Test
+    void validate_goodSyntax_passes() {
+        TemplateRenderer renderer = new TemplateRenderer();
+        renderer.validate("ok.ftl", "hello ${name}");
+    }
+
+    @Test
     void missingTemplateShouldThrow3001() {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         assertThatThrownBy(() -> renderer.render("no-such.ftl", model(), out))

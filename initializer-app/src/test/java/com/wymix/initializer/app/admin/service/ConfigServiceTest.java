@@ -122,6 +122,103 @@ class ConfigServiceTest {
     }
 
     @Test
+    void publish_withTemplateDraft_templateOverridesHotSwap() {
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
+                METADATA_YAML, null, "tester");
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE,
+                "name: README.md.ftl\ncontent: |\n  # 自定义产物说明\n", null, "tester");
+        PublishResult result = configService.publish("tester", "模板覆盖发布");
+
+        assertThat(result.templateOverrideCount()).isEqualTo(1);
+        assertThat(snapshotHolder.current().templateOverrides()).containsKey("README.md.ftl");
+    }
+
+    @Test
+    void publish_withBadTemplateDraft_throws4002_andKeepsOldSnapshot() {
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
+                METADATA_YAML, null, "tester");
+        configService.publish("tester", "基准快照");
+        CatalogSnapshot old = snapshotHolder.current();
+
+        // 坏模板（语法非法）发布被拒，旧快照继续服务
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE,
+                "name: README.md.ftl\ncontent: |\n  <#if broken>\n", null, "tester");
+        assertThatThrownBy(() -> configService.publish("tester", "坏模板发布"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED));
+        assertThat(snapshotHolder.current()).isSameAs(old);
+    }
+
+    @Test
+    void rollback_toRelease_rebuildsSnapshotAtomically() {
+        // 第一版：仅 metadata
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
+                METADATA_YAML, null, "tester");
+        long v1 = configService.publish("tester", "v1").releaseId();
+
+        // 第二版：加模板覆盖
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE,
+                "name: README.md.ftl\ncontent: |\n  # v2 自定义\n", null, "tester");
+        PublishResult v2 = configService.publish("tester", "v2");
+        assertThat(snapshotHolder.current().templateOverrides()).isNotEmpty();
+
+        // 回滚到 v1 → 模板覆盖清空，metadata 保留
+        PublishResult rolled = configService.rollback(v1, "tester");
+        assertThat(rolled.releaseId()).isPositive().isNotEqualTo(v1);
+        assertThat(rolled.templateOverrideCount()).isZero();
+        CatalogSnapshot after = snapshotHolder.current();
+        assertThat(after.templateOverrides()).isEmpty();
+        assertThat(after.metadataCatalog().javaVersions()).hasSize(1);
+
+        // 审计留痕
+        assertThat(configService.listAudits())
+                .extracting(a -> a.getAction())
+                .contains(ConfigService.ACTION_ROLLBACK);
+    }
+
+    @Test
+    void rollback_unknownRelease_throws4002_andKeepsSnapshot() {
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
+                METADATA_YAML, null, "tester");
+        configService.publish("tester", "基准");
+        CatalogSnapshot old = snapshotHolder.current();
+
+        assertThatThrownBy(() -> configService.rollback(-99L, "tester"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED))
+                .hasMessageContaining("不存在");
+        assertThat(snapshotHolder.current()).isSameAs(old);
+        assertThat(configService.listAudits())
+                .extracting(a -> a.getAction())
+                .contains(ConfigService.ACTION_ROLLBACK_FAILED);
+    }
+
+    @Test
+    void rollback_invalidHistory_throws4002_andKeepsCurrentSnapshot(@Autowired org.springframework.context.ApplicationContext ctx) {
+        // v1 合法发布 → 直接篡改历史记录全文（模拟历史版本因装载规则演进失效）
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
+                METADATA_YAML, null, "tester");
+        long v1 = configService.publish("tester", "v1").releaseId();
+        CatalogSnapshot current = snapshotHolder.current();
+
+        // 注入悬空引用非法全文到历史记录（绕过草稿通道，模拟历史损坏）
+        var mapper = ctx.getBean(com.wymix.initializer.app.admin.mapper.ConfigReleaseMapper.class);
+        var release = mapper.selectById(v1);
+        release.setMetadataYaml(METADATA_YAML.replace("starters: [\"web\"]", "starters: [\"ghost\"]"));
+        mapper.updateById(release);
+
+        assertThatThrownBy(() -> configService.rollback(v1, "tester"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED))
+                .hasMessageContaining("ghost");
+        // 当前快照不受回滚失败影响
+        assertThat(snapshotHolder.current()).isSameAs(current);
+        assertThat(configService.listAudits())
+                .extracting(a -> a.getAction())
+                .contains(ConfigService.ACTION_ROLLBACK_FAILED);
+    }
+
+    @Test
     void publish_withInvalidDraft_throws4002_andKeepsOldSnapshotServing() {
         // 前置：先成功发布一次，拿到旧快照
         configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,

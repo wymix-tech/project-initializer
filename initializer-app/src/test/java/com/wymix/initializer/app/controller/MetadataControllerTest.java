@@ -25,7 +25,9 @@ class MetadataControllerTest {
     @BeforeEach
     void setUp() throws Exception {
         try (InputStream in = getClass().getClassLoader().getResourceAsStream("catalog/metadata.yml")) {
-            MetadataService service = new MetadataService(MetadataCatalog.load(in),
+            MetadataService service = new MetadataService(
+                    new com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder(),
+                    MetadataCatalog.load(in),
                     com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
             mockMvc = MockMvcBuilders.standaloneSetup(new MetadataController(service))
                     .setControllerAdvice(new GlobalExceptionHandler())

@@ -22,11 +22,12 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * 管理端配置接口（M3.1）：{@code /api/admin/**}，均需 {@code X-Admin-Token} 鉴权
+ * 管理端配置接口（M3.1/M3.2）：{@code /api/admin/**}，均需 {@code X-Admin-Token} 鉴权
  * （{@link AdminAuthFilter} 前置拦截）。
  *
- * <p>草稿-生效分离：GET/PUT 只操作草稿，POST /publish 才触发校验 + 快照切换。
- * 错误语义：草稿缺失 4001、发布校验失败 4002、乐观锁冲突 4003（全局异常处理器统一映射）。
+ * <p>草稿-生效分离：GET/PUT 只操作草稿，POST /publish 才触发校验 + 快照切换；
+ * M3.2 支持 POST /releases/{id}/rollback 回滚到历史发布（重新走完整校验通道）。
+ * 错误语义：草稿缺失 4001、发布/回滚校验失败 4002、乐观锁冲突 4003（全局异常处理器统一映射）。
  *
  * <p>线程安全性：无状态单例，线程安全。
  */
@@ -82,6 +83,19 @@ public class AdminApiController {
     @PostMapping("/config/publish")
     public PublishResult publish(@Valid @RequestBody PublishRequest request) {
         return configService.publish(request.operator(), request.remark());
+    }
+
+    /**
+     * 回滚到指定历史发布（M3.2）：目标版本全文重新走完整发布校验，通过后原子切换。
+     *
+     * @param releaseId 发布记录 ID
+     * @param request   回滚请求（操作人必填）
+     * @return 回滚结果（新发布记录 ID + 快照概况）
+     */
+    @PostMapping("/releases/{releaseId}/rollback")
+    public PublishResult rollback(@PathVariable("releaseId") long releaseId,
+                                  @Valid @RequestBody PublishRequest request) {
+        return configService.rollback(releaseId, request.operator());
     }
 
     /** @return 发布历史（最新在前） */

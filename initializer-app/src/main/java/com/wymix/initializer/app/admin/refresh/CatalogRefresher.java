@@ -2,6 +2,7 @@ package com.wymix.initializer.app.admin.refresh;
 
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
+import com.wymix.initializer.core.generator.TemplateRenderer;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
 import com.wymix.initializer.core.starter.StarterCatalog;
 import com.wymix.initializer.core.starter.StarterCatalogEntry;
@@ -9,20 +10,26 @@ import com.wymix.initializer.core.starter.YamlStarterParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 清单热刷新器（M3.1/M3.2）：草稿 YAML → 装载期校验 → 快照构建 → 原子切换。
  *
- * <p>失败语义：任一步失败抛 {@link BusinessException}（4002/4006），
+ * <p>失败语义：任一步失败抛 {@link BusinessException}（4002/9002/3001 收敛），
  * 快照引用保持不变，生成服务无感；草稿保留可继续编辑。
  *
  * <p>starter 草稿格式：与 {@code catalog/starters/*.yml} 同构的配置流，
- * 多 starter 以 YAML 多文档（--- 分隔）表达；METADATA 草稿与 {@code metadata.yml} 同构。
+ * 多 starter 以 YAML 多文档（--- 分隔）表达；METADATA 草稿与 {@code metadata.yml} 同构；
+ * TEMPLATE 草稿（M3.2）为多文档映射 {@code {name, content}}，name 相对 templates/ 目录。
  *
  * <p>线程安全性：无状态单例（校验逻辑纯函数式），线程安全。
  */
@@ -34,24 +41,41 @@ public class CatalogRefresher {
     /** StarterCatalog 装载失败错误码（9002，与 classpath 装载口径一致）。 */
     private static final ErrorCode STARTER_INVALID = ErrorCode.STARTER_CATALOG_INVALID;
 
+    /** 发布期模板语法校验器（classpath 兜底模板集上下文）。 */
+    private final TemplateRenderer templateValidator = new TemplateRenderer();
+
     /**
      * 校验并构建快照（不切换，切换由 {@link CatalogSnapshotHolder} 负责）。
      *
      * @param metadataYaml metadata 草稿全文（null 时拒绝——首发快照必须显式提供）
      * @param starterYaml  starter 草稿全文（多文档），null 时视为空清单
+     * @param templateYaml TEMPLATE 草稿全文（多文档 {name, content}），null 时视为无模板覆盖
      * @return 校验通过的新快照
-     * @throws BusinessException 解析/装载校验失败（4002：metadata 缺失或 starter 清单非法）
+     * @throws BusinessException 解析/装载校验失败（4002：metadata 缺失或 starter/模板清单非法）
      */
-    public CatalogSnapshot validateAndBuild(String metadataYaml, String starterYaml) {
+    public CatalogSnapshot validateAndBuild(String metadataYaml, String starterYaml, String templateYaml) {
         if (metadataYaml == null || metadataYaml.isBlank()) {
             throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
                     "发布校验失败: metadata 配置缺失，首发快照必须显式提供 metadata.yml 同构配置");
         }
         MetadataCatalog metadataCatalog = parseMetadata(metadataYaml);
         StarterCatalog starterCatalog = parseStarters(starterYaml);
+        Map<String, String> templateOverrides = parseTemplates(templateYaml);
         // 交叉校验：metadata.bootVersions.starters 引用的 starter 必须在 starter 清单登记
         validateCrossReferences(metadataCatalog, starterCatalog);
-        return new CatalogSnapshot(metadataCatalog, starterCatalog);
+        return new CatalogSnapshot(metadataCatalog, starterCatalog, templateOverrides);
+    }
+
+    /**
+     * M3.1 兼容重载：无模板覆盖。
+     *
+     * @param metadataYaml metadata 草稿全文
+     * @param starterYaml  starter 草稿全文（多文档）
+     * @return 校验通过的新快照
+     * @throws BusinessException 解析/装载校验失败
+     */
+    public CatalogSnapshot validateAndBuild(String metadataYaml, String starterYaml) {
+        return validateAndBuild(metadataYaml, starterYaml, null);
     }
 
     /**
@@ -92,6 +116,59 @@ public class CatalogRefresher {
             throw new BusinessException(STARTER_INVALID,
                     "发布校验失败: starter 清单非法: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 解析 TEMPLATE 草稿（M3.2）：多文档映射 {@code {name, content}}，构建模板覆盖映射。
+     *
+     * <p>装载期校验：name/content 必填、模板名不得重复、FreeMarker 语法预校验
+     * （语法非法发布即拒绝，绝不让坏模板进入快照）。
+     *
+     * @param templateYaml 模板草稿全文（可空）
+     * @return 模板名 → 模板全文映射（无覆盖时为空映射）
+     * @throws BusinessException 模板草稿非法（4002）
+     */
+    private Map<String, String> parseTemplates(String templateYaml) {
+        if (templateYaml == null || templateYaml.isBlank()) {
+            return Map.of();
+        }
+        Map<String, String> overrides = new LinkedHashMap<>();
+        for (String document : splitDocuments(templateYaml)) {
+            Object root;
+            try {
+                root = new Yaml(new SafeConstructor(new LoaderOptions())).load(document);
+            } catch (RuntimeException e) {
+                throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
+                        "发布校验失败: template 配置解析失败: " + e.getMessage(), e);
+            }
+            if (!(root instanceof Map<?, ?> map)) {
+                throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
+                        "发布校验失败: template 文档顶层必须为映射结构（含 name 与 content 字段）");
+            }
+            Object name = map.get("name");
+            Object content = map.get("content");
+            if (name == null || name.toString().isBlank()) {
+                throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
+                        "发布校验失败: template 缺少必需字段: name");
+            }
+            if (content == null || content.toString().isBlank()) {
+                throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
+                        "发布校验失败: template " + name + " 缺少必需字段: content");
+            }
+            String templateName = name.toString().trim();
+            if (overrides.putIfAbsent(templateName, content.toString()) != null) {
+                throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
+                        "发布校验失败: template 名称重复: " + templateName);
+            }
+            // FreeMarker 语法预校验：坏模板发布期即拒绝，不进入快照
+            try {
+                templateValidator.validate(templateName, content.toString());
+            } catch (BusinessException e) {
+                throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED, e.getMessage(), e);
+            }
+        }
+        log.info("模板覆盖装载完成: {} 个模板", overrides.size());
+        return overrides;
     }
 
     /**

@@ -14,10 +14,12 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * 配置存储仓库（M3.1）：收口三张 config 表的全部读写，service 层不接触 Mapper 细节。
+ * 配置存储仓库（M3.1/M3.2）：收口三张 config 表的全部读写，service 层不接触 Mapper 细节。
  *
- * <p>乐观锁依赖 MyBatis-Plus {@link OptimisticLockerInnerInterceptor}：
+ * <p>乐观锁依赖 MyBatis-Plus {@link org.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor}：
  * {@link #updateDraft} 携带加载时 version 更新，版本不匹配影响行数为 0 → 抛 4003。
+ *
+ * <p>M3.2：发布历史扩展模板全文列，回滚可完整重建快照。
  *
  * <p>线程安全性：无状态单例，线程安全。
  */
@@ -88,19 +90,21 @@ public class ConfigRepository {
     }
 
     /**
-     * 发布落库：写一版发布历史。
+     * 发布落库：写一版发布历史（M3.2 扩展模板全文列，可空 = 无模板覆盖）。
      *
      * @param metadataYaml 发布时点 metadata 配置全文
      * @param starterYaml  发布时点 starter 配置全文
+     * @param templateYaml 发布时点 template 配置全文（可空）
      * @param releasedBy   发布人
      * @param remark       发布备注
      * @return 落库后的发布记录（含自增 id）
      */
-    public ConfigReleaseEntity insertRelease(String metadataYaml, String starterYaml,
+    public ConfigReleaseEntity insertRelease(String metadataYaml, String starterYaml, String templateYaml,
                                              String releasedBy, String remark) {
         ConfigReleaseEntity release = new ConfigReleaseEntity();
         release.setMetadataYaml(metadataYaml);
         release.setStarterYaml(starterYaml);
+        release.setTemplateYaml(templateYaml);
         release.setReleasedBy(releasedBy);
         release.setReleasedAt(Instant.now());
         release.setRemark(remark);
