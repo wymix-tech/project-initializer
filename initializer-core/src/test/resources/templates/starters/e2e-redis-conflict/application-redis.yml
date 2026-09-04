@@ -1,0 +1,5 @@
+spring:
+  redis:
+    host: ${REDIS_HOST:redis.internal.company.com}
+    port: ${REDIS_PORT:6380}
+    password: ${REDIS_PASSWORD:}

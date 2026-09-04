@@ -1,0 +1,14 @@
+# M2.5 target 冲突负向用例专用内部 starter：与 xxx-redis-e2e 声明同 target 模板路径
+id: another-redis-e2e-spring-boot-starter
+category: middleware
+maintainer: internal
+description: 内部 Redis 封装 starter 变体（与上者同 target，冲突用例）
+dependencies:
+  - groupId: com.company
+    artifactId: another-redis-e2e-spring-boot-starter
+    version: "0.9.0"
+linkages:
+  config-package: "{basePackage}.config"
+  templates:
+    - source: "starters/e2e-redis/RedisConfig.java.ftl"
+      target: "src/main/java/{packagePath}/config/RedisConfig.java"

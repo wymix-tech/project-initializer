@@ -1,0 +1,20 @@
+# M2.5 端到端快照专用内部 starter：模拟真实内部封装 starter 的完整联动声明
+id: xxx-redis-e2e-spring-boot-starter
+category: middleware
+maintainer: internal
+description: 内部 Redis 封装 starter（含集成抽象类 RedisSupport）
+dependencies:
+  - groupId: com.company
+    artifactId: xxx-redis-e2e-spring-boot-starter
+    version: "1.2.0"
+linkages:
+  config-package: "{basePackage}.config"
+  templates:
+    - source: "starters/e2e-redis/RedisConfig.java.ftl"
+      target: "src/main/java/{packagePath}/config/RedisConfig.java"
+  application-yml-fragments:
+    - source: "starters/e2e-redis/application-redis.yml"
+      merge-strategy: append
+  abstract-classes:
+    - fqcn: "com.company.redis.RedisSupport"
+      alias: redisSupport

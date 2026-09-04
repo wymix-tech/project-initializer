@@ -1,0 +1,13 @@
+# M2.5 yml 冲突负向用例专用 starter：片段同 key 不同值，仅声明 yml 片段无模板联动
+id: yml-conflict-e2e-starter
+category: middleware
+maintainer: internal
+description: yml 片段冲突专用 starter（与 xxx-redis-e2e 同 key 不同值）
+dependencies:
+  - groupId: com.company
+    artifactId: yml-conflict-e2e-starter
+    version: "0.5.0"
+linkages:
+  application-yml-fragments:
+    - source: "starters/e2e-redis-conflict/application-redis.yml"
+      merge-strategy: append
