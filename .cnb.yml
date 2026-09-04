@@ -28,6 +28,18 @@ main:
           script: |-
             mvn -B -DskipTests install
             mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
+    - name: web-quality-gate
+      docker:
+        image: node:24
+      stages:
+        - name: web-install
+          script: cd initializer-web && npm ci
+        - name: web-typecheck
+          script: cd initializer-web && npm run typecheck
+        - name: web-unit-test-and-coverage
+          script: cd initializer-web && npm run test:coverage
+        - name: web-mutation-test
+          script: cd initializer-web && npm run test:mutation
 
 "feat/*":
   push:
@@ -43,3 +55,15 @@ main:
           script: |-
             mvn -B -DskipTests install
             mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
+    - name: web-quality-gate
+      docker:
+        image: node:24
+      stages:
+        - name: web-install
+          script: cd initializer-web && npm ci
+        - name: web-typecheck
+          script: cd initializer-web && npm run typecheck
+        - name: web-unit-test-and-coverage
+          script: cd initializer-web && npm run test:coverage
+        - name: web-mutation-test
+          script: cd initializer-web && npm run test:mutation
