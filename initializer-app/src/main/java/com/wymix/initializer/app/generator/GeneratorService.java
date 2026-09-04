@@ -28,15 +28,18 @@ public class GeneratorService {
     }
 
     /**
-     * 生成项目骨架 zip 字节流。
+     * 生成项目骨架 zip，流式写入目标输出流。
+     *
+     * <p>生成前完成元信息与版本组合的最终校验；校验失败或模板渲染失败时目标流不会被写入，
+     * 保证不输出半成品。
      *
      * @param request 生成请求
-     * @return 完整可用的 zip 字节流
+     * @param out     zip 输出流（不关闭，由调用方管理）
      * @throws BusinessException 元信息非法（1001）、版本组合问题（2001/2002）、生成失败（3001/3002/3003）
      */
-    public byte[] generate(GenerateRequest request) {
+    public void generate(GenerateRequest request, java.io.OutputStream out) {
         preValidate(request);
-        return projectGenerator.generate(request);
+        projectGenerator.generate(request, out);
     }
 
     /**

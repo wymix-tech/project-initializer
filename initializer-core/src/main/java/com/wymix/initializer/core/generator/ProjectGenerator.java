@@ -3,12 +3,14 @@ package com.wymix.initializer.core.generator;
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.core.metadata.BootVersion;
+import com.wymix.initializer.core.metadata.MavenDependency;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -55,6 +57,23 @@ public class ProjectGenerator {
         validateRequest(request);
         Map<String, byte[]> files = renderAll(request);
         return packZip(files);
+    }
+
+    /**
+     * 生成项目骨架 zip，流式写入目标输出流（不落内存全量缓冲）。
+     *
+     * <p>先完成全部校验与模板渲染再开始写流，任一环节失败不会写入任何字节，
+     * 调用方可保证不输出半成品。写流过程中的失败（3003）可能导致目标流内容不完整，
+     * 调用方应放弃该输出（HTTP 层以异常中断响应实现）。
+     *
+     * @param request 生成请求
+     * @param out     zip 输出流（本方法写入后不关闭，由调用方管理）
+     * @throws BusinessException 版本不兼容（2001）、版本未知（2002）、starter 非法（2002）、渲染失败（3001）、打包失败（3003）
+     */
+    public void generate(GenerateRequest request, OutputStream out) {
+        validateRequest(request);
+        Map<String, byte[]> files = renderAll(request);
+        writeZip(files, out);
     }
 
     /**
@@ -118,7 +137,23 @@ public class ProjectGenerator {
         model.put(TemplateRenderer.K_BOOT_VERSION, request.bootVersion());
         model.put(TemplateRenderer.K_JAVA_VERSION, request.javaVersion());
         model.put(TemplateRenderer.K_STARTERS, new ArrayList<>(request.starters()));
+        model.put(TemplateRenderer.K_STARTER_DEPENDENCIES, resolveStarterDependencies(request.starters()));
         return model;
+    }
+
+    /**
+     * starter → Maven 依赖坐标解析（配置驱动，来自 metadata.yml starters 节），供 pom.xml 模板渲染。
+     *
+     * @param starterIds starter ID 清单
+     * @return 依赖坐标模型清单（保持请求顺序）
+     */
+    private List<Map<String, String>> resolveStarterDependencies(List<String> starterIds) {
+        List<Map<String, String>> deps = new ArrayList<>();
+        for (String id : starterIds) {
+            MavenDependency dep = catalog.starterDefinition(id).dependency();
+            deps.add(Map.of("groupId", dep.groupId(), "artifactId", dep.artifactId()));
+        }
+        return deps;
     }
 
     /**
@@ -140,7 +175,13 @@ public class ProjectGenerator {
 
     private byte[] packZip(Map<String, byte[]> files) {
         ByteArrayOutputStream zipBuf = new ByteArrayOutputStream();
-        try (ZipArchiveOutputStream zip = new ZipArchiveOutputStream(zipBuf)) {
+        writeZip(files, zipBuf);
+        return zipBuf.toByteArray();
+    }
+
+    /** 将产物逐条写入 zip 输出流；IOException 统一收敛为 3003 业务异常。 */
+    private void writeZip(Map<String, byte[]> files, OutputStream out) {
+        try (ZipArchiveOutputStream zip = new ZipArchiveOutputStream(out)) {
             zip.setEncoding(StandardCharsets.UTF_8.name());
             for (Map.Entry<String, byte[]> entry : files.entrySet()) {
                 ZipArchiveEntry zipEntry = new ZipArchiveEntry(entry.getKey());
@@ -153,7 +194,6 @@ public class ProjectGenerator {
         } catch (IOException e) {
             throw new BusinessException(ErrorCode.ZIP_PACK_FAILED, "zip 打包失败: " + e.getMessage(), e);
         }
-        return zipBuf.toByteArray();
     }
 
     /** 内部渲染任务：模板名 + 目标产物路径。 */

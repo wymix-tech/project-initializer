@@ -38,9 +38,10 @@ class GeneratorServiceTest {
     }
 
     @Test
-    void validRequestShouldReturnZip() {
-        byte[] zip = service.generate(request());
-        assertThat(zip).isNotEmpty();
+    void validRequestShouldStreamZip() {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        service.generate(request(), out);
+        assertThat(out.toByteArray()).isNotEmpty();
         assertThat(service.zipFileName(request())).isEqualTo("demo-app.zip");
     }
 
@@ -48,8 +49,11 @@ class GeneratorServiceTest {
     void invalidGroupShouldThrow1001() {
         GenerateRequest bad = new GenerateRequest("Bad", "demo-app", "com.example.demo",
                 "17", "3.2.5", List.of("web"));
-        assertThatThrownBy(() -> service.generate(bad))
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        assertThatThrownBy(() -> service.generate(bad, out))
                 .isInstanceOfSatisfying(BusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INVALID_METADATA));
+        // 校验失败时输出流不应被写入（无半成品）
+        assertThat(out.size()).isZero();
     }
 }

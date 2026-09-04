@@ -29,3 +29,26 @@ bootVersions:
     official: true
     supportedJavaVersions: ["17", "21"]
     starters: ["web", "data-jpa", "data-redis", "actuator"]
+
+# starter 元信息：展示名 + Maven 依赖坐标映射（配置驱动，新增 starter 只改本节 + bootVersions.starters）
+starters:
+  web:
+    label: "Spring Web"
+    dependency:
+      groupId: "org.springframework.boot"
+      artifactId: "spring-boot-starter-web"
+  data-jpa:
+    label: "Spring Data JPA"
+    dependency:
+      groupId: "org.springframework.boot"
+      artifactId: "spring-boot-starter-data-jpa"
+  data-redis:
+    label: "Spring Data Redis"
+    dependency:
+      groupId: "org.springframework.boot"
+      artifactId: "spring-boot-starter-data-redis"
+  actuator:
+    label: "Spring Boot Actuator"
+    dependency:
+      groupId: "org.springframework.boot"
+      artifactId: "spring-boot-starter-actuator"
