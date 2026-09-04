@@ -1,0 +1,15 @@
+# 内部制品库同步 fixture（M3.3 MockCatalogSyncProvider 数据源）
+# 模拟制品库当前全量 starter 发布清单；真实制品库对接后由 RemoteCatalogSyncProvider 替代
+id: xxx-oss-spring-boot-starter
+category: middleware
+description: 内部 OSS 对象存储封装 starter
+groupId: com.company
+artifactId: xxx-oss-spring-boot-starter
+version: "1.0.0"
+---
+id: xxx-sms-spring-boot-starter
+category: tool
+description: 内部短信服务封装 starter
+groupId: com.company
+artifactId: xxx-sms-spring-boot-starter
+version: "2.1.3"

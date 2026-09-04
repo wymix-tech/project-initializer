@@ -8,8 +8,9 @@ import java.util.Locale;
 /**
  * 配置草稿种类（M3.1）：一 kind 一行存储，发布时按 kind 归并构建快照。
  *
- * <p>M3.1 首期落地 METADATA / STARTER 两种；CONFLICT_RULE / TEMPLATE 随 M3.2/M3.5 扩展，
- * 枚举先行收敛，避免 kind 字段散落魔法字符串。
+ * <p>M3.1 首期落地 METADATA / STARTER，M3.2 扩展 TEMPLATE，M3.3 扩展 STARTER_SYNC
+ * （制品库同步层，只读贡献者）；CONFLICT_RULE 随 M3.5 扩展。枚举先行收敛，
+ * 避免 kind 字段散落魔法字符串。
  *
  * <p>线程安全性：枚举实例天然线程安全。
  */
@@ -23,6 +24,9 @@ public enum ConfigKind {
 
     /** 依赖冲突规则（M3.5） */
     CONFLICT_RULE,
+
+    /** 制品库同步层草稿（M3.3）：同步条目多文档 yml，不触碰手工 STARTER 草稿 */
+    STARTER_SYNC,
 
     /** 生成模板（M3.2） */
     TEMPLATE;
@@ -39,7 +43,7 @@ public enum ConfigKind {
             return valueOf(raw.trim().toUpperCase(Locale.ROOT).replace('-', '_'));
         } catch (IllegalArgumentException e) {
             throw new BusinessException(ErrorCode.CONFIG_DRAFT_NOT_FOUND,
-                    "配置种类非法: " + raw + "（仅允许 metadata / starter / conflict-rule / template）");
+                    "配置种类非法: " + raw + "（仅允许 metadata / starter / conflict-rule / template / starter-sync）");
         }
     }
 

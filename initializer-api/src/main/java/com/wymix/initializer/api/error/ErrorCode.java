@@ -62,6 +62,9 @@ public enum ErrorCode {
     /** 配置热刷新失败（保留旧快照，明细随异常文案输出） */
     CONFIG_REFRESH_FAILED(4006, "配置热刷新失败"),
 
+    /** 制品库同步失败（拉取/解析异常；同步失败不触碰快照，审计留痕后可重试） */
+    SYNC_PROVIDER_FAILED(4005, "制品库同步失败"),
+
     /** 系统内部未知错误 */
     INTERNAL_ERROR(9001, "系统内部错误");
 

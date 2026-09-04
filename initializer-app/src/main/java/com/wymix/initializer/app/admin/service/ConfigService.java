@@ -62,6 +62,31 @@ public class ConfigService {
     }
 
     /**
+     * 三通道 starter 清单合并（M3.3）：手工草稿（STARTER）+ 制品库同步层草稿
+     * （STARTER_SYNC）多文档拼接为单一配置流。
+     *
+     * <p>同名条目以手工配置为准：拼接后 StarterCatalog 装载 ID 重复即失败（9002），
+     * 因此同步层草稿在写入期已剔除与手工同名条目（CatalogMerger 合并语义），
+     * 此处拼接是「先过滤后合并」链路的终点；若两通道出现同名（如同步后手工又新增），
+     * 发布期整体拒绝并在错误明细中提示，绝不静默覆盖手工配置。
+     *
+     * @param starterDraft 手工 starter 草稿（可空）
+     * @param syncDraft    制品库同步层草稿（可空）
+     * @return 合并后的 starter 多文档 yml（两通道均空返回 null）
+     */
+    public static String mergedStarterYaml(ConfigDraftEntity starterDraft, ConfigDraftEntity syncDraft) {
+        String manual = starterDraft == null ? null : starterDraft.getContentYaml();
+        String synced = syncDraft == null ? null : syncDraft.getContentYaml();
+        if (manual == null || manual.isBlank()) {
+            return synced == null || synced.isBlank() ? null : synced;
+        }
+        if (synced == null || synced.isBlank()) {
+            return manual;
+        }
+        return manual + "\n---\n" + synced;
+    }
+
+    /**
      * 读取指定种类当前草稿。
      *
      * @param kind 配置种类
@@ -122,12 +147,13 @@ public class ConfigService {
         ConfigDraftEntity metadataDraft = repository.findDraft(ConfigKind.METADATA);
         ConfigDraftEntity starterDraft = repository.findDraft(ConfigKind.STARTER);
         ConfigDraftEntity templateDraft = repository.findDraft(ConfigKind.TEMPLATE);
+        ConfigDraftEntity syncDraft = repository.findDraft(ConfigKind.STARTER_SYNC);
 
         CatalogSnapshot snapshot;
         try {
             snapshot = refresher.validateAndBuild(
                     metadataDraft == null ? null : metadataDraft.getContentYaml(),
-                    starterDraft == null ? null : starterDraft.getContentYaml(),
+                    mergedStarterYaml(starterDraft, syncDraft),
                     templateDraft == null ? null : templateDraft.getContentYaml());
         } catch (BusinessException e) {
             // 发布失败不写发布历史；审计留痕（含失败明细），供管理端展示
