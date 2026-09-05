@@ -95,10 +95,13 @@ npm run dev
 
 - `metadata.yml`：Java 版本清单、Boot 版本清单（官方 / 定制）、兼容矩阵、starter 依赖坐标映射
 - `starters/*.yml`：单 starter 一个描述文件——依赖坐标 + 联动规则（配置类模板、application.yml 片段、集成抽象类）
+- `validation.yml`：Group / Artifact / Package 命名校验规则
 
 **新增 starter = 新增一个 yml + 模板文件，生成器代码零改动。**
 
 管理后台（M3）支持清单/模板在线维护：草稿 → 发布 → 热生效；刷新失败自动回滚旧配置。支持从内部制品库自动同步 starter 清单（`INITIALIZER_SYNC_REMOTE_ENDPOINT`），与手工配置合并（同名以手工为准）。
+
+> 📘 **完整配置教程见 [docs/guide/configuration.md](docs/guide/configuration.md)**：涵盖 metadata.yml 兼容矩阵、starter 联动规则与模板编写、校验规则调整、管理后台草稿-发布-回滚 API 及制品库同步接入。
 
 ## 质量门禁（CI 强制）
 
