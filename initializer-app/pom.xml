@@ -12,6 +12,15 @@
     <name>initializer-app</name>
     <description>Spring Boot 启动模块：Controller、配置加载、装配</description>
 
+    <properties>
+        <!-- 前端工程目录（产物 initializer-web/dist 由构建期拷贝进 jar 的 static/） -->
+        <webapp.dir>${project.basedir}/../initializer-web</webapp.dir>
+        <!-- 跳过前端构建：-Dskip.web=true（无 Node 环境或仅需后端 jar 时使用，产物不含页面） -->
+        <skip.web>false</skip.web>
+        <!-- npm 可执行文件名，Windows 下由 os-windows profile 覆盖为 npm.cmd -->
+        <npm.executable>npm</npm.executable>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.wymix.initializer</groupId>
@@ -54,6 +63,77 @@
                         <goals>
                             <goal>repackage</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!--
+              前端构建集成：mvn package 时自动构建 initializer-web 并把 dist 产物
+              拷贝进 target/classes/static，由后端 Spring Boot 同源托管（无需 Nginx / 独立前端服务）。
+
+              绑定 prepare-package 而非 generate-resources：mvn test 不触发前端构建（单测保持快速），
+              仅打包产物时才构建页面。执行顺序：npm install → npm run build → 拷贝 dist → jar 打包。
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <id>npm-install</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>${npm.executable}</executable>
+                            <workingDirectory>${webapp.dir}</workingDirectory>
+                            <skip>${skip.web}</skip>
+                            <arguments>
+                                <argument>install</argument>
+                                <argument>--no-audit</argument>
+                                <argument>--no-fund</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-run-build</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>${npm.executable}</executable>
+                            <workingDirectory>${webapp.dir}</workingDirectory>
+                            <skip>${skip.web}</skip>
+                            <arguments>
+                                <argument>run</argument>
+                                <argument>build</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-frontend-dist</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${skip.web}</skip>
+                            <outputDirectory>${project.build.outputDirectory}/static</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${webapp.dir}/dist</directory>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
@@ -115,4 +195,19 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Windows 下 npm 可执行文件为 npm.cmd，避免 exec 插件找不到命令 -->
+        <profile>
+            <id>os-windows</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                </os>
+            </activation>
+            <properties>
+                <npm.executable>npm.cmd</npm.executable>
+            </properties>
+        </profile>
+    </profiles>
 </project>

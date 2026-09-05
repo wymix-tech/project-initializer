@@ -60,7 +60,27 @@ classpath: catalog/ 清单与模板 + 制品库同步适配器（M3）
 - JDK 17+、Maven 3.9+
 - Node.js 20+（前端开发）
 
-### 后端启动
+### 一键构建并启动（含前端页面）
+
+```bash
+mvn -B clean package -DskipTests      # 自动构建 initializer-web 并打进 jar
+java -jar initializer-app/target/initializer-app-0.1.0-SNAPSHOT.jar
+# 访问 http://localhost:8080 即为完整页面（后端同源托管，无需 Nginx / 独立前端服务）
+```
+
+构建流程在 `prepare-package` 阶段自动串联：`npm install` → `npm run build` → 拷贝 `initializer-web/dist` 到 `target/classes/static` → jar 打包。因此**只需 8080 一个端口**，前端 API 为相对路径 `/api`，天然同源联通。
+
+无 Node 环境或仅需后端 jar 时可跳过前端构建（产物含 API 但无页面）：
+
+```bash
+mvn -B clean package -DskipTests -Dskip.web=true
+```
+
+管理端鉴权 token 通过环境变量 `INITIALIZER_ADMIN_TOKEN` 覆盖（默认 `admin-dev-token`，仅限开发）。
+
+### 开发模式（前后端分离热更新）
+
+后端仅启动 API：
 
 ```bash
 mvn -B -DskipTests install
@@ -68,9 +88,7 @@ cd initializer-app && mvn spring-boot:run
 # 服务监听 http://localhost:8080
 ```
 
-管理端鉴权 token 通过环境变量 `INITIALIZER_ADMIN_TOKEN` 覆盖（默认 `admin-dev-token`，仅限开发）。
-
-### 前端启动
+前端独立开发（Vite 代理 `/api` 到 8080，改代码即时生效）：
 
 ```bash
 cd initializer-web

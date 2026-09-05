@@ -9,7 +9,7 @@ const view = ref<'wizard' | 'admin'>('wizard')
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :class="{ 'app-wide': view === 'admin' }">
     <header class="app-header">
       <nav class="app-nav">
         <button
@@ -47,7 +47,15 @@ const view = ref<'wizard' | 'admin'>('wizard')
 }
 * { box-sizing: border-box; margin: 0; }
 body { min-height: 100vh; }
-.app { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+.app {
+  /* 向导模式按表单阅读舒适度固定 720；管理后台用 app-wide 撑满更宽视口，避免 YAML 编辑区两侧空旷 */
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+.app.app-wide {
+  max-width: min(1280px, calc(100vw - 32px));
+}
 .app-header h1 { font-size: 24px; margin-bottom: 4px; }
 .app-header p { color: #57606a; font-size: 14px; }
 .app-main { margin-top: 24px; }
