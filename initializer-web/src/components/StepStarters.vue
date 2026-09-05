@@ -63,6 +63,12 @@ function onCategoryChange(event: Event): void {
       </li>
     </ul>
     <p v-else class="starter-empty">没有匹配的依赖，请调整搜索条件</p>
+    <div v-if="wizard.triggeredConflicts.length > 0" class="conflict-warnings" role="alert">
+      <div v-for="c in wizard.triggeredConflicts" :key="c.ruleId" class="conflict-warning">
+        <span class="conflict-icon">⚠</span>
+        <span>{{ c.message }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -93,4 +99,11 @@ h2 { font-size: 16px; margin-bottom: 12px; }
   border-radius: 10px; padding: 0 6px; line-height: 16px;
 }
 .starter-empty { color: #57606a; font-size: 14px; padding: 12px 0; }
+.conflict-warnings { display: grid; gap: 6px; margin-top: 12px; }
+.conflict-warning {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  border: 1px solid #d4a72c; background: #fff8c5; border-radius: 6px;
+  color: #4d2d00; font-size: 14px;
+}
+.conflict-icon { color: #9a6700; }
 </style>

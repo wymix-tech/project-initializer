@@ -65,6 +65,9 @@ public enum ErrorCode {
     /** 制品库同步失败（拉取/解析异常；同步失败不触碰快照，审计留痕后可重试） */
     SYNC_PROVIDER_FAILED(4005, "制品库同步失败"),
 
+    /** 依赖冲突（M3.5）：生成请求的 starter 组合命中冲突规则，服务端硬校验拒绝 */
+    DEPENDENCY_CONFLICT(4007, "依赖组合冲突"),
+
     /** 系统内部未知错误 */
     INTERNAL_ERROR(9001, "系统内部错误");
 

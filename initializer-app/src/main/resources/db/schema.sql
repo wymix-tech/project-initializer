@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS config_release (
     metadata_yaml CLOB,
     starter_yaml  CLOB,
     template_yaml CLOB,
+    conflict_yaml CLOB,
     released_by   VARCHAR(64),
     released_at   TIMESTAMP,
     remark        VARCHAR(512)

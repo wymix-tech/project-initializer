@@ -5,6 +5,7 @@ import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.app.admin.refresh.CatalogSnapshot;
 import com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder;
 import com.wymix.initializer.app.validation.ValidationService;
+import com.wymix.initializer.core.conflict.ConflictCatalog;
 import com.wymix.initializer.core.generator.BuildScriptRenderer;
 import com.wymix.initializer.core.generator.BuildTool;
 import com.wymix.initializer.core.generator.GradleRenderer;
@@ -15,6 +16,7 @@ import com.wymix.initializer.core.generator.TemplateRenderer;
 import org.springframework.stereotype.Service;
 
 import java.io.OutputStream;
+import java.util.List;
 
 /**
  * 生成应用服务：生成前做元信息最终校验，失败抛业务异常（422 + 明细），不输出半成品。
@@ -23,6 +25,9 @@ import java.io.OutputStream;
  * 从 {@link CatalogSnapshotHolder} 取当前快照即时构建引擎（模板覆盖优先、classpath 兜底）。
  * 请求持有的快照不可变，发布切换不影响进行中的生成请求；快照未发布时回退
  * classpath 单例 Bean（兜底语义，行为与 M3.1 前一致）。
+ *
+ * <p>M3.5 依赖冲突兜底校验（硬校验）：生成前用当前快照的冲突规则复算已选 starter
+ * 组合，命中规则抛 422 + 4007（防绕过前端直调）；前端提示为软提示，此处为最后防线。
  *
  * <p>线程安全性：无状态单例（快照、渲染器、生成引擎均不可变/无状态），线程安全。
  */
@@ -61,6 +66,7 @@ public class GeneratorService {
      */
     public void generate(GenerateRequest request, OutputStream out) {
         preValidate(request);
+        validateConflicts(request);
         generatorFor(request).generate(request, out);
     }
 
@@ -80,6 +86,32 @@ public class GeneratorService {
         if (!result.valid()) {
             throw new BusinessException(ErrorCode.INVALID_METADATA, String.join("; ", result.errors()));
         }
+    }
+
+    /**
+     * 冲突规则兜底校验（M3.5）：当前快照规则集复算已选 starter 组合，
+     * 命中即抛 422 + 4007，明细含规则 ID 与提示文案。
+     *
+     * <p>快照未发布或规则为空时直接放行（兜底语义：无规则即无冲突）。
+     *
+     * @param request 生成请求
+     * @throws BusinessException 命中冲突规则（错误码 {@link ErrorCode#DEPENDENCY_CONFLICT}）
+     */
+    private void validateConflicts(GenerateRequest request) {
+        CatalogSnapshot snapshot = snapshotHolder.current();
+        if (snapshot == null || snapshot.conflictCatalog().size() == 0) {
+            return;
+        }
+        List<ConflictCatalog.TriggeredConflict> conflicts =
+                snapshot.conflictCatalog().evaluate(java.util.Set.copyOf(request.starters()));
+        if (conflicts.isEmpty()) {
+            return;
+        }
+        String detail = conflicts.stream()
+                .map(c -> "[" + c.ruleId() + "] " + c.message())
+                .collect(java.util.stream.Collectors.joining("; "));
+        throw new BusinessException(ErrorCode.DEPENDENCY_CONFLICT,
+                "依赖组合冲突: " + detail);
     }
 
     /**

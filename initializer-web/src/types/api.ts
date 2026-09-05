@@ -29,6 +29,18 @@ export interface Starter {
   description: string | null
 }
 
+/** 冲突规则清单项：GET /api/metadata/conflict-rules（M3.5） */
+export interface ConflictRule {
+  /** 规则 ID */
+  id: string
+  /** 规则类型：pair（id 对互斥）/ group（组内互斥） */
+  type: 'pair' | 'group'
+  /** 规则涉及的 starter ID */
+  starters: string[]
+  /** 冲突提示文案 */
+  message: string
+}
+
 /** 元信息校验结果：POST /api/validate */
 export interface ValidationResult {
   valid: boolean

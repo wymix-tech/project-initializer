@@ -71,7 +71,8 @@ class AdminApiControllerIntegrationTest {
     }
 
     private ResponseEntity<String> publish(String yaml) {
-        // 发布前确保草稿为指定内容
+        // 发布前确保草稿为指定内容；冲突规则草稿重置为空规则（M3.5 后发布链路会消费并校验该草稿）
+        putDraft("conflict-rule", "rules: []", null);
         putDraft("metadata", yaml, null);
         String body = "{\"operator\":\"tester\",\"remark\":\"M3.1 集成测试\"}";
         return rest.exchange("/api/admin/config/publish", HttpMethod.POST,
@@ -118,11 +119,11 @@ class AdminApiControllerIntegrationTest {
         String version = view.getBody().replaceAll(".*\"version\":(\\d+).*", "$1");
 
         // 基于 If-Match 更新成功
-        ResponseEntity<String> second = putDraft("conflict-rule", "rules: [a]", Integer.parseInt(version));
+        ResponseEntity<String> second = putDraft("conflict-rule", "rules: [{id: r, type: pair, starters: [a, b], message: m}]", Integer.parseInt(version));
         assertThat(second.getStatusCode().value()).isEqualTo(204);
 
         // 携带过期 If-Match 更新 → 4003
-        ResponseEntity<String> stale = putDraft("conflict-rule", "rules: [b]", Integer.parseInt(version));
+        ResponseEntity<String> stale = putDraft("conflict-rule", "rules: [{id: r2, type: pair, starters: [c, d], message: m}]", Integer.parseInt(version));
         assertThat(stale.getStatusCode().value()).isEqualTo(422);
         assertThat(stale.getBody()).contains("4003");
     }

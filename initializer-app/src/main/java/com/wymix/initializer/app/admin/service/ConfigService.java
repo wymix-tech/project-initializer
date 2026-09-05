@@ -147,6 +147,7 @@ public class ConfigService {
         ConfigDraftEntity metadataDraft = repository.findDraft(ConfigKind.METADATA);
         ConfigDraftEntity starterDraft = repository.findDraft(ConfigKind.STARTER);
         ConfigDraftEntity templateDraft = repository.findDraft(ConfigKind.TEMPLATE);
+        ConfigDraftEntity conflictDraft = repository.findDraft(ConfigKind.CONFLICT_RULE);
         ConfigDraftEntity syncDraft = repository.findDraft(ConfigKind.STARTER_SYNC);
 
         CatalogSnapshot snapshot;
@@ -154,7 +155,8 @@ public class ConfigService {
             snapshot = refresher.validateAndBuild(
                     metadataDraft == null ? null : metadataDraft.getContentYaml(),
                     mergedStarterYaml(starterDraft, syncDraft),
-                    templateDraft == null ? null : templateDraft.getContentYaml());
+                    templateDraft == null ? null : templateDraft.getContentYaml(),
+                    conflictDraft == null ? null : conflictDraft.getContentYaml());
         } catch (BusinessException e) {
             // 发布失败不写发布历史；审计留痕（含失败明细），供管理端展示
             repository.insertAudit("PUBLISH_FAILED", null, operator, e.getMessage());
@@ -165,12 +167,14 @@ public class ConfigService {
                 metadataDraft.getContentYaml(),
                 starterDraft == null ? null : starterDraft.getContentYaml(),
                 templateDraft == null ? null : templateDraft.getContentYaml(),
+                conflictDraft == null ? null : conflictDraft.getContentYaml(),
                 operator, remark);
         snapshotHolder.swap(snapshot);
         repository.insertAudit(ACTION_PUBLISH, null, operator,
                 "发布 #" + release.getId() + "：Java " + snapshot.metadataCatalog().javaVersions().size()
                         + " 个版本 / starter 清单 " + snapshot.starterCatalog().size()
-                        + " 项 / 模板覆盖 " + snapshot.templateOverrides().size() + " 个");
+                        + " 项 / 模板覆盖 " + snapshot.templateOverrides().size()
+                        + " 个 / 冲突规则 " + snapshot.conflictCatalog().size() + " 条");
         log.info("配置已发布: releaseId={}, operator={}", release.getId(), operator);
         return new PublishResult(release.getId(),
                 snapshot.metadataCatalog().javaVersions().size(),
@@ -202,7 +206,8 @@ public class ConfigService {
         CatalogSnapshot snapshot;
         try {
             snapshot = refresher.validateAndBuild(
-                    release.getMetadataYaml(), release.getStarterYaml(), release.getTemplateYaml());
+                    release.getMetadataYaml(), release.getStarterYaml(), release.getTemplateYaml(),
+                    release.getConflictYaml());
         } catch (BusinessException e) {
             repository.insertAudit(ACTION_ROLLBACK_FAILED, null, operator,
                     "回滚 #" + releaseId + " 失败: " + e.getMessage());
@@ -211,6 +216,7 @@ public class ConfigService {
 
         ConfigReleaseEntity newRelease = repository.insertRelease(
                 release.getMetadataYaml(), release.getStarterYaml(), release.getTemplateYaml(),
+                release.getConflictYaml(),
                 operator, "回滚自 #" + releaseId);
         snapshotHolder.swap(snapshot);
         repository.insertAudit(ACTION_ROLLBACK, null, operator,
