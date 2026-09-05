@@ -179,7 +179,8 @@ public class ConfigService {
         return new PublishResult(release.getId(),
                 snapshot.metadataCatalog().javaVersions().size(),
                 snapshot.starterCatalog().size(),
-                snapshot.templateOverrides().size());
+                snapshot.templateOverrides().size(),
+                snapshot.conflictCatalog().size());
     }
 
     /**
@@ -225,7 +226,8 @@ public class ConfigService {
         return new PublishResult(newRelease.getId(),
                 snapshot.metadataCatalog().javaVersions().size(),
                 snapshot.starterCatalog().size(),
-                snapshot.templateOverrides().size());
+                snapshot.templateOverrides().size(),
+                snapshot.conflictCatalog().size());
     }
 
     /** @return 发布历史（最新在前） */
@@ -245,15 +247,21 @@ public class ConfigService {
      */
     public record DraftView(String kind, String contentYaml, Integer version, java.time.Instant updatedAt) {
     }
-
     /**
-     * 发布/回滚结果 DTO（M3.2 增加模板覆盖计数）。
+     * 发布/回滚结果 DTO（M3.2 增加模板覆盖计数；M3 评审遗留项 5：补充冲突规则计数，
+     * 管理端发布响应可直接展示生效规则规模）。
      *
      * <p>线程安全性：不可变对象，线程安全。
      */
-    public record PublishResult(long releaseId, int javaVersionCount, int starterCount, int templateOverrideCount) {
+    public record PublishResult(long releaseId, int javaVersionCount, int starterCount,
+                                int templateOverrideCount, int conflictRuleCount) {
 
-        /** M3.1 兼容构造：模板覆盖计数置 0。 */
+        /** M3.1/M3.2 兼容构造：冲突规则计数置 0。 */
+        public PublishResult(long releaseId, int javaVersionCount, int starterCount, int templateOverrideCount) {
+            this(releaseId, javaVersionCount, starterCount, templateOverrideCount, 0);
+        }
+
+        /** M3.1 兼容构造：模板覆盖与冲突规则计数置 0。 */
         public PublishResult(long releaseId, int javaVersionCount, int starterCount) {
             this(releaseId, javaVersionCount, starterCount, 0);
         }

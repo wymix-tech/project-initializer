@@ -142,7 +142,7 @@ public class ConfigRepository {
         audit.setAction(action);
         audit.setTargetKind(targetKind == null ? null : targetKind.name());
         audit.setOperator(operator);
-        audit.setDetail(detail);
+        audit.setDetail(AuditDetailTruncator.truncate(detail));
         audit.setCreatedAt(Instant.now());
         auditMapper.insert(audit);
     }

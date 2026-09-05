@@ -83,3 +83,41 @@ export interface ProjectMeta {
   /** 构建工具（M2.4）：默认 maven */
   buildTool: BuildTool
 }
+
+/** 管理端草稿视图：GET /api/admin/config/{kind} */
+export interface AdminDraftView {
+  kind: string
+  contentYaml: string | null
+  version: number | null
+  updatedAt: string | null
+}
+
+/** 管理端发布结果：POST /api/admin/config/publish 与 rollback */
+export interface AdminPublishResult {
+  releaseId: number
+  javaVersionCount: number
+  starterCount: number
+  templateOverrideCount: number
+  conflictRuleCount: number
+}
+
+/** 管理端发布历史项：GET /api/admin/releases */
+export interface AdminRelease {
+  id: number
+  releasedBy: string | null
+  releasedAt: string | null
+  remark: string | null
+}
+
+/** 管理端审计项：GET /api/admin/audits */
+export interface AdminAudit {
+  id: number
+  action: string
+  targetKind: string | null
+  operator: string | null
+  detail: string | null
+  createdAt: string | null
+}
+
+/** 管理端配置草稿种类 */
+export type AdminConfigKind = 'metadata' | 'starter' | 'conflict-rule' | 'template'
