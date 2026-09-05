@@ -20,11 +20,15 @@
     </properties>
 
     <dependencies>
-        <#-- starter 依赖由 metadata.yml starters 节的坐标映射驱动，新增 starter 无需改模板 -->
+        <#-- starter 依赖由 metadata.yml starters 节的坐标映射驱动，新增 starter 无需改模板；
+             声明了 version 的依赖（如内部 starter，不在 Boot BOM 管理范围）显式输出版本 -->
         <#list starterDependencies as dep>
         <dependency>
             <groupId>${dep.groupId}</groupId>
             <artifactId>${dep.artifactId}</artifactId>
+<#if dep.version?? && dep.version != ''>
+            <version>${dep.version}</version>
+</#if>
         </dependency>
         </#list>
         <dependency>

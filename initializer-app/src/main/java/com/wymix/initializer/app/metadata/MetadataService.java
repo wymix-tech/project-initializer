@@ -153,19 +153,22 @@ public class MetadataService {
     }
 
     /**
-     * Starter DTO（M2.1 补充维护方标注；M3.4 补充分类与描述，供前端分类展示与检索）。
+     * Starter DTO（M2.1 补充维护方标注；M3.4 补充分类与描述；验收一般项①：
+     * 补充基线版本透出——内部 starter 展示清单声明版本，官方 starter 为 null 走 Boot BOM）。
      */
-    public record StarterDto(String id, String label, String maintainer, String category, String description) {
+    public record StarterDto(String id, String label, String maintainer, String category,
+                             String description, String version) {
 
         static StarterDto from(StarterQueryEngine.StarterSearchItem item) {
             return new StarterDto(item.id(), item.label(),
                     item.maintainer().name().toLowerCase(),
                     item.category(),
-                    item.description());
+                    item.description(),
+                    item.version());
         }
 
         static StarterDto of(String id, String label, Maintainer maintainer) {
-            return new StarterDto(id, label, maintainer.name().toLowerCase(), null, null);
+            return new StarterDto(id, label, maintainer.name().toLowerCase(), null, null, null);
         }
     }
 

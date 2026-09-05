@@ -27,6 +27,8 @@ export interface Starter {
   category: string | null
   /** 描述（M3.4）：清单未登记时为 null */
   description: string | null
+  /** 基线版本：内部 starter 展示清单声明版本；官方 starter 为 null（走 Boot BOM） */
+  version: string | null
 }
 
 /** 冲突规则清单项：GET /api/metadata/conflict-rules（M3.5） */

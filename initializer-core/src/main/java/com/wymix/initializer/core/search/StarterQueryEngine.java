@@ -34,13 +34,16 @@ public class StarterQueryEngine {
      * @param maintainer  维护方（official / internal）
      * @param category    分类；清单未登记时为 {@code null}
      * @param description 描述；清单未登记时为 {@code null}
+     * @param version     基线版本：清单登记依赖坐标首个声明的 version；未登记或未声明版本时为 {@code null}
+     *                    （官方 starter 走 Boot BOM 不声明版本，内部 starter 声明基线版本如 1.2.0）
      */
     public record StarterSearchItem(
             String id,
             String label,
             Maintainer maintainer,
             String category,
-            String description) {
+            String description,
+            String version) {
     }
 
     /**
@@ -76,7 +79,24 @@ public class StarterQueryEngine {
         String description = starterCatalog.contains(starterId)
                 ? starterCatalog.entry(starterId).description()
                 : null;
-        return new StarterSearchItem(starterId, sd.label(), maintainer, category, description);
+        String version = starterCatalog.contains(starterId)
+                ? baselineVersion(starterCatalog.entry(starterId).dependencies())
+                : null;
+        return new StarterSearchItem(starterId, sd.label(), maintainer, category, description, version);
+    }
+
+    /**
+     * 依赖坐标基线版本：取首个声明了 version 的坐标；全部未声明返回 {@code null}。
+     *
+     * @param deps 清单登记的依赖坐标清单（非空）
+     * @return 基线版本或 {@code null}
+     */
+    private static String baselineVersion(List<com.wymix.initializer.core.starter.DependencyCoord> deps) {
+        return deps.stream()
+                .map(com.wymix.initializer.core.starter.DependencyCoord::version)
+                .filter(v -> v != null && !v.isBlank())
+                .findFirst()
+                .orElse(null);
     }
 
     private boolean matchesKeyword(StarterSearchItem item, String keyword) {

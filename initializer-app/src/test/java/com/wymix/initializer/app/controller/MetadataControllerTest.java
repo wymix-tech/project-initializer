@@ -84,6 +84,15 @@ class MetadataControllerTest {
     }
 
     @Test
+    void starters_boot325_exposesBaselineVersion() throws Exception {
+        // 基线版本透出（验收一般项①）：内部 starter 透出清单声明版本，官方 starter 为 null
+        mockMvc.perform(get("/api/metadata/starters").param("boot", "3.2.5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == 'xxx-redis-spring-boot-starter')].version").value("1.2.0"))
+                .andExpect(jsonPath("$[?(@.id == 'web')].version").value(null));
+    }
+
+    @Test
     void starters_unknownBoot_returns422WithCode2002() throws Exception {
         mockMvc.perform(get("/api/metadata/starters").param("boot", "9.9.9"))
                 .andExpect(status().isUnprocessableEntity())
