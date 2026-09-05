@@ -159,6 +159,8 @@ class CatalogSyncServiceTest {
         // 同步层草稿已重建（多文档 yml，制品库为权威源），手工草稿零改动
         String syncYaml = repository.findDraft(ConfigKind.STARTER_SYNC).getContentYaml();
         assertThat(syncYaml).contains("xxx-oss-spring-boot-starter", "xxx-sms-spring-boot-starter");
+        // 多文档必须以 --- 分隔：粘连成单文档会导致重复键覆盖、除首个外条目全部丢失
+        assertThat(syncYaml).contains("\n---\n");
         assertThat(configService.getDraft(ConfigKind.STARTER).contentYaml()).isEqualTo(STARTER_YAML);
         assertThat(configService.getDraft(ConfigKind.METADATA).contentYaml()).isEqualTo(METADATA_YAML);
 

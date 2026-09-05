@@ -129,9 +129,11 @@ public class CatalogSyncService {
 
         CatalogMerger.MergeOutcome merged = CatalogMerger.merge(reservedIds, fetched.starters());
 
-        // 同步层草稿全量重建：本轮采纳条目多文档 yml（制品库为权威源，下架条目自然移除）
+        // 同步层草稿全量重建：本轮采纳条目多文档 yml（制品库为权威源，下架条目自然移除）。
+        // 文档间必须以 "---" 分隔（toYaml 不自带头部分隔符），否则多文档粘连为单文档，
+        // SnakeYAML 重复键后者覆盖前者，除首个外全部条目静默丢失。
         String syncYaml = merged.adopted().isEmpty()
-                ? "" : merged.adopted().stream().map(SyncedStarter::toYaml).collect(Collectors.joining("\n"));
+                ? "" : merged.adopted().stream().map(SyncedStarter::toYaml).collect(Collectors.joining("\n---\n"));
         upsertSyncDraft(syncYaml, provider.providerId());
         return new ChannelOutcome(provider.providerId(), merged.adopted().size(),
                 merged.overridden().size(), null);
