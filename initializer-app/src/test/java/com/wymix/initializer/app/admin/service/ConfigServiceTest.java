@@ -130,6 +130,7 @@ class ConfigServiceTest {
         PublishResult result = configService.publish("tester", "模板覆盖发布");
 
         assertThat(result.templateOverrideCount()).isEqualTo(1);
+        assertThat(result.conflictRuleCount()).isZero();
         assertThat(snapshotHolder.current().templateOverrides()).containsKey("README.md.ftl");
     }
 
@@ -241,5 +242,33 @@ class ConfigServiceTest {
         assertThat(configService.listAudits())
                 .extracting(a -> a.getAction())
                 .contains("PUBLISH_FAILED");
+    }
+
+    @Test
+    void publish_withConflictRuleDraft_resultReportsRuleCount() {
+        // METADATA_YAML 仅登记 web；冲突规则引用 web + web2，需一并登记 starter 草稿
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
+                METADATA_YAML, null, "tester");
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.STARTER,
+                """
+                id: web2
+                category: web
+                maintainer: official
+                description: 测试条目
+                label: "Spring Web 2"
+                dependencies:
+                  - groupId: "org.springframework.boot"
+                    artifactId: "spring-boot-starter-web-2"
+                """, null, "tester");
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.CONFLICT_RULE,
+                """
+                rules:
+                  - id: web-vs-web2
+                    type: pair
+                    starters: ["web", "web2"]
+                    message: pair 规则计数验证
+                """, null, "tester");
+        PublishResult result = configService.publish("tester", "冲突规则发布");
+        assertThat(result.conflictRuleCount()).isEqualTo(1);
     }
 }

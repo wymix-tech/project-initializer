@@ -6,6 +6,11 @@ import type {
   GenerateRequest,
   JavaVersion,
   Starter,
+  AdminAudit,
+  AdminConfigKind,
+  AdminDraftView,
+  AdminPublishResult,
+  AdminRelease,
   ValidationResult,
 } from '@/types/api'
 
@@ -127,5 +132,78 @@ export const api = {
     anchor.click()
     anchor.remove()
     URL.revokeObjectURL(url)
+  },
+}
+
+/** 管理端 token 请求头名（与后端 AdminAuthFilter.TOKEN_HEADER 一致）。 */
+export const ADMIN_TOKEN_HEADER = 'X-Admin-Token'
+
+function adminHeaders(token: string): Record<string, string> {
+  return { [ADMIN_TOKEN_HEADER]: token, 'Content-Type': 'application/json' }
+}
+
+function adminErrorFallback(status: number): ErrorResponse {
+  return { code: status, message: `管理端请求失败（HTTP ${status}）`, timestamp: Date.now() }
+}
+
+/** 管理端接口封装（M3 评审遗留项 2：/admin 可视化维护页面数据源）。 */
+export const adminApi = {
+  /** 读取指定种类当前草稿。 */
+  getDraft(kind: AdminConfigKind, token: string): Promise<AdminDraftView> {
+    return fetch(`/api/admin/config/${kind}`, { headers: adminHeaders(token) }).then(
+      handleResponse<AdminDraftView>,
+    )
+  },
+
+  /** 保存草稿（乐观锁：携带 GET 返回的 version）。 */
+  async putDraft(kind: AdminConfigKind, token: string, contentYaml: string, version: number | null): Promise<void> {
+    const headers = adminHeaders(token)
+    if (version !== null) headers['If-Match'] = String(version)
+    const res = await fetch(`/api/admin/config/${kind}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ contentYaml, operator: 'admin' }),
+    })
+    if (!res.ok) {
+      let errorResponse: ErrorResponse = adminErrorFallback(res.status)
+      try {
+        errorResponse = await res.json()
+      } catch {
+        // 非 JSON 错误体时保留默认
+      }
+      throw new ApiError(errorResponse)
+    }
+  },
+
+  /** 发布：全量校验 → 快照原子切换。校验失败抛 ApiError（4002 + 明细）。 */
+  publish(token: string): Promise<AdminPublishResult> {
+    return fetch('/api/admin/config/publish', {
+      method: 'POST',
+      headers: adminHeaders(token),
+      body: JSON.stringify({ operator: 'admin' }),
+    }).then(handleResponse<AdminPublishResult>)
+  },
+
+  /** 发布历史。 */
+  listReleases(token: string): Promise<AdminRelease[]> {
+    return fetch('/api/admin/releases', { headers: adminHeaders(token) }).then(
+      handleResponse<AdminRelease[]>,
+    )
+  },
+
+  /** 回滚到指定发布（重新走完整校验通道）。 */
+  rollback(token: string, releaseId: number): Promise<AdminPublishResult> {
+    return fetch(`/api/admin/releases/${releaseId}/rollback`, {
+      method: 'POST',
+      headers: adminHeaders(token),
+      body: JSON.stringify({ operator: 'admin' }),
+    }).then(handleResponse<AdminPublishResult>)
+  },
+
+  /** 审计日志。 */
+  listAudits(token: string): Promise<AdminAudit[]> {
+    return fetch('/api/admin/audits', { headers: adminHeaders(token) }).then(
+      handleResponse<AdminAudit[]>,
+    )
   },
 }
