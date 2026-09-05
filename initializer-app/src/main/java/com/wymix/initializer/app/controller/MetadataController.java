@@ -14,6 +14,9 @@ import java.util.List;
  * <p>错误语义：未知版本 ID 由 {@link com.wymix.initializer.app.exception.GlobalExceptionHandler}
  * 映射为 422 + 错误码 2002（METADATA_NOT_FOUND）。
  *
+ * <p>M3.5：{@code /api/metadata/conflict-rules} 返回当前生效快照的冲突规则集，
+ * 前端选择依赖时本地即时计算提示；规则随管理端发布热生效。
+ *
  * <p>M3.4：{@code /api/metadata/starters} 新增 {@code ?q=}（关键字，匹配 ID/展示名）
  * 与 {@code ?category=}（分类过滤）参数，两者可组合；未传时返回全量清单，
  * 未知分类返回空列表（前端友好，不报错）。
@@ -67,5 +70,15 @@ public class MetadataController {
                                                      @RequestParam(value = "q", required = false) String q,
                                                      @RequestParam(value = "category", required = false) String category) {
         return metadataService.listStarters(boot, q, category);
+    }
+
+    /**
+     * 冲突规则清单（M3.5）：前端选择依赖时本地即时计算提示的数据源。
+     *
+     * @return 冲突规则 DTO 列表（无规则时为空列表）
+     */
+    @GetMapping("/conflict-rules")
+    public List<MetadataService.ConflictRuleDto> conflictRules() {
+        return metadataService.listConflictRules();
     }
 }

@@ -18,6 +18,7 @@ vi.mock('@/api/client', () => ({
     listJavaVersions: vi.fn(),
     listBootVersions: vi.fn(),
     listStarters: vi.fn(),
+    listConflictRules: vi.fn().mockResolvedValue([]),
     validate: vi.fn(),
     derivePackage: vi.fn(),
     generateProject: vi.fn(),

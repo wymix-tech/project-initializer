@@ -1,5 +1,6 @@
 import type {
   BootVersion,
+  ConflictRule,
   DerivePackageResponse,
   ErrorResponse,
   GenerateRequest,
@@ -70,6 +71,11 @@ export const api = {
     return fetch(`/api/metadata/starters?${queryString(params)}`).then(
       handleResponse<Starter[]>,
     )
+  },
+
+  /** 冲突规则清单（M3.5）：前端选择依赖时本地即时计算提示的数据源。 */
+  listConflictRules(): Promise<ConflictRule[]> {
+    return fetch('/api/metadata/conflict-rules').then(handleResponse<ConflictRule[]>)
   },
 
   /** Group/Artifact/Package 即时校验。 */

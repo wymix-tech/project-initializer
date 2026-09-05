@@ -100,11 +100,12 @@ public class ConfigRepository {
      * @return 落库后的发布记录（含自增 id）
      */
     public ConfigReleaseEntity insertRelease(String metadataYaml, String starterYaml, String templateYaml,
-                                             String releasedBy, String remark) {
+                                             String conflictYaml, String releasedBy, String remark) {
         ConfigReleaseEntity release = new ConfigReleaseEntity();
         release.setMetadataYaml(metadataYaml);
         release.setStarterYaml(starterYaml);
         release.setTemplateYaml(templateYaml);
+        release.setConflictYaml(conflictYaml);
         release.setReleasedBy(releasedBy);
         release.setReleasedAt(Instant.now());
         release.setRemark(remark);

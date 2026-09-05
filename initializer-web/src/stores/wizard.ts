@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia'
 import { api, ApiError } from '@/api/client'
-import type { BootVersion, JavaVersion, ProjectMeta, Starter } from '@/types/api'
+import type { BootVersion, ConflictRule, JavaVersion, ProjectMeta, Starter } from '@/types/api'
+
+/** 触发的冲突条目（M3.5）：规则 ID + 提示文案 + 涉及 starter。 */
+export interface TriggeredConflict {
+  ruleId: string
+  message: string
+  starters: string[]
+}
 
 /** 表单步骤：1 Java 版本 → 2 Boot 版本 → 3 依赖 → 4 元信息 */
 export const STEP_JAVA = 1
@@ -24,6 +31,8 @@ export const useWizardStore = defineStore('wizard', {
     /** M3.4：starter 搜索关键字与分类过滤条件 */
     starterKeyword: '' as string,
     starterCategory: '' as string,
+    /** M3.5：当前生效冲突规则集（选择依赖时本地即时计算提示） */
+    conflictRules: [] as ConflictRule[],
     selectedJava: '' as string,
     selectedBoot: '' as string,
     selectedStarters: new Set<string>() as Set<string>,
@@ -60,6 +69,19 @@ export const useWizardStore = defineStore('wizard', {
         default:
           return false
       }
+    },
+
+    /**
+     * M3.5：已选 starter 组合触发的冲突清单（本地即时计算，软提示）。
+     */
+    triggeredConflicts(state): TriggeredConflict[] {
+      const selected = state.selectedStarters
+      return state.conflictRules
+        .filter((rule) => {
+          const hits = rule.starters.filter((id) => selected.has(id)).length
+          return rule.type === 'pair' ? hits === 2 : hits >= 2
+        })
+        .map((rule) => ({ ruleId: rule.id, message: rule.message, starters: rule.starters }))
     },
 
     /** 生成请求体。 */
@@ -105,7 +127,7 @@ export const useWizardStore = defineStore('wizard', {
       }
     },
 
-    /** 选择 Boot 版本：联动拉取 starter 清单（携带当前搜索条件）。 */
+    /** 选择 Boot 版本：联动拉取 starter 清单（携带当前搜索条件）与冲突规则（M3.5）。 */
     async selectBoot(bootId: string): Promise<void> {
       this.selectedBoot = bootId
       this.selectedStarters = new Set()
@@ -113,7 +135,12 @@ export const useWizardStore = defineStore('wizard', {
       this.starterCategory = ''
       this.loading = true
       try {
-        this.starters = await api.listStarters(bootId)
+        const [starters, conflictRules] = await Promise.all([
+          api.listStarters(bootId),
+          api.listConflictRules().catch(() => [] as ConflictRule[]),
+        ])
+        this.starters = starters
+        this.conflictRules = conflictRules
       } finally {
         this.loading = false
       }

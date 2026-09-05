@@ -28,6 +28,9 @@ public class ConfigReleaseEntity {
     /** 发布时的 template 配置全文（YAML 多文档，M3.2；可空 = 无模板覆盖） */
     private String templateYaml;
 
+    /** 发布时的 conflict-rule 配置全文（M3.5，conflict-rules.yml 同构；可空 = 无冲突规则） */
+    private String conflictYaml;
+
     /** 发布人 */
     private String releasedBy;
 
@@ -63,6 +66,14 @@ public class ConfigReleaseEntity {
 
     public void setTemplateYaml(String templateYaml) {
         this.templateYaml = templateYaml;
+    }
+
+    public String getConflictYaml() {
+        return conflictYaml;
+    }
+
+    public void setConflictYaml(String conflictYaml) {
+        this.conflictYaml = conflictYaml;
     }
 
     public void setStarterYaml(String starterYaml) {

@@ -2,6 +2,8 @@ package com.wymix.initializer.app.admin.refresh;
 
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
+import com.wymix.initializer.core.conflict.ConflictCatalog;
+import com.wymix.initializer.core.conflict.ConflictRuleParser;
 import com.wymix.initializer.core.generator.TemplateRenderer;
 import com.wymix.initializer.core.metadata.MavenDependency;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
@@ -30,6 +32,9 @@ import java.util.Map;
  * <p>失败语义：任一步失败抛 {@link BusinessException}（4002/9002/3001 收敛），
  * 快照引用保持不变，生成服务无感；草稿保留可继续编辑。
  *
+ * <p>冲突规则草稿格式（M3.5）：{@code conflict-rules.yml} 同构（rules 节），随发布进快照；
+ * 悬空引用（规则引用清单中不存在的 starter id）发布即拒绝。
+ *
  * <p>starter 草稿格式：与 {@code catalog/starters/*.yml} 同构的配置流，
  * 多 starter 以 YAML 多文档（--- 分隔）表达；METADATA 草稿与 {@code metadata.yml} 同构；
  * TEMPLATE 草稿（M3.2）为多文档映射 {@code {name, content}}，name 相对 templates/ 目录。
@@ -50,13 +55,15 @@ public class CatalogRefresher {
     /**
      * 校验并构建快照（不切换，切换由 {@link CatalogSnapshotHolder} 负责）。
      *
-     * @param metadataYaml metadata 草稿全文（null 时拒绝——首发快照必须显式提供）
-     * @param starterYaml  starter 草稿全文（多文档），null 时视为空清单
-     * @param templateYaml TEMPLATE 草稿全文（多文档 {name, content}），null 时视为无模板覆盖
+     * @param metadataYaml   metadata 草稿全文（null 时拒绝——首发快照必须显式提供）
+     * @param starterYaml    starter 草稿全文（多文档），null 时视为空清单
+     * @param templateYaml   TEMPLATE 草稿全文（多文档 {name, content}），null 时视为无模板覆盖
+     * @param conflictYamlYaml CONFLICT_RULE 草稿全文（conflict-rules.yml 同构），null 时视为无规则
      * @return 校验通过的新快照
-     * @throws BusinessException 解析/装载校验失败（4002：metadata 缺失或 starter/模板清单非法）
+     * @throws BusinessException 解析/装载校验失败（4002：metadata 缺失或 starter/模板/冲突规则非法）
      */
-    public CatalogSnapshot validateAndBuild(String metadataYaml, String starterYaml, String templateYaml) {
+    public CatalogSnapshot validateAndBuild(String metadataYaml, String starterYaml, String templateYaml,
+                                            String conflictYamlYaml) {
         if (metadataYaml == null || metadataYaml.isBlank()) {
             throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
                     "发布校验失败: metadata 配置缺失，首发快照必须显式提供 metadata.yml 同构配置");
@@ -64,12 +71,14 @@ public class CatalogRefresher {
         MetadataCatalog metadataCatalog = parseMetadata(metadataYaml);
         StarterCatalog starterCatalog = parseStarters(starterYaml);
         Map<String, String> templateOverrides = parseTemplates(templateYaml);
+        ConflictCatalog conflictCatalog = ConflictRuleParser.parseText(conflictYamlYaml);
+        validateConflictReferences(conflictCatalog, metadataCatalog, starterCatalog);
         // M3.3 自动补位：starter 清单条目未在 metadata 登记时，追加为全部 Boot 版本可选
         // （制品库同步条目可见性；手工 yml 条目原本也可只登记清单——行为升级为自动可选）
         metadataCatalog = extendWithUnregistered(metadataCatalog, starterCatalog);
         // 交叉校验：metadata.bootVersions.starters 引用的 starter 必须在 starter 清单登记
         validateCrossReferences(metadataCatalog, starterCatalog);
-        return new CatalogSnapshot(metadataCatalog, starterCatalog, templateOverrides);
+        return new CatalogSnapshot(metadataCatalog, starterCatalog, templateOverrides, conflictCatalog);
     }
 
     /**
@@ -81,7 +90,20 @@ public class CatalogRefresher {
      * @throws BusinessException 解析/装载校验失败
      */
     public CatalogSnapshot validateAndBuild(String metadataYaml, String starterYaml) {
-        return validateAndBuild(metadataYaml, starterYaml, null);
+        return validateAndBuild(metadataYaml, starterYaml, null, null);
+    }
+
+    /**
+     * M3.2 兼容重载：无冲突规则。
+     *
+     * @param metadataYaml metadata 草稿全文
+     * @param starterYaml  starter 草稿全文（多文档）
+     * @param templateYaml 模板草稿全文（多文档 {name, content}）
+     * @return 校验通过的新快照
+     * @throws BusinessException 解析/装载校验失败
+     */
+    public CatalogSnapshot validateAndBuild(String metadataYaml, String starterYaml, String templateYaml) {
+        return validateAndBuild(metadataYaml, starterYaml, templateYaml, null);
     }
 
 
@@ -233,6 +255,30 @@ public class CatalogRefresher {
         }
         log.info("模板覆盖装载完成: {} 个模板", overrides.size());
         return overrides;
+    }
+
+    /**
+     * 冲突规则悬空引用校验（M3.5）：规则引用的 starter id 必须在生效清单内
+     * （metadata starters 节或 starter 清单任一登记即可，与 M3.3 自动补位语义一致——
+     * starter 清单条目自动补位后必然可选中）。
+     *
+     * @param conflictCatalog 解析后的冲突规则目录
+     * @param metadataCatalog 解析后的元数据目录
+     * @param starterCatalog  解析后的 starter 清单
+     * @throws BusinessException 规则引用了双边均未登记的 starter id（4002）
+     */
+    private void validateConflictReferences(ConflictCatalog conflictCatalog, MetadataCatalog metadataCatalog,
+                                            StarterCatalog starterCatalog) {
+        for (com.wymix.initializer.core.conflict.ConflictRule rule : conflictCatalog.all()) {
+            for (String starterId : rule.starters()) {
+                boolean known = metadataCatalog.starterDefinitionIds().contains(starterId)
+                        || starterCatalog.contains(starterId);
+                if (!known) {
+                    throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
+                            "发布校验失败: 冲突规则 " + rule.id() + " 引用了清单中不存在的 starter: " + starterId);
+                }
+            }
+        }
     }
 
     /**
