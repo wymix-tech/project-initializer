@@ -300,3 +300,591 @@ describe('starterConfigWizard 行 actions', () => {
     expect(wizard.previewYaml).toContain('config-package:')
   })
 })
+
+describe('starterConfigWizard stepErrors 联动步骤校验', () => {
+  it('templates source 或 target 为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.templates = [{ rowId: 'r1', source: '', target: 't.java' }]
+    expect(wizard.stepErrors.templates).toContain('source')
+    expect(wizard.canNext).toBe(false)
+  })
+
+  it('templates target 为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.templates = [{ rowId: 'r1', source: 's.ftl', target: '' }]
+    expect(wizard.stepErrors.templates).toContain('target')
+    expect(wizard.canNext).toBe(false)
+  })
+
+  it('templates source 和 target 均为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.templates = [{ rowId: 'r1', source: '', target: '' }]
+    expect(wizard.stepErrors.templates).toBeDefined()
+  })
+
+  it('ymlFragments source 为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.ymlFragments = [{ rowId: 'r1', source: '', mergeStrategy: 'append' }]
+    expect(wizard.stepErrors.ymlFragments).toContain('source')
+    expect(wizard.canNext).toBe(false)
+  })
+
+  it('abstractClasses fqcn 为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.abstractClasses = [{ rowId: 'r1', fqcn: '', alias: 'a' }]
+    expect(wizard.stepErrors.abstractClasses).toContain('fqcn')
+    expect(wizard.canNext).toBe(false)
+  })
+
+  it('abstractClasses alias 为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.abstractClasses = [{ rowId: 'r1', fqcn: 'com.x.A', alias: '' }]
+    expect(wizard.stepErrors.abstractClasses).toContain('alias')
+    expect(wizard.canNext).toBe(false)
+  })
+
+  it('联动步骤全部合法时 canNext 为 true', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.templates = [{ rowId: 'r1', source: 's.ftl', target: 't.java' }]
+    wizard.form.ymlFragments = [{ rowId: 'r1', source: 'f.yml', mergeStrategy: 'append' }]
+    wizard.form.abstractClasses = [{ rowId: 'r1', fqcn: 'com.x.A', alias: 'a' }]
+    expect(wizard.stepErrors).not.toHaveProperty('templates')
+    expect(wizard.stepErrors).not.toHaveProperty('ymlFragments')
+    expect(wizard.stepErrors).not.toHaveProperty('abstractClasses')
+    expect(wizard.canNext).toBe(true)
+  })
+
+  it('仅 templates 有错时 ymlFragments 无错不阻断', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.templates = [{ rowId: 'r1', source: '', target: '' }]
+    wizard.form.ymlFragments = [{ rowId: 'r1', source: 'ok.yml', mergeStrategy: 'append' }]
+    expect(wizard.stepErrors).toHaveProperty('templates')
+    expect(wizard.stepErrors).not.toHaveProperty('ymlFragments')
+  })
+
+  it('多条 template 中第一条出错即 break', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.templates = [
+      { rowId: 'r1', source: '', target: '' },
+      { rowId: 'r2', source: 's.ftl', target: 't.java' },
+    ]
+    expect(wizard.stepErrors.templates).toBeDefined()
+  })
+
+  it('依赖步骤为空时报错（length === 0）', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = []
+    wizard.step = 2
+    expect(wizard.stepErrors.dependencies).toContain('至少声明')
+  })
+})
+
+describe('starterConfigWizard canNext 各步骤', () => {
+  it('步骤 1 合法时 canNext 为 true', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.step = 1
+    expect(wizard.canNext).toBe(true)
+  })
+
+  it('步骤 2 合法时 canNext 为 true', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 2
+    expect(wizard.canNext).toBe(true)
+  })
+
+  it('步骤 4 无越界占位符时 canNext 为 true', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 4
+    expect(wizard.canNext).toBe(true)
+  })
+
+  it('步骤 1 id 有错时 canNext 为 false', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = ''
+    wizard.step = 1
+    expect(wizard.canNext).toBe(false)
+  })
+
+  it('步骤 2 依赖有错时 canNext 为 false', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: '', artifactId: 'a', version: '' }]
+    wizard.step = 2
+    expect(wizard.canNext).toBe(false)
+  })
+})
+
+describe('starterConfigWizard loadExistingDraft', () => {
+  it('token 为空时不请求', async () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.token = ''
+    await wizard.loadExistingDraft()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('成功时设置 existingDraft 和 draftVersion', async () => {
+    fetchMock.mockResolvedValueOnce(ok(draftView('id: web\n', 3)))
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    await wizard.loadExistingDraft()
+    expect(wizard.existingDraft).toBe('id: web\n')
+    expect(wizard.draftVersion).toBe(3)
+  })
+
+  it('草稿 contentYaml 为 null 时置空', async () => {
+    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    await wizard.loadExistingDraft()
+    expect(wizard.existingDraft).toBe('')
+    expect(wizard.draftVersion).toBeNull()
+  })
+})
+
+describe('starterConfigWizard saveToDraft 错误路径', () => {
+  it('表单校验有错时不保存', async () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    wizard.form.id = '' // 校验失败
+    const result = await wizard.saveToDraft()
+    expect(result).toBe(false)
+    expect(wizard.messageType).toBe('error')
+    expect(wizard.message).toContain('校验错误')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('占位符越界时不保存', async () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.form.configPackage = '{badPlaceholder}'
+    const result = await wizard.saveToDraft()
+    expect(result).toBe(false)
+    expect(wizard.messageType).toBe('error')
+    expect(wizard.message).toContain('占位符越界')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('保存失败（非 ApiError）时展示通用错误', async () => {
+    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    await wizard.loadExistingDraft()
+    // PUT 返回非 JSON 错误体，handleResponse 中 res.json() 抛 SyntaxError → 非 ApiError
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.reject(new SyntaxError('bad')),
+    } as unknown as Response)
+    const result = await wizard.saveToDraft()
+    await settle()
+    expect(result).toBe(false)
+    expect(wizard.actionState).toBe('error')
+    // putDraft 对非 JSON 错误体抛 ApiError（adminErrorFallback），所以 detail 含 HTTP
+    expect(wizard.message).toContain('HTTP 500')
+  })
+
+  it('保存失败（ApiError）时展示后端明细', async () => {
+    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    await wizard.loadExistingDraft()
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ code: 4002, message: '校验失败明细', timestamp: 1 }),
+    } as unknown as Response)
+    const result = await wizard.saveToDraft()
+    await settle()
+    expect(result).toBe(false)
+    expect(wizard.actionState).toBe('error')
+    expect(wizard.message).toContain('校验失败明细')
+  })
+})
+
+describe('starterConfigWizard publish 错误路径', () => {
+  it('publish 保存失败时不触发发布', async () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    wizard.form.id = '' // 校验失败 → saveToDraft 失败
+    const result = await wizard.publish()
+    expect(result).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('publish 发布失败（非 ApiError）时展示通用错误', async () => {
+    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    await wizard.loadExistingDraft()
+    fetchMock.mockResolvedValueOnce(noContent()) // PUT ok
+    fetchMock.mockResolvedValueOnce(ok(draftView('id: web\n', 1))) // reload
+    // publish 返回非 JSON 错误体
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      json: () => Promise.reject(new SyntaxError('bad')),
+    } as unknown as Response)
+
+    const result = await wizard.publish()
+    await settle()
+    expect(result).toBe(false)
+    expect(wizard.actionState).toBe('error')
+    expect(wizard.message).toContain('HTTP 502')
+  })
+})
+
+describe('starterConfigWizard hasLinkages getter', () => {
+  it('仅 templates 有值时 hasLinkages 为 true', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.form.templates = [{ rowId: 'r1', source: 's', target: 't' }]
+    expect(wizard.hasLinkages).toBe(true)
+  })
+
+  it('仅 ymlFragments 有值时 hasLinkages 为 true', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.form.ymlFragments = [{ rowId: 'r1', source: 'f', mergeStrategy: 'append' }]
+    expect(wizard.hasLinkages).toBe(true)
+  })
+
+  it('仅 abstractClasses 有值时 hasLinkages 为 true', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.form.abstractClasses = [{ rowId: 'r1', fqcn: 'c', alias: 'a' }]
+    expect(wizard.hasLinkages).toBe(true)
+  })
+
+  it('configPackage 仅有空格时 hasLinkages 为 false', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.form.configPackage = '   '
+    expect(wizard.hasLinkages).toBe(false)
+  })
+})
+
+describe('starterConfigWizard step navigation 边界', () => {
+  it('next 在最后一步不前进', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 4
+    wizard.next()
+    expect(wizard.step).toBe(4)
+  })
+
+  it('prev 在第一步不后退', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.step = 1
+    wizard.prev()
+    expect(wizard.step).toBe(1)
+  })
+
+  it('goto 到有效步骤', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.goto(3)
+    expect(wizard.step).toBe(3)
+    wizard.goto(1)
+    expect(wizard.step).toBe(1)
+  })
+})
+
+describe('starterConfigWizard stepErrors 边界', () => {
+  it('id 含前后空格时 trim 后校验', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = '  web  '
+    wizard.form.description = 'd'
+    wizard.step = 1
+    expect(wizard.stepErrors.id).toBeUndefined()
+    expect(wizard.canNext).toBe(true)
+  })
+
+  it('id 含空格但 trim 后非法时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = '  Bad_Id  '
+    wizard.step = 1
+    expect(wizard.stepErrors.id).toContain('小写字母')
+  })
+
+  it('description 含空格时 trim 后为空报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = '   '
+    wizard.step = 1
+    expect(wizard.stepErrors.description).toContain('描述建议填写')
+  })
+
+  it('id 前后空格但草稿查重仍匹配', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.existingDraft = 'id: web\ncategory: web\n'
+    wizard.form.id = '  web  '
+    wizard.form.description = 'd'
+    wizard.step = 1
+    expect(wizard.stepErrors.id).toContain('已存在')
+  })
+
+  it('步骤 1 时不检查依赖校验', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = []
+    wizard.step = 1
+    expect(wizard.stepErrors).not.toHaveProperty('dependencies')
+  })
+
+  it('步骤 1 时不检查联动校验', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.form.templates = [{ rowId: 'r1', source: '', target: '' }]
+    wizard.step = 1
+    expect(wizard.stepErrors).not.toHaveProperty('templates')
+  })
+
+  it('步骤 2 时不检查联动校验', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.form.templates = [{ rowId: 'r1', source: '', target: '' }]
+    wizard.step = 2
+    expect(wizard.stepErrors).not.toHaveProperty('templates')
+  })
+
+  it('依赖 groupId 含空格 trim 后为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: '  ', artifactId: 'a', version: '' }]
+    wizard.step = 2
+    expect(wizard.stepErrors.dependencies).toContain('groupId')
+  })
+
+  it('依赖 artifactId 含空格 trim 后为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: '  ', version: '' }]
+    wizard.step = 2
+    expect(wizard.stepErrors.dependencies).toContain('artifactId')
+  })
+
+  it('多条依赖中第二条 groupId 为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [
+      { rowId: 'r1', groupId: 'g1', artifactId: 'a1', version: '' },
+      { rowId: 'r2', groupId: '', artifactId: 'a2', version: '' },
+    ]
+    wizard.step = 2
+    expect(wizard.stepErrors.dependencies).toContain('groupId')
+  })
+
+  it('template source 含空格 trim 后为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.templates = [{ rowId: 'r1', source: '  ', target: 't.java' }]
+    expect(wizard.stepErrors.templates).toBeDefined()
+  })
+
+  it('template target 含空格 trim 后为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.templates = [{ rowId: 'r1', source: 's.ftl', target: '  ' }]
+    expect(wizard.stepErrors.templates).toBeDefined()
+  })
+
+  it('ymlFragment source 含空格 trim 后为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.ymlFragments = [{ rowId: 'r1', source: '  ', mergeStrategy: 'append' }]
+    expect(wizard.stepErrors.ymlFragments).toBeDefined()
+  })
+
+  it('abstractClass fqcn 含空格 trim 后为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.abstractClasses = [{ rowId: 'r1', fqcn: '  ', alias: 'a' }]
+    expect(wizard.stepErrors.abstractClasses).toBeDefined()
+  })
+
+  it('abstractClass alias 含空格 trim 后为空时报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.step = 3
+    wizard.form.abstractClasses = [{ rowId: 'r1', fqcn: 'com.x.A', alias: '  ' }]
+    expect(wizard.stepErrors.abstractClasses).toBeDefined()
+  })
+})
+
+describe('starterConfigWizard id 草稿查重', () => {
+  it('草稿为多文档时 id 在第二个文档也能查重', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.existingDraft = 'id: old\n---\nid: web\n'
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.step = 1
+    expect(wizard.stepErrors.id).toContain('已存在')
+  })
+
+  it('id 在草稿中不存在时不报错', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.existingDraft = 'id: other\n'
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.step = 1
+    expect(wizard.stepErrors.id).toBeUndefined()
+  })
+
+  it('草稿为空时不报重复', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.existingDraft = ''
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.step = 1
+    expect(wizard.stepErrors.id).toBeUndefined()
+  })
+})
+
+describe('starterConfigWizard unknownPlaceholders getter', () => {
+  it('configPackage 有越界占位符时返回', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.form.configPackage = '{badPlaceholder}'
+    expect(wizard.unknownPlaceholders).toContain('{badPlaceholder}')
+  })
+
+  it('无越界占位符时返回空数组', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.form.id = 'demo'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    wizard.form.configPackage = '{basePackage}.config'
+    expect(wizard.unknownPlaceholders).toEqual([])
+  })
+})
+
+describe('starterConfigWizard saveToDraft 成功路径细节', () => {
+  it('saveToDraft 追加时正确拼接 DOC_SEPARATOR', async () => {
+    fetchMock.mockResolvedValueOnce(ok(draftView('id: old\n', 5)))
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    wizard.form.id = 'web'
+    wizard.form.description = 'Spring Web'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'org.springframework.boot', artifactId: 'spring-boot-starter-web', version: '' }]
+    await wizard.loadExistingDraft()
+    fetchMock.mockResolvedValueOnce(noContent())
+    fetchMock.mockResolvedValueOnce(ok(draftView('id: old\n---\nid: web\n', 6)))
+
+    const result = await wizard.saveToDraft()
+    await settle()
+    expect(result).toBe(true)
+    expect(wizard.actionState).toBe('done')
+    expect(wizard.message).toContain('已写入')
+    const putCall = fetchMock.mock.calls.find((c) => c[0] === '/api/admin/config/starter' && (c[1] as RequestInit)?.method === 'PUT')
+    const body = JSON.parse((putCall![1] as RequestInit).body as string)
+    expect(body.contentYaml).toContain('id: old')
+    expect(body.contentYaml).toContain('---')
+    expect(body.contentYaml).toContain('id: web')
+    // 顺序：old 在前，--- 在中间，web 在后
+    expect(body.contentYaml.indexOf('id: old')).toBeLessThan(body.contentYaml.indexOf('---'))
+    expect(body.contentYaml.indexOf('---')).toBeLessThan(body.contentYaml.indexOf('id: web'))
+  })
+
+  it('saveToDraft 成功后重新加载草稿', async () => {
+    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    wizard.form.id = 'web'
+    wizard.form.description = 'd'
+    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    await wizard.loadExistingDraft()
+    fetchMock.mockResolvedValueOnce(noContent()) // PUT
+    fetchMock.mockResolvedValueOnce(ok(draftView('id: web\n', 1))) // reload
+
+    await wizard.saveToDraft()
+    await settle()
+    expect(wizard.existingDraft).toBe('id: web\n')
+    expect(wizard.draftVersion).toBe(1)
+  })
+})
