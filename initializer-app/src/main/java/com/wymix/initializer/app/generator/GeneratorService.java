@@ -26,6 +26,10 @@ import java.util.List;
  * 请求持有的快照不可变，发布切换不影响进行中的生成请求；快照未发布时回退
  * classpath 单例 Bean（兜底语义，行为与 M3.1 前一致）。
  *
+ * <p>验收修复（P1-2）：兜底条件由「模板覆盖为空」收紧为「快照不存在」——
+ * 热发布仅新增/调整清单（无模板覆盖）时，生成侧同样走快照引擎，
+ * 保证零代码新增 starter 对生成接口即时生效（否则新 starter 选中即 2003）。
+ *
  * <p>M3.5 依赖冲突兜底校验（硬校验）：生成前用当前快照的冲突规则复算已选 starter
  * 组合，命中规则抛 422 + 4007（防绕过前端直调）；前端提示为软提示，此处为最后防线。
  *
@@ -115,15 +119,22 @@ public class GeneratorService {
     }
 
     /**
-     * 按当前快照解析生成引擎：快照携带模板覆盖时以覆盖渲染器构建请求级引擎
-     * （快照不可变，构建引擎线程安全），否则回退兜底单例。
+     * 按当前快照解析生成引擎：快照已发布即以快照构建请求级引擎（模板覆盖优先、
+     * classpath 内置模板兜底；快照不可变，构建引擎线程安全）；
+     * 仅快照未发布（null）时回退 classpath 兜底单例。
+     *
+     * <p>验收修复（P1-2）：原实现以「模板覆盖为空」作为回退条件，导致热发布新增
+     * starter 后（新清单仅入快照、无模板覆盖）生成侧仍走内置兜底清单，
+     * 新 starter 选中即 2003——回退语义修正为「快照不存在才兜底」。
      *
      * @param request 生成请求（构建工具决定双轨渲染实现）
      * @return 本次请求使用的生成引擎
      */
     private ProjectGenerator generatorFor(GenerateRequest request) {
         CatalogSnapshot snapshot = snapshotHolder.current();
-        if (snapshot == null || snapshot.templateOverrides().isEmpty()) {
+        // 兜底条件：仅快照未发布（快照持有器尚未播种）才回退 classpath 单例；
+        // 快照存在即以快照清单为准，保证热发布新增 starter 对生成侧即时生效
+        if (snapshot == null) {
             return fallbackGenerator;
         }
         TemplateRenderer renderer = new TemplateRenderer(snapshot.templateOverrides());

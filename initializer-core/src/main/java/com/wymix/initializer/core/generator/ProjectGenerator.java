@@ -162,7 +162,9 @@ public class ProjectGenerator {
         Set<String> seen = new LinkedHashSet<>();
         for (DependencyCoord dep : linkageRenderer.resolveDependencies(starterIds)) {
             if (seen.add(dep.groupId() + ":" + dep.artifactId())) {
-                // M2.4：version 透传给 Gradle 模板（GAV 形式）；Maven 模板忽略 version 走 Boot BOM
+                // version 双轨透传（Gradle GAV / Maven <version>）：仅声明了 version 的依赖输出，
+                // 官方 starter 等无 version 坐标继续走 Boot BOM（M2.4 + 验收 P1-1 修复：
+                // 内部 starter 不在 Boot BOM 管理范围，Maven pom 必须显式输出版本）
                 Map<String, String> coord = new LinkedHashMap<>();
                 coord.put("groupId", dep.groupId());
                 coord.put("artifactId", dep.artifactId());

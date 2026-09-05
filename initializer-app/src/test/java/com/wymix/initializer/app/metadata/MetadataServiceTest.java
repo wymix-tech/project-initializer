@@ -143,6 +143,9 @@ class MetadataServiceTest {
                 .containsExactly("xxx-redis-spring-boot-starter");
         // 关键字命中描述、ID/展示名不含 → 命中（名称+描述 contains 语义）
         assertThat(svc.listStarters("3.2.5", "内部 Redis 封装", null)).hasSize(1);
+        // 基线版本透出（验收一般项①）：清单声明了 version 的 starter 透出，未声明的为 null
+        assertThat(svc.listStarters("3.2.5", "xxx-redis", null).get(0).version()).isEqualTo("1.2.0");
+        assertThat(svc.listStarters("3.2.5", "spring web", null).get(0).version()).isNull();
     }
 
     /** 快照用元数据目录（含 xxx-redis 展示名）。 */
@@ -186,7 +189,7 @@ class MetadataServiceTest {
                         "middleware",
                         com.wymix.initializer.core.starter.Maintainer.INTERNAL, "内部 Redis 封装 starter",
                         List.of(new com.wymix.initializer.core.starter.DependencyCoord(
-                                "com.company", "xxx-redis-spring-boot-starter", null)),
+                                "com.company", "xxx-redis-spring-boot-starter", "1.2.0")),
                         new com.wymix.initializer.core.starter.LinkageSpec(null, List.of(), List.of(), List.of()))));
     }
 
