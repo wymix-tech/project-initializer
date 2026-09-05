@@ -101,6 +101,8 @@ npm run dev
 
 管理后台（M3）支持清单/模板在线维护：草稿 → 发布 → 热生效；刷新失败自动回滚旧配置。支持从内部制品库自动同步 starter 清单（`INITIALIZER_SYNC_REMOTE_ENDPOINT`），与手工配置合并（同名以手工为准）。
 
+> 🪄 **starter 配置引导向导**：管理后台 starter 草稿页提供「向导式接入」模式，把手写 starter yml 拆成 4 步表单（基本信息 → 依赖坐标 → 联动规则 → 预览与发布），字段级即时校验 + 占位符白名单前置提示，确认无误后一键写草稿/发布。复用现有管理端 API，后端零改动；高级用户仍可切回「YAML 直编」模式。
+
 > 📘 **完整配置教程见 [docs/guide/configuration.md](docs/guide/configuration.md)**：涵盖 metadata.yml 兼容矩阵、starter 联动规则与模板编写、校验规则调整、管理后台草稿-发布-回滚 API 及制品库同步接入。
 
 ## 质量门禁（CI 强制）

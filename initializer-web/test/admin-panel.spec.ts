@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import AdminPanel from '@/components/AdminPanel.vue'
 import { adminApi } from '@/api/client'
 import type { AdminDraftView } from '@/types/api'
@@ -14,6 +15,13 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals()
 })
+
+/** 挂载 AdminPanel 时注入 pinia（组件使用 starterConfigWizard store）。 */
+function mountAdmin(): ReturnType<typeof mount<typeof AdminPanel>> {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  return mount(AdminPanel, { global: { plugins: [pinia] } })
+}
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return { ok, status, json: () => Promise.resolve(body) } as unknown as Response
@@ -38,7 +46,7 @@ async function mountLoggedIn(): Promise<ReturnType<typeof mount<typeof AdminPane
     if (url === '/api/admin/audits') return Promise.resolve(jsonResponse([]))
     return Promise.resolve(jsonResponse({}))
   })
-  const wrapper = mount(AdminPanel)
+  const wrapper = mountAdmin()
   await wrapper.find('input.admin-token').setValue('secret-token')
   await wrapper.find('button.btn-primary').trigger('click')
   await settle()
@@ -47,7 +55,7 @@ async function mountLoggedIn(): Promise<ReturnType<typeof mount<typeof AdminPane
 
 describe('AdminPanel 登录', () => {
   it('token 为空时登录按钮禁用', () => {
-    const wrapper = mount(AdminPanel)
+    const wrapper = mountAdmin()
     const btn = wrapper.find('button.btn-primary').element as HTMLButtonElement
     expect(btn.disabled).toBe(true)
   })
@@ -62,7 +70,7 @@ describe('AdminPanel 登录', () => {
     fetchMock.mockImplementation(() =>
       Promise.resolve(jsonResponse({ code: 4004, message: '未授权', timestamp: 1 }, false, 404)),
     )
-    const wrapper = mount(AdminPanel)
+    const wrapper = mountAdmin()
     await wrapper.find('input.admin-token').setValue('bad')
     await wrapper.find('button.btn-primary').trigger('click')
     await settle()
@@ -170,5 +178,37 @@ describe('adminApi 封装', () => {
     await adminApi.putDraft('starter', 'tk', 'id: x\n', null)
     const init = fetchMock.mock.calls[0][1] as RequestInit
     expect(init.headers).not.toHaveProperty('If-Match')
+  })
+})
+
+describe('AdminPanel starter 向导模式', () => {
+  it('选中 starter 草稿且切到向导模式时渲染 StarterConfigWizard', async () => {
+    const wrapper = await mountLoggedIn()
+    // 切到 starter kind
+    wrapper.find('select.admin-kind').setValue('starter')
+    await settle()
+    // 切到向导模式
+    const wizardBtn = wrapper.findAll('button.mode-btn').find((b) => b.text().includes('向导式'))
+    expect(wizardBtn).toBeTruthy()
+    await wizardBtn!.trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findComponent({ name: 'StarterConfigWizard' }).exists()).toBe(true)
+  })
+
+  it('默认 yaml 模式不渲染向导', async () => {
+    const wrapper = await mountLoggedIn()
+    await wrapper.find('select.admin-kind').setValue('starter')
+    await settle()
+    expect(wrapper.findComponent({ name: 'StarterConfigWizard' }).exists()).toBe(false)
+  })
+
+  it('非 starter kind 不显示模式切换', async () => {
+    const wrapper = await mountLoggedIn()
+    // 默认 metadata kind
+    expect(wrapper.find('.mode-switch').exists()).toBe(false)
+    // 切到 conflict-rule 也不显示
+    await wrapper.find('select.admin-kind').setValue('conflict-rule')
+    await settle()
+    expect(wrapper.find('.mode-switch').exists()).toBe(false)
   })
 })

@@ -242,6 +242,17 @@ curl -X POST -H "X-Admin-Token: $TOKEN" -H "Content-Type: application/json" \
 
 ---
 
+### 5.5 starter 配置引导向导（傻瓜化接入）
+
+不想手写 yml？管理后台 starter 草稿页提供「向导式接入」模式，4 步表单填完即可写草稿/发布：
+
+1. **基本信息**：starter id、分类、维护方(official/internal)、描述——id 即时校验命名规范与草稿查重
+2. **依赖坐标**：GAV 坐标清单（可多条）；官方 starter version 留空（走 Boot BOM），内部 starter 显式声明 version
+3. **联动规则（可选）**：config-package、模板(source→target)、application.yml 片段、集成抽象类；占位符仅允许 `{basePackage}` `{packagePath}` `{artifact}` `{group}` `{bootVersion}` `{javaVersion}`，越界即时提示
+4. **预览与发布**：实时预览生成的 starter yml → 写入草稿（带乐观锁 `If-Match`，追加为多文档）→ 发布（全量校验 + 热切换）
+
+**后端零改动**：向导复用 `PUT /api/admin/config/starter` + `POST /api/admin/config/publish`，生成的 yml 与 `catalog/starters/*.yml` 同构，直接追加进 starter 草稿。高级用户可随时切回「YAML 直编」模式。
+
 ## 6. 验证清单
 
 配置变更后建议按序验证：

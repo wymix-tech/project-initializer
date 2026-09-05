@@ -2,10 +2,16 @@
 import { computed, onMounted, ref } from 'vue'
 import { adminApi, ApiError } from '@/api/client'
 import type { AdminAudit, AdminConfigKind, AdminDraftView, AdminRelease } from '@/types/api'
+import StarterConfigWizard from '@/components/StarterConfigWizard.vue'
+import { useStarterConfigWizardStore } from '@/stores/starterConfigWizard'
 
 /**
  * 管理后台面板（M3 评审遗留项 2）：草稿编辑（乐观锁）→ 发布 → 历史回滚 + 审计展示。
  * token 仅存于会话内存，刷新后需重新输入。
+ *
+ * M3.6 评审遗留项：新增「向导式接入」模式——把 starter 配置从手写 yml 拆成 4 步表单，
+ * 字段级校验 + 占位符白名单前置提示，降低接入门槛；高级用户仍可切回 yml 模式手贴。
+ * 向导复用同一 token 会话，后端零改动（写入草稿 + publish）。
  */
 
 /** 草稿种类选项（与后端 ConfigKind 对外小写形式一致）。 */
@@ -15,6 +21,9 @@ const kinds: { value: AdminConfigKind; label: string }[] = [
   { value: 'conflict-rule', label: '冲突规则' },
   { value: 'template', label: '生成模板' },
 ]
+
+/** starter 草稿编辑模式：表单向导（傻瓜化） / YAML 直编（高级） */
+type StarterEditMode = 'wizard' | 'yaml'
 
 const token = ref('')
 const activeKind = ref<AdminConfigKind>('metadata')
@@ -27,6 +36,10 @@ const loggedIn = ref(false)
 const busy = ref(false)
 const message = ref('')
 const messageType = ref<'info' | 'error'>('info')
+/** starter 草稿编辑模式（仅 starter kind 切换为向导时生效） */
+const starterEditMode = ref<StarterEditMode>('yaml')
+
+const wizardStore = useStarterConfigWizardStore()
 
 const dirty = computed(() => draftVersion.value !== savedVersion.value)
 
@@ -40,6 +53,8 @@ async function login(): Promise<void> {
   try {
     await adminApi.getDraft('metadata', token.value)
     loggedIn.value = true
+    // 向导复用同一会话 token
+    wizardStore.setToken(token.value)
     await loadDraft()
     await refreshAll()
     showText('info', '登录成功')
@@ -60,6 +75,11 @@ async function loadDraft(): Promise<void> {
   draftContent.value = view.contentYaml ?? ''
   draftVersion.value = view.version
   savedVersion.value = view.version
+  // starter kind 时同步向导草稿基线（查重与乐观锁）
+  if (activeKind.value === 'starter') {
+    wizardStore.existingDraft = view.contentYaml ?? ''
+    wizardStore.draftVersion = view.version
+  }
 }
 
 async function switchKind(): Promise<void> {
@@ -142,7 +162,35 @@ onMounted(() => {
 
     <div v-else class="admin-body">
       <h2>管理后台</h2>
-      <div class="admin-draft">
+
+      <!-- starter 草稿：模式切换（向导 / YAML） -->
+      <div v-if="activeKind === 'starter'" class="mode-switch">
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ active: starterEditMode === 'wizard' }"
+          @click="starterEditMode = 'wizard'"
+        >
+          🪄 向导式接入（推荐）
+        </button>
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ active: starterEditMode === 'yaml' }"
+          @click="starterEditMode = 'yaml'"
+        >
+          ✍ YAML 直编
+        </button>
+      </div>
+
+      <!-- 向导模式：仅 starter kind 展示 -->
+      <StarterConfigWizard
+        v-if="activeKind === 'starter' && starterEditMode === 'wizard'"
+        :token="token"
+      />
+
+      <!-- YAML 直编模式（原行为） -->
+      <div v-else class="admin-draft">
         <select v-model="activeKind" class="admin-kind" @change="switchKind">
           <option v-for="k in kinds" :key="k.value" :value="k.value">{{ k.label }}</option>
         </select>
@@ -153,9 +201,11 @@ onMounted(() => {
           spellcheck="false"
           placeholder="配置 YAML 全文"
         ></textarea>
-        <button type="button" class="btn" :disabled="busy" @click="saveDraft">保存草稿</button>
-        <button type="button" class="btn btn-primary" :disabled="busy" @click="publish">发布</button>
-        <span v-if="dirty" class="admin-dirty">有未保存修改</span>
+        <div class="admin-draft-actions">
+          <button type="button" class="btn" :disabled="busy" @click="saveDraft">保存草稿</button>
+          <button type="button" class="btn btn-primary" :disabled="busy" @click="publish">发布</button>
+          <span v-if="dirty" class="admin-dirty">有未保存修改</span>
+        </div>
       </div>
 
       <div v-if="message" class="admin-msg" :class="`admin-msg-${messageType}`" role="status">
@@ -189,6 +239,7 @@ onMounted(() => {
 .admin-login { display: flex; flex-direction: column; gap: 10px; max-width: 360px; }
 .admin-token { padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px; }
 .admin-draft { display: flex; flex-direction: column; gap: 8px; }
+.admin-draft-actions { display: flex; gap: 8px; align-items: center; }
 .admin-kind { padding: 6px 10px; border: 1px solid #d0d7de; border-radius: 6px; width: 200px; }
 .admin-yaml { width: 100%; font-family: monospace; font-size: 13px; padding: 8px; border: 1px solid #d0d7de; border-radius: 6px; }
 .admin-dirty { color: #9a6700; font-size: 13px; }
@@ -198,4 +249,11 @@ onMounted(() => {
 .admin-releases, .admin-audits { list-style: none; padding: 0; display: grid; gap: 6px; font-size: 13px; }
 .admin-releases li, .admin-audits li { padding: 6px 10px; border: 1px solid #d0d7de; border-radius: 6px; display: flex; justify-content: space-between; gap: 8px; }
 .admin-empty { color: #57606a; }
+
+.mode-switch { display: flex; gap: 8px; margin-bottom: 16px; }
+.mode-btn {
+  padding: 6px 14px; border-radius: 6px; border: 1px solid #d0d7de;
+  background: #f6f8fa; cursor: pointer; font-size: 14px;
+}
+.mode-btn.active { background: #0969da; border-color: #0969da; color: #fff; }
 </style>
