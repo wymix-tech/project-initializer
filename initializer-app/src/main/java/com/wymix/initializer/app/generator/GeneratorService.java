@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.OutputStream;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 生成应用服务：生成前做元信息最终校验，失败抛业务异常（422 + 明细），不输出半成品。
@@ -137,10 +138,11 @@ public class GeneratorService {
         if (snapshot == null) {
             return fallbackGenerator;
         }
-        TemplateRenderer renderer = new TemplateRenderer(snapshot.templateOverrides());
+        Map<String, String> templateOverrides = snapshot.templateOverrides();
+        TemplateRenderer renderer = new TemplateRenderer(templateOverrides);
         BuildScriptRenderer scriptRenderer =
                 request.buildTool() == BuildTool.GRADLE ? gradleRenderer : mavenRenderer;
         return new ProjectGenerator(snapshot.metadataCatalog(), renderer, snapshot.starterCatalog(),
-                scriptRenderer, scriptRenderer);
+                scriptRenderer, scriptRenderer, templateOverrides);
     }
 }

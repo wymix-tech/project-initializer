@@ -4,7 +4,11 @@ import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.core.generator.TemplateRenderer;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,14 +32,39 @@ public class LinkageRenderer {
 
     private final StarterCatalog starterCatalog;
     private final TemplateRenderer renderer;
+    /**
+     * 模板覆盖映射（M3.2 扩展：M3.5 起同时驱动 .ftl 渲染覆盖与 yml 片段合并覆盖）。
+     * 键为模板名（相对 templates/ 目录），值为模板全文。
+     */
+    private final Map<String, String> overrides;
 
     /**
+     * 默认构造：覆盖为空，yml 片段仅从 classpath 读取。
+     *
      * @param starterCatalog starter 清单（联动规则来源）
      * @param renderer       模板渲染器（复用基础模板渲染器，模板目录一致）
      */
     public LinkageRenderer(StarterCatalog starterCatalog, TemplateRenderer renderer) {
+        this(starterCatalog, renderer, Map.of());
+    }
+
+    /**
+     * M3.5 扩展：传入模板覆盖映射。
+     * <p>作用：
+     * <ul>
+     *   <li>.ftl 渲染仍由 {@link TemplateRenderer} 的 MultiTemplateLoader 覆盖（覆盖优先、classpath 兜底）</li>
+     *   <li>application.yml 片段合并：键命中时直接用覆盖文本（处理 {@code \${} → ${} 还原），未命中时 classpath 兜底</li>
+     * </ul>
+     * 这样管理端 TEMPLATE 草稿可对 starter 的 application-*.yml 片段即时维护，发布即生效。
+     *
+     * @param starterCatalog starter 清单
+     * @param renderer       模板渲染器
+     * @param overrides      模板覆盖映射（null 视为空映射）
+     */
+    public LinkageRenderer(StarterCatalog starterCatalog, TemplateRenderer renderer, Map<String, String> overrides) {
         this.starterCatalog = starterCatalog;
         this.renderer = renderer;
+        this.overrides = overrides == null ? Map.of() : overrides;
     }
 
     /**
@@ -114,7 +143,18 @@ public class LinkageRenderer {
         return files;
     }
 
-    /** 收集全部 application-yml-fragments 并按请求顺序委托合并器合并。 */
+    /**
+     * 收集全部 application-yml-fragments 并按请求顺序委托合并器合并。
+     *
+     * <p>读取优先级（M3.5）：快照模板覆盖映射 → classpath 资源。覆盖命中时对内容做
+     * {@code \${} → ${}} 还原——发布期 FreeMarker 预校验要求 yml 中 Spring 占位符写作
+     * {@code \${VAR:default}}（转义为字面），合并时还原为生成项目运行时所需的 {@code ${VAR:default}}。
+     * classpath 内置 yml（含 {@code ${REDIS_HOST:localhost}} 风格）直读路径不变，行为兼容。
+     *
+     * @param starterIds 选中的 starter ID 清单
+     * @return 合并后的 yml 树；选中的 starter 均无片段时为 null
+     * @throws BusinessException 片段来源均不存在（3004）或读取失败（3004）
+     */
     private Map<String, Object> mergeYmlFragments(List<String> starterIds) {
         List<YmlFragmentMerger.Fragment> fragments = new ArrayList<>();
         for (String starterId : starterIds) {
@@ -124,12 +164,11 @@ public class LinkageRenderer {
             LinkageSpec linkages = starterCatalog.entry(starterId).linkages();
             for (YmlFragmentLinkage fragmentLinkage : linkages.ymlFragments()) {
                 String source = fragmentLinkage.source();
-                try (var in = getClass().getResourceAsStream(TemplateRenderer.TEMPLATE_BASE + source)) {
-                    if (in == null) {
-                        throw new BusinessException(ErrorCode.YML_MERGE_CONFLICT,
-                                "yml 片段不存在: " + source + "（starter " + starterId + "）");
+                try {
+                    byte[] bytes = readYmlFragmentBytes(source);
+                    try (InputStream in = new ByteArrayInputStream(bytes)) {
+                        fragments.add(YmlFragmentMerger.Fragment.parse(in, source, fragmentLinkage.mergeStrategy()));
                     }
-                    fragments.add(YmlFragmentMerger.Fragment.parse(in, source, fragmentLinkage.mergeStrategy()));
                 } catch (BusinessException e) {
                     throw e;
                 } catch (Exception e) {
@@ -142,6 +181,55 @@ public class LinkageRenderer {
             return null;
         }
         return YmlFragmentMerger.merge(null, fragments);
+    }
+
+    /**
+     * 读取 yml 片段字节：覆盖映射优先（含 URL 解码与 {@code \${} → ${}} 还原），classpath 兜底。
+     *
+     * <p>合并前做两步归一化（兼容管理端维护现状）：
+     * <ol>
+     *   <li>URL 解码：管理端草稿中的 {@code %24}（{@code $}）等若来自 URL 编码片段，合并时还原为字面字符</li>
+     *   <li>FreeMarker 转义还原：发布期预校验要求 yml 中的 Spring 占位符写作 {@code \${...}}（转义为字面），
+     *       合并时还原为 {@code ${...}} 以让生成项目运行时由 Spring 解析</li>
+     * </ol>
+     * classpath 内置 yml 直读路径不变，行为兼容。
+     *
+     * @param source yml 片段相对 templates/ 的源名
+     * @return yml 字节
+     * @throws BusinessException 覆盖与 classpath 均无该资源（3004）
+     */
+    private byte[] readYmlFragmentBytes(String source) {
+        String override = overrides.get(source);
+        if (override != null) {
+            String restored = override;
+            if (restored.indexOf('%') >= 0) {
+                try {
+                    restored = URLDecoder.decode(restored, StandardCharsets.UTF_8);
+                } catch (IllegalArgumentException e) {
+                    // 非法 URL 编码片段（如不完整 %XY）：保留原文不阻断
+                }
+            }
+            restored = restored.replace("\\${", "${");
+            return restored.getBytes(StandardCharsets.UTF_8);
+        }
+        try (InputStream in = getClass().getResourceAsStream(TemplateRenderer.TEMPLATE_BASE + source)) {
+            if (in == null) {
+                throw new BusinessException(ErrorCode.YML_MERGE_CONFLICT,
+                        "yml 片段不存在: " + source);
+            }
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            int n;
+            while ((n = in.read(chunk)) > 0) {
+                buf.write(chunk, 0, n);
+            }
+            return buf.toByteArray();
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.YML_MERGE_CONFLICT,
+                    "yml 片段读取失败: " + source, e);
+        }
     }
 
     /** 抽象类联动：alias → fqcn 映射，注入模板 context（跨 starter 冲突已由 {@link #validateAliasConflicts} 前置拦截）。 */

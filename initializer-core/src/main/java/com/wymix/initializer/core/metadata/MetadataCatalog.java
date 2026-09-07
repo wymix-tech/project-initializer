@@ -29,6 +29,11 @@ public class MetadataCatalog {
     private final Map<String, JavaVersion> javaVersions = new LinkedHashMap<>();
     private final Map<String, BootVersion> bootVersions = new LinkedHashMap<>();
     private final Map<String, StarterDefinition> starterDefinitions = new LinkedHashMap<>();
+    /**
+     * 框架父 POM 配置（顶层 metadata 可选字段）：生成 {@code pom.xml} 的 {@code <parent>} 坐标。
+     * null 时生成器回退默认 {@code org.springframework.boot:spring-boot-starter-parent:&lt;bootVersion&gt;}。
+     */
+    private final FrameworkParent frameworkParent;
 
     /**
      * 从 YAML 输入流装载元数据目录。
@@ -39,7 +44,7 @@ public class MetadataCatalog {
      */
     public static MetadataCatalog load(InputStream yaml) {
         YamlMetadataParser.ParsedMetadata parsed = YamlMetadataParser.parse(yaml);
-        return new MetadataCatalog(parsed.javaVersions(), parsed.bootVersions(), parsed.starters());
+        return new MetadataCatalog(parsed.javaVersions(), parsed.bootVersions(), parsed.starters(), parsed.frameworkParent());
     }
 
     /**
@@ -56,9 +61,10 @@ public class MetadataCatalog {
 
     /** 空目录单例：三个维度均为空表，无悬空引用可校验。 */
     private static final MetadataCatalog EMPTY =
-            new MetadataCatalog(List.of(), List.of(), List.of());
+            new MetadataCatalog(List.of(), List.of(), List.of(), null);
 
-    private MetadataCatalog(List<JavaVersion> javaList, List<BootVersion> bootList, List<StarterDefinition> starterList) {
+    private MetadataCatalog(List<JavaVersion> javaList, List<BootVersion> bootList, List<StarterDefinition> starterList,
+                            FrameworkParent frameworkParent) {
         for (JavaVersion jv : javaList) {
             if (javaVersions.putIfAbsent(jv.id(), jv) != null) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Java 版本 ID 重复: " + jv.id());
@@ -88,6 +94,7 @@ public class MetadataCatalog {
                 }
             }
         }
+        this.frameworkParent = frameworkParent;
     }
 
     /** @return 全量 Java 版本清单（按配置顺序，不可变） */
@@ -209,7 +216,15 @@ public class MetadataCatalog {
             bootList.add(new BootVersion(bv.id(), bv.label(), bv.official(),
                     bv.supportedJavaVersions(), starters));
         }
-        return new MetadataCatalog(List.copyOf(javaVersions.values()), bootList, defs);
+        return new MetadataCatalog(List.copyOf(javaVersions.values()), bootList, defs, frameworkParent);
+    }
+
+    /**
+     * 框架父 POM 坐标（生成 {@code pom.xml} 的 {@code <parent>}）。null 时由生成器回退默认
+     * {@code org.springframework.boot:spring-boot-starter-parent:&lt;bootVersion&gt;}。
+     */
+    public FrameworkParent frameworkParent() {
+        return frameworkParent;
     }
 
     /** @return 全部已登记 starter ID 集合（M3.3 同步保留集计算用，不可变） */

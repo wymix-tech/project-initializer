@@ -98,6 +98,36 @@ class LinkageRendererTest {
     }
 
     @Test
+    void overrideYmlFragmentShouldMergeAndRestoreEscape() {
+        // M3.5 扩展：管理端 TEMPLATE 草稿覆盖 yml 片段时，overrides 命中且 \${} → ${} 还原
+        String starterYml = """
+                id: override-frag-starter
+                category: tool
+                maintainer: internal
+                description: 覆盖片段用例
+                dependencies:
+                  - groupId: com.company
+                    artifactId: override-frag
+                linkages:
+                  application-yml-fragments:
+                    - source: "starters/override/frag.yml"
+                      merge-strategy: append
+                """;
+        StarterCatalog catalog = StarterCatalog.of(List.of(
+                YamlStarterParser.parse(new java.io.ByteArrayInputStream(
+                        starterYml.getBytes(StandardCharsets.UTF_8)))));
+        java.util.Map<String, String> overrides = new java.util.HashMap<>();
+        overrides.put("starters/override/frag.yml", "override:\n  secret: \\${SECRET:default-secret}\n");
+        LinkageRenderer r = new LinkageRenderer(catalog, new TemplateRenderer(), overrides);
+        LinkageRenderer.LinkageResult result = r.render(List.of("override-frag-starter"), Map.of());
+        assertThat(result.mergedYml()).isNotNull();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> overrideMap = (Map<String, Object>) result.mergedYml().get("override");
+        assertThat(overrideMap).isNotNull();
+        assertThat(overrideMap.get("secret")).isEqualTo("${SECRET:default-secret}");
+    }
+
+    @Test
     void missingFragmentResourceShouldThrow3004() throws Exception {
         // 构造一个声明了不存在片段的清单
         String yml = """

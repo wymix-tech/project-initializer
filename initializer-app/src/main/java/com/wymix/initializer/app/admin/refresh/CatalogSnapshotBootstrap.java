@@ -1,6 +1,9 @@
 package com.wymix.initializer.app.admin.refresh;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wymix.initializer.app.InitializationProperties;
+import com.wymix.initializer.app.admin.entity.ConfigReleaseEntity;
+import com.wymix.initializer.app.admin.mapper.ConfigReleaseMapper;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
 import com.wymix.initializer.core.starter.StarterCatalog;
 import org.slf4j.Logger;
@@ -13,9 +16,15 @@ import org.springframework.context.annotation.Configuration;
 import java.util.Map;
 
 /**
- * 快照启动播种（M3.2）：以 classpath 内置清单构建初始快照写入持有器，
- * 保证读路径自启动起始终可用——即使管理员从未发布过配置，生成与元数据
- * 接口的行为也与 M3.1 前一致（兜底语义）；一旦管理端发布，快照原子切换热生效。
+ * 快照启动播种（M3.2/M3.5）：保证读路径自启动起始终可用。
+ *
+ * <p>两种初始化路径：
+ * <ul>
+ *   <li>{@code --demo} 启动：以 classpath 内置清单构建初始快照</li>
+ *   <li>非 {@code --demo} 启动：从 DB 加载最新已发布 release 还原快照，
+ *       保证管理后台发布过的配置重启后依然生效（避免快照在内存中丢失）</li>
+ * </ul>
+ * 两者都未命中时快照保持未初始化，元数据/生成读路径回退到空清单。
  *
  * <p>线程安全性：Spring 配置类，无状态，线程安全。
  */
@@ -25,15 +34,13 @@ public class CatalogSnapshotBootstrap {
     private static final Logger log = LoggerFactory.getLogger(CatalogSnapshotBootstrap.class);
 
     /**
-     * 启动播种任务：classpath 内置清单 → 初始快照。
-     *
-     * <p>内置清单开关：未携带 {@code --demo} 启动时不播种，快照保持未初始化，
-     * 元数据与生成读路径回退到空清单，直到管理端发布配置（{@code /api/admin/config/publish}）
-     * 原子切换快照后才有数据。
+     * 启动播种任务：classpath 内置清单（--demo）或 DB 最新已发布快照（默认）。
      *
      * @param snapshotHolder  快照持有器
      * @param metadataCatalog classpath 内置元数据目录
      * @param starterCatalog  classpath 内置 starter 清单
+     * @param catalogRefresher 快照构建器（M3.5：从发布 YAML 重建快照）
+     * @param releaseMapper   发布历史 Mapper（M3.5：启动还原使用）
      * @param demoEnabled     是否启用内置清单（由 {@code --demo} 决定）
      * @return 播种 Runner
      */
@@ -41,17 +48,43 @@ public class CatalogSnapshotBootstrap {
     public ApplicationRunner catalogSnapshotSeeder(CatalogSnapshotHolder snapshotHolder,
                                                    MetadataCatalog metadataCatalog,
                                                    StarterCatalog starterCatalog,
+                                                   CatalogRefresher catalogRefresher,
+                                                   ConfigReleaseMapper releaseMapper,
                                                    @Value("${" + InitializationProperties.DEMO_ENABLED_PROPERTY + ":"
                                                            + InitializationProperties.DEMO_ENABLED_DEFAULT + "}")
                                                    boolean demoEnabled) {
         return args -> {
-            if (!demoEnabled) {
-                log.info("内置清单未启用（启动未携带 --demo）：跳过快照播种，等待管理端发布配置");
+            if (demoEnabled) {
+                snapshotHolder.seed(new CatalogSnapshot(metadataCatalog, starterCatalog, Map.of()));
+                log.info("配置快照已播种: classpath 内置清单（Java {} 版 / starter {} 项）",
+                        metadataCatalog.javaVersions().size(), starterCatalog.size());
                 return;
             }
-            snapshotHolder.seed(new CatalogSnapshot(metadataCatalog, starterCatalog, Map.of()));
-            log.info("配置快照已播种: classpath 内置清单（Java {} 版 / starter {} 项）",
-                    metadataCatalog.javaVersions().size(), starterCatalog.size());
+            // 非 --demo：从 DB 加载最新已发布 release 还原快照，保证管理端发布后重启不丢
+            ConfigReleaseEntity latest = releaseMapper.selectList(
+                    new LambdaQueryWrapper<ConfigReleaseEntity>()
+                            .orderByDesc(ConfigReleaseEntity::getReleasedAt)
+                            .last("LIMIT 1"))
+                    .stream().findFirst().orElse(null);
+            if (latest == null) {
+                log.info("无 --demo 且 DB 无已发布快照：等待管理端发布配置");
+                return;
+            }
+            try {
+                CatalogSnapshot snapshot = catalogRefresher.validateAndBuild(
+                        latest.getMetadataYaml(),
+                        latest.getStarterYaml(),
+                        latest.getTemplateYaml(),
+                        latest.getConflictYaml());
+                snapshotHolder.seed(snapshot);
+                log.info("已从 DB 还原最新发布快照: releaseId={}, releasedAt={}",
+                        latest.getId(), latest.getReleasedAt());
+            } catch (RuntimeException e) {
+                // 启动期还原失败：不要阻塞启动（生成/读路径保持空清单兜底）
+                // 管理后台可重新发布修复，刷新会走正常的发布校验流程
+                log.warn("从 DB 还原最新发布快照失败（保持空清单兜底，可由管理端重新发布修复）: {}",
+                        e.getMessage());
+            }
         };
     }
 }

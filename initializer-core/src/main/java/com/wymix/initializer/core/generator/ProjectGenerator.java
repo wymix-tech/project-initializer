@@ -49,45 +49,55 @@ public class ProjectGenerator {
     private final BuildScriptRenderer gradleRenderer;
 
     /**
-     * @param catalog  元数据目录（版本合法性校验）
-     * @param renderer 模板渲染器
+     * 默认构造：Maven/Gradle 渲染器 + 覆盖为空。
+     *
+     * @param catalog        元数据目录（版本合法性校验）
+     * @param renderer       模板渲染器
      * @param starterCatalog starter 清单（联动规则来源；M2.3 新增，禁 null）
      */
     public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, StarterCatalog starterCatalog) {
-        this(catalog, renderer, new LinkageRenderer(starterCatalog, renderer));
+        this(catalog, renderer, starterCatalog, new MavenRenderer(), new GradleRenderer(), Map.of());
     }
 
     /**
-     * M2.4 全参构造：允许注入自定义构建脚本渲染实现（SPI 扩展点）。
+     * M2.4 全参构造：允许注入自定义构建脚本渲染实现（SPI 扩展点）。覆盖映射为空。
      *
-     * @param catalog       元数据目录
-     * @param renderer      模板渲染器
+     * @param catalog        元数据目录
+     * @param renderer       模板渲染器
      * @param starterCatalog starter 清单（联动规则来源）
-     * @param mavenRenderer Maven 渲染实现
+     * @param mavenRenderer  Maven 渲染实现
      * @param gradleRenderer Gradle 渲染实现
      */
     public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, StarterCatalog starterCatalog,
                             BuildScriptRenderer mavenRenderer, BuildScriptRenderer gradleRenderer) {
-        this(catalog, renderer, new LinkageRenderer(starterCatalog, renderer), mavenRenderer, gradleRenderer);
+        this(catalog, renderer, starterCatalog, mavenRenderer, gradleRenderer, Map.of());
+    }
+
+    /**
+     * M3.5 扩展全参构造：传入模板覆盖映射，覆盖同时驱动 .ftl 渲染与 yml 片段合并。
+     *
+     * @param catalog            元数据目录
+     * @param renderer           模板渲染器
+     * @param starterCatalog     starter 清单（联动规则来源）
+     * @param mavenRenderer      Maven 渲染实现
+     * @param gradleRenderer     Gradle 渲染实现
+     * @param templateOverrides  模板覆盖映射（null 视为空映射）
+     */
+    public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, StarterCatalog starterCatalog,
+                            BuildScriptRenderer mavenRenderer, BuildScriptRenderer gradleRenderer,
+                            Map<String, String> templateOverrides) {
+        this.catalog = catalog;
+        this.renderer = renderer;
+        Map<String, String> overrides = templateOverrides == null ? Map.of() : templateOverrides;
+        this.linkageRenderer = new LinkageRenderer(starterCatalog, renderer, overrides);
+        this.mavenRenderer = mavenRenderer;
+        this.gradleRenderer = gradleRenderer;
     }
 
     /** @deprecated M2.3 前旧签名，仅保留给无联动场景的旧调用方过渡；新代码应传 starterCatalog。 */
     @Deprecated(since = "0.1.0", forRemoval = true)
     public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer) {
-        this(catalog, renderer, new LinkageRenderer(StarterCatalog.of(List.of()), renderer));
-    }
-
-    private ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, LinkageRenderer linkageRenderer) {
-        this(catalog, renderer, linkageRenderer, new MavenRenderer(), new GradleRenderer());
-    }
-
-    private ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, LinkageRenderer linkageRenderer,
-                             BuildScriptRenderer mavenRenderer, BuildScriptRenderer gradleRenderer) {
-        this.catalog = catalog;
-        this.renderer = renderer;
-        this.linkageRenderer = linkageRenderer;
-        this.mavenRenderer = mavenRenderer;
-        this.gradleRenderer = gradleRenderer;
+        this(catalog, renderer, StarterCatalog.of(List.of()), new MavenRenderer(), new GradleRenderer(), Map.of());
     }
 
     /**
@@ -257,6 +267,14 @@ public class ProjectGenerator {
         model.put(TemplateRenderer.K_JAVA_VERSION, request.javaVersion());
         model.put(TemplateRenderer.K_STARTERS, new ArrayList<>(request.starters()));
         model.put(TemplateRenderer.K_STARTER_DEPENDENCIES, resolveStarterDependencies(request.starters()));
+        // 框架父 POM：未配置时回退 spring-boot-starter-parent:${bootVersion}
+        com.wymix.initializer.core.metadata.FrameworkParent fp = catalog.frameworkParent();
+        if (fp == null) {
+            fp = com.wymix.initializer.core.metadata.FrameworkParent.defaultSpringBootParent(request.bootVersion());
+        }
+        model.put("parentGroupId", fp.groupId());
+        model.put("parentArtifactId", fp.artifactId());
+        model.put("parentVersion", fp.version());
         return model;
     }
 

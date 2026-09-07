@@ -23,9 +23,9 @@ final class YamlMetadataParser {
     private YamlMetadataParser() {
     }
 
-    /** 解析结果载体：Java 版本、Boot 版本与 starter 元信息清单。 */
+    /** 解析结果载体：Java 版本、Boot 版本、starter 元信息与可选框架父 POM。 */
     record ParsedMetadata(List<JavaVersion> javaVersions, List<BootVersion> bootVersions,
-                          List<StarterDefinition> starters) {
+                          List<StarterDefinition> starters, FrameworkParent frameworkParent) {
     }
 
     /**
@@ -46,7 +46,33 @@ final class YamlMetadataParser {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "metadata.yml 内容为空");
         }
         return new ParsedMetadata(parseJavaVersions(root.get("javaVersions")), parseBootVersions(root.get("bootVersions")),
-                parseStarters(root.get("starters")));
+                parseStarters(root.get("starters")), parseFrameworkParent(root.get("frameworkParent")));
+    }
+
+    /**
+     * 解析顶层 {@code frameworkParent}（可选）：生成 {@code pom.xml} 的 {@code <parent>} 坐标。
+     * 三字段任一缺失或全部缺失均视为未配置（null），由生成器回退默认 spring-boot-starter-parent。
+     *
+     * @param node frameworkParent 节点
+     * @return FrameworkParent；未配置返回 null
+     */
+    @SuppressWarnings("unchecked")
+    private static FrameworkParent parseFrameworkParent(Object node) {
+        if (node == null) {
+            return null;
+        }
+        if (!(node instanceof Map)) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "metadata.yml 字段类型非法: frameworkParent");
+        }
+        Map<String, Object> map = (Map<String, Object>) node;
+        String groupId = stringOrNull(map, "groupId");
+        String artifactId = stringOrNull(map, "artifactId");
+        String version = stringOrNull(map, "version");
+        if (groupId == null || artifactId == null || version == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                    "metadata.yml frameworkParent 字段不完整，需 groupId/artifactId/version 三项齐全");
+        }
+        return new FrameworkParent(groupId, artifactId, version);
     }
 
     @SuppressWarnings("unchecked")
