@@ -8,12 +8,12 @@ main:
         image: maven:3.9-eclipse-temurin-17
       stages:
         - name: build
-          script: mvn -B -DskipTests install
+          script: mvn -B -DskipTests -Dskip.web=true install
         - name: unit-test-and-coverage
-          script: mvn -B verify
+          script: mvn -B -Dskip.web=true verify
         - name: pit-mutation-test
           script: |-
-            mvn -B -DskipTests install
+            mvn -B -DskipTests -Dskip.web=true install
             mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
   pull_request:
     - name: pr-quality-gate
@@ -21,12 +21,12 @@ main:
         image: maven:3.9-eclipse-temurin-17
       stages:
         - name: build
-          script: mvn -B -DskipTests install
+          script: mvn -B -DskipTests -Dskip.web=true install
         - name: unit-test-and-coverage
-          script: mvn -B verify
+          script: mvn -B -Dskip.web=true verify
         - name: pit-mutation-test
           script: |-
-            mvn -B -DskipTests install
+            mvn -B -DskipTests -Dskip.web=true install
             mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
     - name: web-quality-gate
       docker:
@@ -48,12 +48,12 @@ main:
         image: maven:3.9-eclipse-temurin-17
       stages:
         - name: build
-          script: mvn -B -DskipTests install
+          script: mvn -B -DskipTests -Dskip.web=true install
         - name: unit-test-and-coverage
-          script: mvn -B verify
+          script: mvn -B -Dskip.web=true verify
         - name: pit-mutation-test
           script: |-
-            mvn -B -DskipTests install
+            mvn -B -DskipTests -Dskip.web=true install
             mvn -B org.pitest:pitest-maven:mutationCoverage -pl initializer-core,initializer-app
     - name: web-quality-gate
       docker:
