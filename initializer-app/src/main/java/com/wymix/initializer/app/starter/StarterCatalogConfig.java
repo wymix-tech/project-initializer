@@ -2,11 +2,13 @@ package com.wymix.initializer.app.starter;
 
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
+import com.wymix.initializer.app.InitializationProperties;
 import com.wymix.initializer.core.starter.StarterCatalog;
 import com.wymix.initializer.core.starter.StarterCatalogEntry;
 import com.wymix.initializer.core.starter.YamlStarterParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.Resource;
@@ -35,13 +37,33 @@ public class StarterCatalogConfig {
     static final String STARTER_YML_PATTERN = "classpath*:catalog/starters/*.yml";
 
     /**
+     * 装载 starter 清单（启用内置清单的便捷重载），等价 {@code starterCatalog(true)}。
+     *
+     * @return starter 清单
+     */
+    public StarterCatalog starterCatalog() {
+        return starterCatalog(true);
+    }
+
+    /**
      * 装载 starter 清单 Bean。
      *
+     * <p>内置清单开关：未启用（启动未携带 {@code --demo}）时返回空清单，
+     * 不扫描 {@code catalog/starters/*.yml}（空目录下的「清单为空」校验随之豁免），
+     * starter 全量由管理端发布提供。
+     *
+     * @param demoEnabled 是否启用内置清单（由 {@code --demo} 决定）
      * @return starter 清单（不可变，可安全共享）
      * @throws BusinessException 清单缺失/解析/校验失败（错误码 {@link ErrorCode#STARTER_CATALOG_INVALID}，启动即失败）
      */
     @Bean
-    public StarterCatalog starterCatalog() {
+    public StarterCatalog starterCatalog(
+            @Value("${" + InitializationProperties.DEMO_ENABLED_PROPERTY + ":"
+                    + InitializationProperties.DEMO_ENABLED_DEFAULT + "}") boolean demoEnabled) {
+        if (!demoEnabled) {
+            log.info("内置清单未启用（启动未携带 --demo）：starter 清单为空，等待管理端发布配置");
+            return StarterCatalog.of(List.of());
+        }
         Resource[] resources;
         try {
             resources = new PathMatchingResourcePatternResolver().getResources(STARTER_YML_PATTERN);

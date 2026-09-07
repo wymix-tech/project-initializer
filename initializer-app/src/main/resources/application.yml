@@ -21,6 +21,12 @@ mybatis-plus:
     map-underscore-to-camel-case: true
 
 initializer:
+  # 内置清单开关：仅当 jar 启动携带 --demo 时加载 classpath 内置清单（Java/Boot/starter）并播种。
+  # 该值由 InitializerApplication#main 依据 --demo 以 system property 覆盖（优先级更高），
+  # 故生产启动不带 --demo 时为空清单，数据全部由管理端发布提供；
+  # 此处默认 true 仅服务于未经过 main 的测试与 IDE 直跑场景，保持既有测试行为不变。
+  demo:
+    enabled: true
   admin:
     # 管理端内置管理员 token（M3.1 轻量鉴权；生产环境通过环境变量覆盖）
     token: ${INITIALIZER_ADMIN_TOKEN:admin-dev-token}

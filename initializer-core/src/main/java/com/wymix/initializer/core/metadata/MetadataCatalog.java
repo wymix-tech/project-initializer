@@ -42,6 +42,22 @@ public class MetadataCatalog {
         return new MetadataCatalog(parsed.javaVersions(), parsed.bootVersions(), parsed.starters());
     }
 
+    /**
+     * 空元数据目录（无 Java 版本 / Boot 版本 / starter 定义）。
+     *
+     * <p>用于「未启用内置清单」场景（如生产部署未携带 {@code --demo}）：
+     * 读路径回退到空目录而非失败，清单数据等待管理端发布配置后填充。
+     *
+     * @return 空目录实例（不可变，线程安全）
+     */
+    public static MetadataCatalog empty() {
+        return EMPTY;
+    }
+
+    /** 空目录单例：三个维度均为空表，无悬空引用可校验。 */
+    private static final MetadataCatalog EMPTY =
+            new MetadataCatalog(List.of(), List.of(), List.of());
+
     private MetadataCatalog(List<JavaVersion> javaList, List<BootVersion> bootList, List<StarterDefinition> starterList) {
         for (JavaVersion jv : javaList) {
             if (javaVersions.putIfAbsent(jv.id(), jv) != null) {

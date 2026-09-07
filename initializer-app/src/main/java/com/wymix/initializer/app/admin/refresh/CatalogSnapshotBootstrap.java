@@ -1,9 +1,11 @@
 package com.wymix.initializer.app.admin.refresh;
 
+import com.wymix.initializer.app.InitializationProperties;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
 import com.wymix.initializer.core.starter.StarterCatalog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,16 +27,28 @@ public class CatalogSnapshotBootstrap {
     /**
      * 启动播种任务：classpath 内置清单 → 初始快照。
      *
-     * @param snapshotHolder 快照持有器
+     * <p>内置清单开关：未携带 {@code --demo} 启动时不播种，快照保持未初始化，
+     * 元数据与生成读路径回退到空清单，直到管理端发布配置（{@code /api/admin/config/publish}）
+     * 原子切换快照后才有数据。
+     *
+     * @param snapshotHolder  快照持有器
      * @param metadataCatalog classpath 内置元数据目录
      * @param starterCatalog  classpath 内置 starter 清单
+     * @param demoEnabled     是否启用内置清单（由 {@code --demo} 决定）
      * @return 播种 Runner
      */
     @Bean
     public ApplicationRunner catalogSnapshotSeeder(CatalogSnapshotHolder snapshotHolder,
                                                    MetadataCatalog metadataCatalog,
-                                                   StarterCatalog starterCatalog) {
+                                                   StarterCatalog starterCatalog,
+                                                   @Value("${" + InitializationProperties.DEMO_ENABLED_PROPERTY + ":"
+                                                           + InitializationProperties.DEMO_ENABLED_DEFAULT + "}")
+                                                   boolean demoEnabled) {
         return args -> {
+            if (!demoEnabled) {
+                log.info("内置清单未启用（启动未携带 --demo）：跳过快照播种，等待管理端发布配置");
+                return;
+            }
             snapshotHolder.seed(new CatalogSnapshot(metadataCatalog, starterCatalog, Map.of()));
             log.info("配置快照已播种: classpath 内置清单（Java {} 版 / starter {} 项）",
                     metadataCatalog.javaVersions().size(), starterCatalog.size());

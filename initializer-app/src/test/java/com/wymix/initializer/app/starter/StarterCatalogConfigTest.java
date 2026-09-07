@@ -17,7 +17,7 @@ class StarterCatalogConfigTest {
 
     @Test
     void starterCatalog_loadsRealClasspathResources() {
-        StarterCatalog catalog = config.starterCatalog();
+        StarterCatalog catalog = config.starterCatalog(true);
         assertThat(catalog.size()).isGreaterThanOrEqualTo(2);
         assertThat(catalog.contains("web")).isTrue();
         assertThat(catalog.contains("xxx-redis-spring-boot-starter")).isTrue();
@@ -33,9 +33,9 @@ class StarterCatalogConfigTest {
 
     @Test
     void starterCatalog_loadedTwice_isDeterministic() {
-        List<String> first = config.starterCatalog().all().stream()
+        List<String> first = config.starterCatalog(true).all().stream()
                 .map(com.wymix.initializer.core.starter.StarterCatalogEntry::id).toList();
-        List<String> second = config.starterCatalog().all().stream()
+        List<String> second = config.starterCatalog(true).all().stream()
                 .map(com.wymix.initializer.core.starter.StarterCatalogEntry::id).toList();
         assertThat(first).isEqualTo(second);
     }
