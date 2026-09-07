@@ -136,7 +136,8 @@ final class YamlMetadataParser {
             String groupId = requireString(dep, "groupId", "starters." + id + ".dependency.groupId");
             String artifactId = requireString(dep, "artifactId", "starters." + id + ".dependency.artifactId");
             boolean required = Boolean.TRUE.equals(map.get("required"));
-            result.add(new StarterDefinition(id, label, new MavenDependency(groupId, artifactId), required));
+            List<String> requires = toStringList(map.get("requires"), "starters." + id + ".requires");
+            result.add(new StarterDefinition(id, label, new MavenDependency(groupId, artifactId), required, requires));
         }
         return result;
     }

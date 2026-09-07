@@ -126,13 +126,17 @@ public class ProjectGenerator {
      */
     private GenerateRequest withRequiredStarters(GenerateRequest request) {
         List<String> required = catalog.requiredStarters(request.bootVersion());
-        if (required.isEmpty() || request.starters().containsAll(required)) {
+        List<String> explicit = request.starters();
+        // 种子 = 必选项 + 用户选择；再按 requires 求传递闭包
+        List<String> seed = new ArrayList<>(required);
+        seed.addAll(explicit);
+        List<String> resolved = catalog.resolveRequires(request.bootVersion(), seed);
+        // 闭包未引入新项（用户选择已覆盖全部隐式依赖）时保持用户原本顺序
+        if (explicit.containsAll(resolved)) {
             return request;
         }
-        Set<String> merged = new LinkedHashSet<>(required);
-        merged.addAll(request.starters());
         return new GenerateRequest(request.group(), request.artifact(), request.basePackage(),
-                request.javaVersion(), request.bootVersion(), List.copyOf(merged), request.buildTool());
+                request.javaVersion(), request.bootVersion(), resolved, request.buildTool());
     }
 
     /**

@@ -4,9 +4,12 @@ import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
 
 import java.io.InputStream;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -94,7 +97,85 @@ public class MetadataCatalog {
                 }
             }
         }
+        // M3.6 依赖联动校验：requires 引用必须已登记，且不得自引用/成环
+        validateRequires(starterList);
         this.frameworkParent = frameworkParent;
+    }
+
+    /**
+     * 依赖联动（requires）合法性校验：悬空引用、自引用、循环依赖一律拒绝（配置错误早暴露）。
+     *
+     * @param starterList 全部 starter 定义
+     * @throws BusinessException 引用未定义（9002）、自引用（9002）、存在环（9002）
+     */
+    private void validateRequires(List<StarterDefinition> starterList) {
+        for (StarterDefinition sd : starterList) {
+            for (String dep : sd.requires()) {
+                if (dep.equals(sd.id())) {
+                    throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                            "starter " + sd.id() + " 的 requires 不能引用自身: " + dep);
+                }
+                if (!starterDefinitions.containsKey(dep)) {
+                    throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                            "starter " + sd.id() + " 的 requires 引用了未定义的 starter: " + dep);
+                }
+            }
+        }
+        Map<String, Integer> state = new LinkedHashMap<>();
+        for (StarterDefinition sd : starterList) {
+            visitRequires(sd.id(), state, new LinkedHashSet<>());
+        }
+    }
+
+    /** requires 有向图 DFS：0/未访问 1/访问中 2/已完成，回边即环。 */
+    private void visitRequires(String id, Map<String, Integer> state, LinkedHashSet<String> path) {
+        Integer visited = state.get(id);
+        if (visited != null && visited == 2) {
+            return;
+        }
+        if (visited != null && visited == 1) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                    "starter requires 存在循环依赖: " + String.join(" -> ", path) + " -> " + id);
+        }
+        state.put(id, 1);
+        path.add(id);
+        StarterDefinition sd = starterDefinitions.get(id);
+        if (sd != null) {
+            for (String dep : sd.requires()) {
+                visitRequires(dep, state, path);
+            }
+        }
+        path.remove(id);
+        state.put(id, 2);
+    }
+
+    /**
+     * 依赖闭包解析（M3.6）：给定选中清单，返回「选中项 + 其 requires 传递依赖」，
+     * 且限定在指定 Boot 版本的可选清单内（不在清单内的依赖被忽略，避免引入不支持的 starter）。
+     *
+     * @param bootVersionId Boot 版本 ID
+     * @param selected      用户选中的 starter ID 清单（可含重复，保持首次出现顺序）
+     * @return 闭包结果（选中项顺序在前，依赖按发现顺序追加，不可变）
+     * @throws BusinessException Boot 版本不存在（错误码 {@link ErrorCode#METADATA_NOT_FOUND}）
+     */
+    public List<String> resolveRequires(String bootVersionId, List<String> selected) {
+        Set<String> available = new LinkedHashSet<>(bootVersion(bootVersionId).starters());
+        Set<String> result = new LinkedHashSet<>();
+        Deque<String> queue = new java.util.ArrayDeque<>();
+        if (selected != null) {
+            queue.addAll(selected);
+        }
+        while (!queue.isEmpty()) {
+            String id = queue.poll();
+            if (!available.contains(id) || !result.add(id)) {
+                continue;
+            }
+            StarterDefinition sd = starterDefinitions.get(id);
+            if (sd != null) {
+                queue.addAll(sd.requires());
+            }
+        }
+        return List.copyOf(result);
     }
 
     /** @return 全量 Java 版本清单（按配置顺序，不可变） */

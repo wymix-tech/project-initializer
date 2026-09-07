@@ -31,6 +31,8 @@ export interface Starter {
   version: string | null
   /** 是否必选（M3.6）：true 时默认勾选且禁止取消，生成时后端兜底自动补齐 */
   required: boolean
+  /** 依赖联动（M3.6）：选中本 starter 时自动带上的 starter id（后端会求传递闭包） */
+  requires: string[]
 }
 
 /** 冲突规则清单项：GET /api/metadata/conflict-rules（M3.5） */

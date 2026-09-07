@@ -35,8 +35,8 @@ const bootVersions: BootVersion[] = [
   { id: '3.2.5', label: '3.2.5', official: true },
 ]
 const starters: Starter[] = [
-  { id: 'web', label: 'Spring Web', maintainer: 'official' as const, category: 'web', description: 'Spring MVC', version: null, required: false },
-  { id: 'data-jpa', label: 'Spring Data JPA', maintainer: 'official' as const, category: 'data', description: 'JPA', version: null, required: false },
+  { id: 'web', label: 'Spring Web', maintainer: 'official' as const, category: 'web', description: 'Spring MVC', version: null, required: false, requires: [] },
+  { id: 'data-jpa', label: 'Spring Data JPA', maintainer: 'official' as const, category: 'data', description: 'JPA', version: null, required: false, requires: [] },
 ]
 
 beforeEach(() => {
@@ -313,5 +313,75 @@ describe('生成提交', () => {
     const wizard = readyWizard()
     await expect(wizard.submit()).resolves.toBe(false)
     expect(wizard.errorMessage).toBe('生成失败：网络异常，请稍后重试')
+  })
+})
+
+describe('依赖联动与必选（M3.6）', () => {
+  const linkStarters: Starter[] = [
+    { id: 'web', label: 'Web', maintainer: 'official', category: 'web', description: null, version: null, required: false, requires: [] },
+    { id: 'core', label: '框架核心', maintainer: 'internal', category: 'middleware', description: null, version: null, required: false, requires: [] },
+    { id: 'dal', label: '数据访问', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: ['core'] },
+    { id: 'discovery', label: '服务发现', maintainer: 'internal', category: 'middleware', description: null, version: null, required: false, requires: ['core'] },
+    { id: 'base', label: '启动基座', maintainer: 'internal', category: 'middleware', description: null, version: null, required: true, requires: [] },
+  ]
+
+  function linkWizard() {
+    const wizard = useWizardStore()
+    wizard.starters = linkStarters
+    wizard.registerStarters(linkStarters)
+    return wizard
+  }
+
+  it('选中带依赖的 starter 自动带上其依赖', () => {
+    const wizard = linkWizard()
+    wizard.toggleStarter('dal')
+    expect([...wizard.selectedStarters].sort()).toEqual(['core', 'dal'])
+  })
+
+  it('取消依赖方后释放不再被需要的被依赖方', () => {
+    const wizard = linkWizard()
+    wizard.toggleStarter('dal')
+    wizard.toggleStarter('dal')
+    expect([...wizard.selectedStarters]).toEqual([])
+  })
+
+  it('被依赖引入的 starter 不允许单独取消', () => {
+    const wizard = linkWizard()
+    wizard.toggleStarter('dal')
+    wizard.toggleStarter('core')
+    expect(wizard.selectedStarters.has('core')).toBe(true)
+  })
+
+  it('多个依赖方时取消其中一个仍保留被依赖方', () => {
+    const wizard = linkWizard()
+    wizard.toggleStarter('dal')
+    wizard.toggleStarter('discovery')
+    wizard.toggleStarter('dal')
+    expect(wizard.selectedStarters.has('core')).toBe(true)
+    expect(wizard.selectedStarters.has('discovery')).toBe(true)
+    expect(wizard.selectedStarters.has('dal')).toBe(false)
+  })
+
+  it('必选项默认勾选且不可取消', () => {
+    const wizard = linkWizard()
+    wizard.selectRequiredStarters()
+    expect(wizard.selectedStarters.has('base')).toBe(true)
+    wizard.toggleStarter('base')
+    expect(wizard.selectedStarters.has('base')).toBe(true)
+  })
+
+  it('lockedStarters 覆盖必选项与被依赖引入项', () => {
+    const wizard = linkWizard()
+    wizard.selectRequiredStarters()
+    wizard.toggleStarter('dal')
+    expect(wizard.lockedStarters.has('base')).toBe(true)
+    expect(wizard.lockedStarters.has('core')).toBe(true)
+    expect(wizard.lockedStarters.has('dal')).toBe(false)
+  })
+
+  it('importedBy 反映引入来源', () => {
+    const wizard = linkWizard()
+    wizard.toggleStarter('dal')
+    expect(wizard.importedBy['core']).toEqual(['dal'])
   })
 })

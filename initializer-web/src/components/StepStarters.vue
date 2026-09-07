@@ -26,6 +26,11 @@ function onCategoryChange(event: Event): void {
   const value = (event.target as HTMLSelectElement).value
   void wizard.setSearch(wizard.starterKeyword, value)
 }
+
+/** M3.6：依赖联动——引入指定 starter 的已选项（用于「由 X 引入」提示） */
+function importersOf(id: string): string[] {
+  return (wizard.importedBy[id] ?? []).filter((i) => wizard.selectedStarters.has(i))
+}
 </script>
 
 <template>
@@ -51,16 +56,30 @@ function onCategoryChange(event: Event): void {
       <li v-for="st in wizard.starters" :key="st.id">
         <label
           class="starter"
-          :class="{ checked: wizard.selectedStarters.has(st.id), required: st.required }"
+          :class="{
+            checked: wizard.selectedStarters.has(st.id),
+            required: st.required,
+            locked: wizard.lockedStarters.has(st.id),
+          }"
         >
           <input
             type="checkbox"
             :checked="wizard.selectedStarters.has(st.id)"
-            :disabled="st.required"
+            :disabled="wizard.lockedStarters.has(st.id)"
             @change="wizard.toggleStarter(st.id)"
           />
           <span>{{ st.label }}</span>
           <span v-if="st.required" class="required-tag" title="框架必选依赖，不可取消">必选</span>
+          <span v-else-if="importersOf(st.id).length > 0" class="imported-tag">
+            由 {{ importersOf(st.id).join('、') }} 引入
+          </span>
+          <span
+            v-else-if="st.requires.length > 0"
+            class="depends-tag"
+            :title="`选中后自动带上：${st.requires.join('、')}`"
+          >
+            依赖 {{ st.requires.join('、') }}
+          </span>
           <span v-if="st.category" class="category-tag">{{ st.category }}</span>
           <span v-if="st.maintainer === 'internal'" class="maintainer-tag">内部</span>
           <code class="starter-id">{{ st.id }}</code>
@@ -96,6 +115,16 @@ h2 { font-size: 16px; margin-bottom: 12px; }
 .starter.checked { border-color: #0969da; background: #ddf4ff; }
 .starter.required { cursor: default; border-color: #1a7f37; }
 .starter.required input { cursor: not-allowed; }
+.starter.locked { cursor: default; }
+.starter.locked input { cursor: not-allowed; }
+.imported-tag {
+  font-size: 11px; color: #0550ae; border: 1px solid #54aeff;
+  border-radius: 10px; padding: 0 6px; line-height: 16px; background: #ddf4ff;
+}
+.depends-tag {
+  font-size: 11px; color: #57606a; border: 1px dashed #afb8c1;
+  border-radius: 10px; padding: 0 6px; line-height: 16px;
+}
 .required-tag {
   font-size: 11px; color: #0a3622; border: 1px solid #1a7f37;
   border-radius: 10px; padding: 0 6px; line-height: 16px; background: #dafbe1;

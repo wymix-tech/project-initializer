@@ -105,6 +105,102 @@ class MetadataCatalogTest {
     }
 
     @Nested
+    class Requires {
+
+        /** dal 依赖 core（一级依赖，闭包应自动带出 core）。 */
+        private static final String REQUIRES_YAML = """
+                javaVersions:
+                  - id: "17"
+                    label: "Java 17"
+                bootVersions:
+                  - id: "3.2.5"
+                    label: "Spring Boot 3.2.5"
+                    supportedJavaVersions: ["17"]
+                    starters: ["web", "core", "dal"]
+                starters:
+                  web:
+                    label: "Web"
+                    dependency:
+                      groupId: org.springframework.boot
+                      artifactId: spring-boot-starter-web
+                  core:
+                    label: "核心"
+                    dependency:
+                      groupId: com.company
+                      artifactId: core
+                  dal:
+                    label: "数据访问"
+                    requires: [core]
+                    dependency:
+                      groupId: com.company
+                      artifactId: dal
+                """;
+
+        /** a → b → a 成环，装载期必须拒绝。 */
+        private static final String CYCLE_YAML = """
+                javaVersions:
+                  - id: "17"
+                    label: "Java 17"
+                bootVersions:
+                  - id: "3.2.5"
+                    label: "Spring Boot 3.2.5"
+                    supportedJavaVersions: ["17"]
+                    starters: ["a", "b"]
+                starters:
+                  a:
+                    label: "A"
+                    requires: [b]
+                    dependency:
+                      groupId: com.company
+                      artifactId: a
+                  b:
+                    label: "B"
+                    requires: [a]
+                    dependency:
+                      groupId: com.company
+                      artifactId: b
+                """;
+
+        @Test
+        void resolveRequires_returnsTransitiveClosure() {
+            MetadataCatalog c = catalog(REQUIRES_YAML);
+            // dal 依赖 core：闭包自动带出 core；无依赖的 web 保持单项
+            assertThat(c.resolveRequires("3.2.5", List.of("dal"))).containsExactly("dal", "core");
+            assertThat(c.resolveRequires("3.2.5", List.of("web"))).containsExactly("web");
+        }
+
+        @Test
+        void resolveRequires_ignoresStartersNotAvailableInBootVersion() {
+            MetadataCatalog c = catalog(REQUIRES_YAML);
+            // 未登记在本 Boot 版本可选清单的 id 被忽略
+            assertThat(c.resolveRequires("3.2.5", List.of("web", "unknown"))).containsExactly("web");
+        }
+
+        @Test
+        void requiresUnknownStarter_throwsInternalError() {
+            String yaml = REQUIRES_YAML.replace("requires: [core]", "requires: [nope]");
+            assertThatThrownBy(() -> catalog(yaml))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INTERNAL_ERROR));
+        }
+
+        @Test
+        void requiresSelf_throwsInternalError() {
+            String yaml = REQUIRES_YAML.replace("requires: [core]", "requires: [dal]");
+            assertThatThrownBy(() -> catalog(yaml))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INTERNAL_ERROR));
+        }
+
+        @Test
+        void requiresCycle_throwsInternalError() {
+            assertThatThrownBy(() -> catalog(CYCLE_YAML))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INTERNAL_ERROR));
+        }
+    }
+
+    @Nested
     class LoadAndValidate {
 
         @Test

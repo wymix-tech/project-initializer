@@ -322,6 +322,56 @@ class ProjectGeneratorTest {
         assertThat(pom).contains("spring-boot-starter-web").contains("framework-core");
     }
 
+    @Test
+    void requiresShouldBeAutoIncludedAndNonSelectedKeptOut() throws Exception {
+        // M3.6：core 必选 + dal requires core；选 dal 自动带 core，不选 dal 则不引入 dal
+        String yaml = """
+                javaVersions:
+                  - id: "17"
+                    label: "Java 17"
+                    recommendedBootVersion: "3.2.5"
+                bootVersions:
+                  - id: "3.2.5"
+                    label: "Spring Boot 3.2.5"
+                    official: true
+                    supportedJavaVersions: ["17"]
+                    starters: ["web", "framework-core", "framework-dal"]
+                starters:
+                  web:
+                    label: "Web"
+                    dependency:
+                      groupId: org.springframework.boot
+                      artifactId: spring-boot-starter-web
+                  framework-core:
+                    label: "框架核心"
+                    required: true
+                    dependency:
+                      groupId: com.company
+                      artifactId: framework-core
+                  framework-dal:
+                    label: "数据访问"
+                    requires: [framework-core]
+                    dependency:
+                      groupId: com.company
+                      artifactId: framework-dal
+                """;
+        MetadataCatalog catalog = MetadataCatalog.load(
+                new java.io.ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
+        ProjectGenerator gen = new ProjectGenerator(catalog, new TemplateRenderer(),
+                com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
+
+        // 只选 dal：依赖联动自动带出 core
+        String pomWithDal = readEntry(gen.generate(new GenerateRequest("com.example", "demo-app",
+                "com.example.demo", "17", "3.2.5", List.of("framework-dal"))), "demo-app/pom.xml");
+        assertThat(pomWithDal).contains("framework-dal").contains("framework-core");
+
+        // 只选 web：必选 core 在，未被选中的 dal 不在
+        String pomWebOnly = readEntry(gen.generate(new GenerateRequest("com.example", "demo-app",
+                "com.example.demo", "17", "3.2.5", List.of("web"))), "demo-app/pom.xml");
+        assertThat(pomWebOnly).contains("spring-boot-starter-web").contains("framework-core")
+                .doesNotContain("framework-dal");
+    }
+
     private static String readEntry(byte[] zipBytes, String entryName) throws Exception {
         try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(zipBytes))) {
             ZipEntry entry;

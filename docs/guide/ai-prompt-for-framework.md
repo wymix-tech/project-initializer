@@ -32,7 +32,7 @@
 6. 提供 `application.yml` / `additional-spring-configuration-metadata.json` 约定的默认配置
 7. 存在 `provide` / `requires` 式 SPI 文件（`META-INF/services/`）
 
-对每个候选提取：GAV 坐标、版本、分类、功能描述、需要用户编写的配置类、需追加进 application.yml 的配置片段、可继承的抽象类、**是否必选**。识别结果先列一张"候选清单"（模块/能力 → GAV → 判定依据 → **是否必选 + 必选依据**），确认无遗漏再产出 YAML。
+对每个候选提取：GAV 坐标、版本、分类、功能描述、需要用户编写的配置类、需追加进 application.yml 的配置片段、可继承的抽象类、**是否必选**。识别结果先列一张"候选清单"（模块/能力 → GAV → 判定依据 → **是否必选 + 必选依据** → **依赖哪些能力（requires）**），确认无遗漏再产出 YAML。
 
 ### 必选能力判定（`required: true`）
 
@@ -52,6 +52,25 @@
 - 在代码里找不到明确依据的能力
 
 产出时：先在候选清单标注每个能力是否必选**及依据**，再据此在 metadata 的 `starters.<id>` 上写 `required: true`（默认省略即为可选）。
+
+### 依赖联动判定（`requires`）
+
+`requires` 表达"**选了 A 就必须有 B**"：选中 A 时平台自动带上 B（按传递闭包），取消 A 后不再被其他选中项需要的 B 自动释放。
+前端会把这类连带项标记为「由 A 引入」并在被依赖期间禁止取消，后端生成时同样求闭包补齐。
+
+判定标准（须有代码依据，满足任一）：
+
+1. **A 的代码直接引用 B**：A 的装配类/自动配置 import 了 B 的类型，或用了 `@ConditionalOnBean(B 的类型)` / `@ConditionalOnClass`
+2. **A 的文档/注释明确声明依赖 B**（如"服务发现依赖 Feign 通信"，而 Feign 基座由 core 提供）
+3. **A 离开 B 会运行时报错**：`NoClassDefFoundError` / `NoSuchBeanDefinitionException`
+
+不应声明为依赖：
+
+- 只是"通常一起用"，无代码级依赖 → 保持独立可选
+- 依赖方向写反：B 用到 A，应写 `B.requires: [A]`，不是 `A.requires: [B]`
+- 循环依赖（A→B 且 B→A）：平台发布期直接拒绝，正确做法是抽出公共基座 C，改为 `A.requires: [C]`、`B.requires: [C]`
+
+**方向口诀：被依赖的基础能力写在后面**——`dal.requires: [core]`，不是 `core.requires: [dal]`。
 
 ### 版本与互斥
 
@@ -81,6 +100,7 @@ starters:
   your-starter-id:                  # key 即 starter id
     label: "前端展示名"
     required: true                  # 可选：true = 必选依赖（默认 false）
+    requires: [other-starter-id]    # 可选：依赖联动，选中本项自动带上所列 starter（默认 []）
     dependency:
       groupId: com.yourcompany
       artifactId: your-capability-module   # 取实际承载能力的模块 GAV，非命名推断
@@ -94,6 +114,7 @@ starters:
 - `bootVersions[].starters` 与 `starters:` 节的 key 必须**完全一致**（数量与 id 双向校验）：既不能有"清单列了但 starters 节未登记"的悬空 id（发布直接失败），也不能有"starters 节登记了但清单未列出"的遗漏 id（该 starter 将永远不出现在可选清单中）
 - Java id 必须带引号写成字符串
 - `starters.<id>.required`（可选，默认 false）：设为 `true` 即**必选依赖**——前端默认勾选且禁止取消，后端生成时兜底自动补齐（绕过前端直调 API 也会加上）。框架中"不选就跑不起来"的能力（如核心包 core、统一配置/鉴权基础模块）应标为必选；其余能力保持可选
+- `starters.<id>.requires`（可选，默认 `[]`）：**依赖联动**——选中本 starter 时自动带上所列 starter（平台求传递闭包），取消后不再被其他选中项需要的连带项自动释放。校验规则：引用的 id 必须已在 `starters` 节登记（悬空即拒绝）、不得引用自身、不得成环（发布期报`循环依赖`并拒绝）。方向为「上层能力 → 基础能力」，如 `dal.requires: [core]`
 - `frameworkParent`（**强烈建议填写**）：若框架仓库存在统一父 POM / BOM（聚合根 POM、`*-parent`、`*-dependencies`、或集中 `dependencyManagement` 的 POM），必须在此声明，生成的项目才继承该父 POM 并由它统一管理版本；三项（groupId/artifactId/version）必须齐全，缺一发布失败。确实没有统一父 POM 时整节省略，生成器回退官方 `spring-boot-starter-parent`
 - 版本取自框架父 POM 真实 `<version>`（如 `3.0.0-SNAPSHOT`）；若父 POM 用 `${revision}` 之类的属性占位，照抄该占位写法即可
 
@@ -239,7 +260,7 @@ content: |
 
 按以下顺序输出，每段用一级标题分隔，便于我分别复制到管理后台对应草稿页：
 
-0. `## 候选清单`（父子结构必须给出：模块/能力 → GAV → 判定依据 → **必选标记与依据**，供人工复核）
+0. `## 候选清单`（父子结构必须给出：模块/能力 → GAV → 判定依据 → **必选标记与依据** → **依赖的能力（requires）**，供人工复核）
 1. `## metadata`
 2. `## starter`（多文档）
 3. `## conflict-rule`
@@ -251,6 +272,8 @@ content: |
 - **`.ftl` 与配置文件均可在管理端维护**：发布后覆盖 classpath 同名模板/片段，新增或修改模板不需要改代码、不需要重新打 jar
 - **配置文件必须 `%24` 转义 `$`**：否则发布期 FreeMarker 预校验拒绝（详见第四节）
 - **必选项（`required: true`）双重保障**：前端默认勾选且禁止取消，后端生成时兜底自动补齐，绕过前端直调 API 也会带上；仅当该 starter 属于当前 Boot 版本可选清单时才强制
+- **依赖联动（`requires`）双重保障**：前端选中即自动带上依赖并标记「由 X 引入」（被依赖期间禁止取消，取消依赖方后自动释放），后端生成时同样求闭包补齐；仅当依赖属于当前 Boot 版本可选清单时才生效
+- **依赖图必须是有向无环图**：`requires` 悬空引用 / 自引用 / 成环会在**发布期**直接拒绝（不会等到生成才报错）
 - **首发必须带 metadata**：空 metadata 发布会被拒（报 `metadata 配置缺失`），四段配置中 metadata 必须先有内容
 
 ## 输出前自检
@@ -267,6 +290,7 @@ content: |
 - [ ] **③ 模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（数量 + 路径双一致）
 - [ ] **互斥判定无误判**：每条冲突规则都有「同名 Bean / 同类型 Bean」依据，且 `message` 写明 Bean 名或类型 + 源码位置；不存在"仅共用底层资源"却被判为冲突的规则
 - [ ] **必选项保守且有依据**：标了 `required: true` 的 starter 都能指出核心包/缺了起不来/父 POM 直接依赖之一的证据，并已在候选清单注明；不存在"只是推荐搭配"却被标成必选项（必选无法取消，宁少勿多）
+- [ ] **依赖联动闭环**：`requires` 引用的 id 均已登记（无悬空）、无自引用、无循环；方向为「上层能力 → 基础能力」；不存在"通常一起用"的伪依赖
 - [ ] **配置文件模板（`application-*.yml`）中的 `$` 已全部写成 `%24`**，无裸写 `${`
 - [ ] YAML 可被 SnakeYAML SafeConstructor 解析（禁止锚点/自定义 tag/任意类实例化）
 - [ ] 所有 GAV 坐标、抽象类 fqcn 均取自框架仓库真实代码，未编造

@@ -33,8 +33,8 @@ const mockApi = vi.mocked(api, true)
 const fetchMock = vi.fn()
 
 const starters: Starter[] = [
-  { id: 'web', label: 'Spring Web', maintainer: 'official', category: 'web', description: 'Spring MVC', version: null, required: false },
-  { id: 'xxx-redis', label: '内部 Redis', maintainer: 'internal', category: 'middleware', description: 'Redis 封装', version: null, required: false },
+  { id: 'web', label: 'Spring Web', maintainer: 'official', category: 'web', description: 'Spring MVC', version: null, required: false, requires: [] },
+  { id: 'xxx-redis', label: '内部 Redis', maintainer: 'internal', category: 'middleware', description: 'Redis 封装', version: null, required: false, requires: [] },
 ]
 
 beforeEach(() => {

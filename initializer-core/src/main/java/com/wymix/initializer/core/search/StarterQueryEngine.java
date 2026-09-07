@@ -44,14 +44,23 @@ public class StarterQueryEngine {
             String category,
             String description,
             String version,
-            boolean required) {
+            boolean required,
+            List<String> requires) {
 
         /**
-         * 兼容构造：未声明必选标记时视为可选（默认 false）。
+         * 兼容构造：未声明约束时视为可选、无依赖。
          */
         public StarterSearchItem(String id, String label, Maintainer maintainer, String category,
                                  String description, String version) {
-            this(id, label, maintainer, category, description, version, false);
+            this(id, label, maintainer, category, description, version, false, List.of());
+        }
+
+        /**
+         * 兼容构造：仅声明必选标记，无依赖联动。
+         */
+        public StarterSearchItem(String id, String label, Maintainer maintainer, String category,
+                                 String description, String version, boolean required) {
+            this(id, label, maintainer, category, description, version, required, List.of());
         }
     }
 
@@ -92,7 +101,7 @@ public class StarterQueryEngine {
                 ? baselineVersion(starterCatalog.entry(starterId).dependencies())
                 : null;
         return new StarterSearchItem(starterId, sd.label(), maintainer, category, description, version,
-                sd.required());
+                sd.required(), List.copyOf(sd.requires()));
     }
 
     /**
