@@ -71,7 +71,8 @@ starters:
 规则：
 
 - `bootVersions[].supportedJavaVersions` 只能引用已声明的 `javaVersions[].id`
-- `bootVersions[].starters` 只能引用已声明的 `starters` key（官方 `web`/`data-redis`/`data-jpa`/`actuator` 等 id 固定为：web、data-jpa、data-redis、actuator）
+- `bootVersions[].starters` **只能列出本框架实际提供的 starter id**（即 `starters:` 节的 key）。框架未提供官方 starter 时，不得出现 `web` / `data-jpa` / `data-redis` / `actuator` 等官方 id（这些 id 不是默认必填项，列了而框架没有就是错的）
+- `bootVersions[].starters` 与 `starters:` 节的 key 必须**完全一致**（数量与 id 双向校验）：既不能有"清单列了但 starters 节未登记"的悬空 id（发布直接失败），也不能有"starters 节登记了但清单未列出"的遗漏 id（该 starter 将永远不出现在可选清单中）
 - Java id 必须带引号写成字符串
 - `starters.<id>.required`（可选，默认 false）：设为 `true` 即**必选依赖**——前端默认勾选且禁止取消，后端生成时兜底自动补齐（绕过前端直调 API 也会加上）。框架中"不选就跑不起来"的能力（如核心包 core、统一配置/鉴权基础模块）应标为必选；其余能力保持可选
 - `frameworkParent`（**强烈建议填写**）：若框架仓库存在统一父 POM / BOM（聚合根 POM、`*-parent`、`*-dependencies`、或集中 `dependencyManagement` 的 POM），必须在此声明，生成的项目才继承该父 POM 并由它统一管理版本；三项（groupId/artifactId/version）必须齐全，缺一发布失败。确实没有统一父 POM 时整节省略，生成器回退官方 `spring-boot-starter-parent`
@@ -118,11 +119,30 @@ linkages:
 rules:
   - id: your-a-vs-your-b            # 发布清单内唯一
     type: pair                      # pair（恰好 2 个）或 group（≥2 个，组内互斥）
-    starters: [your-starter-a, your-starter-b]   # 必须是 starter 清单中存在的 id
-    message: 两者均注册了 XxxManager，请二选一
+    starters: [your-starter-a, your-starter-b]   # 只能引用 metadata 已声明的 starter id
+    message: 两者均注册 CacheManager（A: XxxCacheConfiguration#cacheManager，B: YyyCacheConfiguration#cacheManager），请二选一
 ```
 
 四字段 `id` / `type` / `starters` / `message` 全部必填，缺一即发布失败。框架没有互斥关系时输出 `rules: []` 或说明"无冲突规则"。
+
+### 互斥判定标准（**避免误判，这一节最容易出错**）
+
+只有**会导致应用启动失败**的组合才算冲突，须满足以下两条之一：
+
+1. **同名 Bean 冲突**：两个 starter 注册了**同名**的 `@Bean`（同名 BeanDefinition 冲突/覆盖）
+2. **同类型 Bean 冲突**：两个 starter 注册了**同一类型**的 Bean，且没有 `@ConditionalOnMissingBean` 兜底（例如两个 `CacheManager`、两个 `DataSource`、两个 `PlatformTransactionManager`）
+
+**以下不是冲突，不要生成规则**：两个能力只是"消费同一底层资源"，但并未各自注册同名/同类型 Bean。
+例如都使用 `DataSource`、都依赖 Redis 连接、都用同一个线程池——这属于**依赖关系**，可以同时选中。
+
+每条规则必须在 `message` 中写明**具体冲突的 Bean 名或 Bean 类型**以及**源码依据**（类名 + 方法名），
+禁止只写"两者都使用了 Xxx"这类无法定位的模糊描述。
+
+规则：
+
+- `rules[].starters` 只能引用**第一节 metadata 已声明的 starter id**，禁止引用未声明的官方 id（`web`/`data-jpa`/`data-redis`/`actuator` 等）凑数；引用未声明 id 发布即失败
+- 每条规则必须有第 1/2 条判定依据（同名或同类型 Bean），并在 `message` 中给出 Bean 名/类型 + 源码位置
+- 纯"共用底层资源"的组合不产出规则，可在候选清单里标注为依赖关系即可
 
 ## 第四节：生成模板（kind = `template`，多文档 YAML）
 
@@ -176,7 +196,25 @@ content: |
 - 配置文件模板里的 `${}`（Spring 环境变量占位）**必须用 `%24{` 书写**，禁止裸写 `${`，否则发布期 FreeMarker 预校验失败
 - 配置类模板应引用框架中的集成抽象类（与 `abstract-classes[].fqcn` 对应）
 - `name` 不得重复；模板必须能通过 FreeMarker 语法预校验（tag 闭合、指令合法）
-- 第一节里 `starters` 的 key、第二节每个文档的 `id`、第三节 `starters` 列表、第四节 `source` 路径，五处引用必须互相一致
+
+### 模板完整性（**漏文件会直接导致生成失败**）
+
+模板文档必须**逐一覆盖**第二节每个 starter `linkages` 中声明的全部 source：
+
+- `linkages.templates[].source` —— 每一条都要有对应的 `.ftl` 模板文档
+- `linkages.application-yml-fragments[].source` —— 每一条都要有对应的 `.yml` 片段文档
+
+只要声明了 source 却没有同名 `name` 的模板文档，选中该 starter 生成项目时就会报
+`模板不存在` / `yml 片段不存在` 并失败。所以：**声明即必须提供，宁可不声明也不要漏文件**。
+
+带 `@ConfigurationProperties(prefix = "...")` 的 starter，**默认提供一份 `application-*.yml` 片段模板**，
+在片段中列出该前缀下的**全部属性及框架真实默认值**（属性名/默认值取自框架代码，不得编造），并遵循 `%24` 转义规则。
+
+### 四处引用一致性（拆分为三条独立约束）
+
+1. **metadata 内部双向一致**：`starters:` 节的 key ↔ `bootVersions[].starters`，数量与 id 必须完全相等
+2. **冲突规则引用不越界**：`conflict-rule` 的 `rules[].starters` ⊆ metadata 已声明的 starter id
+3. **模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（**数量 + 路径双一致**，无多余、无缺失）
 
 ## 输出格式要求
 
@@ -204,7 +242,10 @@ content: |
 - [ ] 兼容矩阵闭环：Java → Boot → starter 引用无悬空 id
 - [ ] 占位符仅在白名单六项内
 - [ ] 冲突规则 id 唯一，starters 数量符合 type（pair=2，group≥2）
-- [ ] 模板 name 相对 templates/，与 starter yml 的 source 完全一致
+- [ ] **① metadata 内部双向一致**：`starters:` 节 key ↔ `bootVersions[].starters`，数量与 id 完全相等
+- [ ] **② 冲突规则引用不越界**：`rules[].starters` ⊆ metadata 已声明的 starter id，无官方 id 凑数
+- [ ] **③ 模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（数量 + 路径双一致）
+- [ ] **互斥判定无误判**：每条冲突规则都有「同名 Bean / 同类型 Bean」依据，且 `message` 写明 Bean 名或类型 + 源码位置；不存在"仅共用底层资源"却被判为冲突的规则
 - [ ] **配置文件模板（`application-*.yml`）中的 `$` 已全部写成 `%24`**，无裸写 `${`
 - [ ] YAML 可被 SnakeYAML SafeConstructor 解析（禁止锚点/自定义 tag/任意类实例化）
 - [ ] 所有 GAV 坐标、抽象类 fqcn 均取自框架仓库真实代码，未编造
