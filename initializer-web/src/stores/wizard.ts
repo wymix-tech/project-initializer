@@ -141,6 +141,7 @@ export const useWizardStore = defineStore('wizard', {
         ])
         this.starters = starters
         this.conflictRules = conflictRules
+        this.selectRequiredStarters()
       } finally {
         this.loading = false
       }
@@ -158,13 +159,24 @@ export const useWizardStore = defineStore('wizard', {
           keyword || undefined,
           category || undefined,
         )
+        // 检索会换一批展示项，重新补勾必选项（已选态不受检索影响，此处仅补新出现的必选项）
+        this.selectRequiredStarters()
       } finally {
         this.loading = false
       }
     },
 
-    /** 切换 starter 选中态。 */
+    /** M3.6：把清单中 required=true 的 starter 默认勾上（必选项不允许取消）。 */
+    selectRequiredStarters(): void {
+      for (const st of this.starters) {
+        if (st.required) this.selectedStarters.add(st.id)
+      }
+    },
+
+    /** 切换 starter 选中态；必选项（required）不允许取消。 */
     toggleStarter(starterId: string): void {
+      const target = this.starters.find((st) => st.id === starterId)
+      if (target?.required) return
       if (this.selectedStarters.has(starterId)) {
         this.selectedStarters.delete(starterId)
       } else {

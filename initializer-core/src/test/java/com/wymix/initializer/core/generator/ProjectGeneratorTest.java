@@ -283,6 +283,45 @@ class ProjectGeneratorTest {
         assertThat(readEntry(zip, "demo-app/pom.xml")).contains("<project");
     }
 
+    @Test
+    void requiredStartersShouldBeAutoIncluded() throws Exception {
+        // M3.6：metadata 中 required: true 的 starter，请求未携带时自动补齐（不报错）
+        String yaml = """
+                javaVersions:
+                  - id: "17"
+                    label: "Java 17"
+                    recommendedBootVersion: "3.2.5"
+                bootVersions:
+                  - id: "3.2.5"
+                    label: "Spring Boot 3.2.5"
+                    official: true
+                    supportedJavaVersions: ["17"]
+                    starters: ["web", "framework-core"]
+                starters:
+                  web:
+                    label: "Spring Web"
+                    dependency:
+                      groupId: org.springframework.boot
+                      artifactId: spring-boot-starter-web
+                  framework-core:
+                    label: "框架核心"
+                    required: true
+                    dependency:
+                      groupId: com.company
+                      artifactId: framework-core
+                """;
+        MetadataCatalog catalog = MetadataCatalog.load(
+                new java.io.ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
+        ProjectGenerator gen = new ProjectGenerator(catalog, new TemplateRenderer(),
+                com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
+        assertThat(catalog.requiredStarters("3.2.5")).containsExactly("framework-core");
+
+        byte[] zip = gen.generate(new GenerateRequest("com.example", "demo-app", "com.example.demo",
+                "17", "3.2.5", List.of("web")));
+        String pom = readEntry(zip, "demo-app/pom.xml");
+        assertThat(pom).contains("spring-boot-starter-web").contains("framework-core");
+    }
+
     private static String readEntry(byte[] zipBytes, String entryName) throws Exception {
         try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(zipBytes))) {
             ZipEntry entry;

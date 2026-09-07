@@ -166,6 +166,26 @@ public class MetadataCatalog {
     }
 
     /**
+     * 返回指定 Boot 版本下的必选 starter 清单（M3.6）。
+     *
+     * <p>必选项由 {@code metadata.yml} 的 {@code starters.<id>.required: true} 声明（全局生效），
+     * 但**只在该 starter 属于本 Boot 版本可选清单时**才强制——未登记在本版本清单内的
+     * 必选项被忽略，避免生成请求引入该 Boot 版本不支持的 starter。
+     *
+     * @param bootVersionId Boot 版本 ID
+     * @return 必选 starter ID 清单（按可选清单顺序，不可变；无必选项时为空）
+     * @throws BusinessException Boot 版本不存在（错误码 {@link ErrorCode#METADATA_NOT_FOUND}）
+     */
+    public List<String> requiredStarters(String bootVersionId) {
+        return bootVersion(bootVersionId).starters().stream()
+                .filter(id -> {
+                    StarterDefinition sd = starterDefinitions.get(id);
+                    return sd != null && sd.required();
+                })
+                .toList();
+    }
+
+    /**
      * 按 ID 查询 starter 完整元信息（展示名 + Maven 依赖坐标）。
      *
      * @param starterId starter ID，如 {@code web}

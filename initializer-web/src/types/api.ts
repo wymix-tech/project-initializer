@@ -29,6 +29,8 @@ export interface Starter {
   description: string | null
   /** 基线版本：内部 starter 展示清单声明版本；官方 starter 为 null（走 Boot BOM） */
   version: string | null
+  /** 是否必选（M3.6）：true 时默认勾选且禁止取消，生成时后端兜底自动补齐 */
+  required: boolean
 }
 
 /** 冲突规则清单项：GET /api/metadata/conflict-rules（M3.5） */

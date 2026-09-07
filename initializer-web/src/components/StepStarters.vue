@@ -49,13 +49,18 @@ function onCategoryChange(event: Event): void {
     </div>
     <ul v-if="wizard.starters.length > 0" class="starter-list">
       <li v-for="st in wizard.starters" :key="st.id">
-        <label class="starter" :class="{ checked: wizard.selectedStarters.has(st.id) }">
+        <label
+          class="starter"
+          :class="{ checked: wizard.selectedStarters.has(st.id), required: st.required }"
+        >
           <input
             type="checkbox"
             :checked="wizard.selectedStarters.has(st.id)"
+            :disabled="st.required"
             @change="wizard.toggleStarter(st.id)"
           />
           <span>{{ st.label }}</span>
+          <span v-if="st.required" class="required-tag" title="框架必选依赖，不可取消">必选</span>
           <span v-if="st.category" class="category-tag">{{ st.category }}</span>
           <span v-if="st.maintainer === 'internal'" class="maintainer-tag">内部</span>
           <code class="starter-id">{{ st.id }}</code>
@@ -89,6 +94,12 @@ h2 { font-size: 16px; margin-bottom: 12px; }
   border: 1px solid #d0d7de; border-radius: 6px; font-size: 14px; cursor: pointer;
 }
 .starter.checked { border-color: #0969da; background: #ddf4ff; }
+.starter.required { cursor: default; border-color: #1a7f37; }
+.starter.required input { cursor: not-allowed; }
+.required-tag {
+  font-size: 11px; color: #0a3622; border: 1px solid #1a7f37;
+  border-radius: 10px; padding: 0 6px; line-height: 16px; background: #dafbe1;
+}
 .starter-id { margin-left: auto; color: #57606a; font-size: 12px; }
 .category-tag {
   font-size: 11px; color: #0550ae; border: 1px solid #54aeff;

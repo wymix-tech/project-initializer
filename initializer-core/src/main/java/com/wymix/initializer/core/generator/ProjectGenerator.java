@@ -109,9 +109,30 @@ public class ProjectGenerator {
      *         构建工具非法（1004）、渲染失败（3001）
      */
     public byte[] generate(GenerateRequest request) {
-        validateRequest(request);
-        Map<String, byte[]> files = renderAll(request);
+        GenerateRequest effective = withRequiredStarters(request);
+        validateRequest(effective);
+        Map<String, byte[]> files = renderAll(effective);
         return packZip(files);
+    }
+
+    /**
+     * 补齐必选 starter（M3.6）：把当前 Boot 版本的必选项合并进请求（必选项在前，去重保序）。
+     *
+     * <p>兜底语义：请求未携带必选项时自动加入，不报错——保证生成产物一定包含必选能力
+     * （前端同策略默认勾选并禁用取消，此处是最后防线，防止绕过前端直调 API）。
+     *
+     * @param request 原始生成请求
+     * @return 补齐必选项后的请求（无必选项或已全部携带时返回原对象）
+     */
+    private GenerateRequest withRequiredStarters(GenerateRequest request) {
+        List<String> required = catalog.requiredStarters(request.bootVersion());
+        if (required.isEmpty() || request.starters().containsAll(required)) {
+            return request;
+        }
+        Set<String> merged = new LinkedHashSet<>(required);
+        merged.addAll(request.starters());
+        return new GenerateRequest(request.group(), request.artifact(), request.basePackage(),
+                request.javaVersion(), request.bootVersion(), List.copyOf(merged), request.buildTool());
     }
 
     /**
@@ -127,8 +148,9 @@ public class ProjectGenerator {
      *         构建工具非法（1004）、渲染失败（3001）、打包失败（3003）
      */
     public void generate(GenerateRequest request, OutputStream out) {
-        validateRequest(request);
-        Map<String, byte[]> files = renderAll(request);
+        GenerateRequest effective = withRequiredStarters(request);
+        validateRequest(effective);
+        Map<String, byte[]> files = renderAll(effective);
         writeZip(files, out);
     }
 

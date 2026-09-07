@@ -43,7 +43,16 @@ public class StarterQueryEngine {
             Maintainer maintainer,
             String category,
             String description,
-            String version) {
+            String version,
+            boolean required) {
+
+        /**
+         * 兼容构造：未声明必选标记时视为可选（默认 false）。
+         */
+        public StarterSearchItem(String id, String label, Maintainer maintainer, String category,
+                                 String description, String version) {
+            this(id, label, maintainer, category, description, version, false);
+        }
     }
 
     /**
@@ -82,7 +91,8 @@ public class StarterQueryEngine {
         String version = starterCatalog.contains(starterId)
                 ? baselineVersion(starterCatalog.entry(starterId).dependencies())
                 : null;
-        return new StarterSearchItem(starterId, sd.label(), maintainer, category, description, version);
+        return new StarterSearchItem(starterId, sd.label(), maintainer, category, description, version,
+                sd.required());
     }
 
     /**

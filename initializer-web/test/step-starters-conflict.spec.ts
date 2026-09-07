@@ -27,9 +27,9 @@ vi.mock('@/api/client', () => ({
 }))
 
 const starters: Starter[] = [
-  { id: 'web', label: 'Spring Web', maintainer: 'official', category: 'web', description: 'Spring MVC', version: null },
-  { id: 'data-redis', label: 'Spring Data Redis', maintainer: 'official', category: 'data', description: 'Redis', version: null },
-  { id: 'xxx-redis', label: '内部 Redis', maintainer: 'internal', category: 'middleware', description: 'Redis 封装', version: null },
+  { id: 'web', label: 'Spring Web', maintainer: 'official', category: 'web', description: 'Spring MVC', version: null, required: false },
+  { id: 'data-redis', label: 'Spring Data Redis', maintainer: 'official', category: 'data', description: 'Redis', version: null, required: false },
+  { id: 'xxx-redis', label: '内部 Redis', maintainer: 'internal', category: 'middleware', description: 'Redis 封装', version: null, required: false },
 ]
 
 const rules: ConflictRule[] = [

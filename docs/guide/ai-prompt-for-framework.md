@@ -61,6 +61,7 @@ bootVersions:
 starters:
   your-starter-id:                  # key 即 starter id
     label: "前端展示名"
+    required: true                  # 可选：true = 必选依赖（默认 false）
     dependency:
       groupId: com.yourcompany
       artifactId: your-capability-module   # 取实际承载能力的模块 GAV，非命名推断
@@ -72,6 +73,7 @@ starters:
 - `bootVersions[].supportedJavaVersions` 只能引用已声明的 `javaVersions[].id`
 - `bootVersions[].starters` 只能引用已声明的 `starters` key（官方 `web`/`data-redis`/`data-jpa`/`actuator` 等 id 固定为：web、data-jpa、data-redis、actuator）
 - Java id 必须带引号写成字符串
+- `starters.<id>.required`（可选，默认 false）：设为 `true` 即**必选依赖**——前端默认勾选且禁止取消，后端生成时兜底自动补齐（绕过前端直调 API 也会加上）。框架中"不选就跑不起来"的能力（如核心包 core、统一配置/鉴权基础模块）应标为必选；其余能力保持可选
 - `frameworkParent`（**强烈建议填写**）：若框架仓库存在统一父 POM / BOM（聚合根 POM、`*-parent`、`*-dependencies`、或集中 `dependencyManagement` 的 POM），必须在此声明，生成的项目才继承该父 POM 并由它统一管理版本；三项（groupId/artifactId/version）必须齐全，缺一发布失败。确实没有统一父 POM 时整节省略，生成器回退官方 `spring-boot-starter-parent`
 - 版本取自框架父 POM 真实 `<version>`（如 `3.0.0-SNAPSHOT`）；若父 POM 用 `${revision}` 之类的属性占位，照抄该占位写法即可
 

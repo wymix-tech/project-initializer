@@ -116,6 +116,7 @@ starters:
     { path: 'starters.<id>.label', required: true, purpose: '前端依赖选择区展示名' },
     { path: 'starters.<id>.dependency.groupId', required: true, purpose: 'Maven groupId，写入生成项目构建脚本' },
     { path: 'starters.<id>.dependency.artifactId', required: true, purpose: 'Maven artifactId，写入生成项目构建脚本' },
+    { path: 'starters.<id>.required', required: false, purpose: '是否必选：true 时前端默认勾选且禁止取消，生成时后端自动补齐，用户无法去掉该依赖' },
   ],
   notes: [
     'bootVersions.starters 引用的 ID 必须在同一份配置的 starters 节登记，否则发布期按悬空引用拒绝。',
