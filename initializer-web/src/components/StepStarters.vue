@@ -33,16 +33,33 @@ function labelOf(id: string): string {
 }
 
 /**
- * M3.7：把 requires（AND-of-OR-groups）渲染为自然语言提示。
- * - 单分组多选项：`需要 B 或 C`
- * - 多分组（各分组单选项）：`需要 B 和 C`
- * - 混合：`需要 (B 或 C) 和 D`
+ * M3.7：把 requires（AND-of-OR-groups）渲染为自然语言提示（**仅展示 id，长描述走 tooltip**）。
+ *
+ * 行内用 id 而非完整描述，因为几乎所有内部 starter 都 require core，把 core 的长描述
+ * 在每行重复显示会把列表塞得过满；id + tooltip 兼顾信息密度与可追溯。
+ *
+ * - 单分组多选项：`需 (B 或 C)`
+ * - 多分组（各分组单选项）：`需 B 和 C`
+ * - 混合：`需 (B 或 C) 和 D`
  */
 function requiresLabel(starter: { requires: string[][] }): string {
   const parts = starter.requires.map((group) =>
+    group.length > 1 ? `(${group.map(idOnly).join(' 或 ')})` : group.map(idOnly).join(''),
+  )
+  return `需 ${parts.join(' 和 ')}`
+}
+
+/** 仅返回 id（不做展示名映射），用于行内紧凑显示。 */
+function idOnly(id: string): string {
+  return id
+}
+
+/** 长版提示：用于 tooltip 与未满足告警明细（含依赖项的完整 description）。 */
+function requiresHint(starter: { requires: string[][] }): string {
+  const parts = starter.requires.map((group) =>
     group.length > 1 ? `(${group.map(labelOf).join(' 或 ')})` : group.map(labelOf).join(''),
   )
-  return parts.join(' 和 ')
+  return `需要 ${parts.join(' 和 ')}`
 }
 
 /** 该 starter 的依赖是否已被满足（全部分组均有一项被选中）。 */
@@ -93,11 +110,11 @@ function requiresSatisfied(starter: { id: string; requires: string[][] }): boole
             :class="{ 'depends-tag--unmet': wizard.selectedStarters.has(st.id) && !requiresSatisfied(st) }"
             :title="
               wizard.selectedStarters.has(st.id)
-                ? `已选中，需同时选择：${requiresLabel(st)}`
-                : `选中后需同时选择：${requiresLabel(st)}`
+                ? `已选中，需同时选择：${requiresHint(st)}`
+                : `选中后需同时选择：${requiresHint(st)}`
             "
           >
-            需要 {{ requiresLabel(st) }}
+            {{ requiresLabel(st) }}
           </span>
           <span v-if="st.category" class="category-tag">{{ st.category }}</span>
           <span v-if="st.maintainer === 'internal'" class="maintainer-tag">内部</span>
