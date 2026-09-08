@@ -27,16 +27,27 @@ function onCategoryChange(event: Event): void {
   void wizard.setSearch(wizard.starterKeyword, value)
 }
 
-/** M3.6：依赖联动——引入指定 starter 的已选项（显示为名称，用于「由 X 引入」提示） */
-function importersOf(id: string): string[] {
-  return (wizard.importedBy[id] ?? [])
-    .filter((i) => wizard.selectedStarters.has(i))
-    .map((i) => wizard.starterRegistry[i]?.label ?? i)
+/** starter id 转展示名（注册表缺失时回退原始 id）。 */
+function labelOf(id: string): string {
+  return wizard.starterRegistry[id]?.label ?? id
 }
 
-/** requires 依赖 id 转显示名称（注册表缺失时回退原始 id）。 */
-function requiresLabel(starter: { requires: string[] }): string {
-  return starter.requires.map((id) => wizard.starterRegistry[id]?.label ?? id).join('、')
+/**
+ * M3.7：把 requires（AND-of-OR-groups）渲染为自然语言提示。
+ * - 单分组多选项：`需要 B 或 C`
+ * - 多分组（各分组单选项）：`需要 B 和 C`
+ * - 混合：`需要 (B 或 C) 和 D`
+ */
+function requiresLabel(starter: { requires: string[][] }): string {
+  const parts = starter.requires.map((group) =>
+    group.length > 1 ? `(${group.map(labelOf).join(' 或 ')})` : group.map(labelOf).join(''),
+  )
+  return parts.join(' 和 ')
+}
+
+/** 该 starter 的依赖是否已被满足（全部分组均有一项被选中）。 */
+function requiresSatisfied(starter: { id: string; requires: string[][] }): boolean {
+  return starter.requires.every((group) => group.some((dep) => wizard.selectedStarters.has(dep)))
 }
 </script>
 
@@ -76,19 +87,21 @@ function requiresLabel(starter: { requires: string[] }): string {
           />
           <span class="starter-label">{{ st.id }}</span>
           <span v-if="st.required" class="required-tag" title="框架必选依赖，不可取消">必选</span>
-          <span v-else-if="importersOf(st.id).length > 0" class="imported-tag">
-            由 {{ importersOf(st.id).join('、') }} 引入
-          </span>
           <span
-            v-else-if="st.requires.length > 0"
+            v-if="st.requires.length > 0"
             class="depends-tag"
-            :title="`选中后自动带上：${requiresLabel(st)}`"
+            :class="{ 'depends-tag--unmet': wizard.selectedStarters.has(st.id) && !requiresSatisfied(st) }"
+            :title="
+              wizard.selectedStarters.has(st.id)
+                ? `已选中，需同时选择：${requiresLabel(st)}`
+                : `选中后需同时选择：${requiresLabel(st)}`
+            "
           >
-            依赖 {{ requiresLabel(st) }}
+            需要 {{ requiresLabel(st) }}
           </span>
           <span v-if="st.category" class="category-tag">{{ st.category }}</span>
           <span v-if="st.maintainer === 'internal'" class="maintainer-tag">内部</span>
-          <span class="starter-desc" :title="st.description">{{ st.description }}</span>
+          <span class="starter-desc" :title="st.description ?? undefined">{{ st.description }}</span>
         </label>
       </li>
     </ul>
@@ -97,6 +110,19 @@ function requiresLabel(starter: { requires: string[] }): string {
       <div v-for="c in wizard.triggeredConflicts" :key="c.ruleId" class="conflict-warning">
         <span class="conflict-icon">⚠</span>
         <span>{{ c.message }}</span>
+      </div>
+    </div>
+    <div
+      v-if="wizard.unsatisfiedRequires.length > 0"
+      class="conflict-warnings requires-warnings"
+      role="alert"
+    >
+      <div v-for="(m, i) in wizard.unsatisfiedRequires" :key="i" class="conflict-warning">
+        <span class="conflict-icon">⚠</span>
+        <span>
+          <b>{{ wizard.starterRegistry[m.id]?.label ?? m.id }}</b>
+          需要 {{ m.group.map(labelOf).join(' 或 ') }}，请至少勾选一项
+        </span>
       </div>
     </div>
   </div>
@@ -178,16 +204,16 @@ function requiresLabel(starter: { requires: string[] }): string {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.imported-tag {
-  font-size: 11px; color: #0550ae; border: 1px solid #54aeff;
-  border-radius: 10px; padding: 0 6px; line-height: 16px; background: #ddf4ff;
-  flex-shrink: 0;
-}
 .depends-tag {
   font-size: 11px; color: #6a737d; border: 1px dashed #afb8c1;
   border-radius: 10px; padding: 0 6px; line-height: 16px;
   flex-shrink: 0;
 }
+/* 已选中但依赖分组未被满足：转为醒目告警色 */
+.depends-tag--unmet {
+  color: #9a6700; border-style: solid; border-color: #d4a72c; background: #fff8c5;
+}
+.requires-warnings .conflict-warning { border-color: #d4a72c; background: #fff8c5; }
 .required-tag {
   font-size: 11px; color: #0a3622; border: 1px solid #1a7f37;
   border-radius: 10px; padding: 0 6px; line-height: 16px; background: #dafbe1;

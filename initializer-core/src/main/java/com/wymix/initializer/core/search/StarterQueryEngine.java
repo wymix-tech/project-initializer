@@ -36,6 +36,8 @@ public class StarterQueryEngine {
      * @param description 描述；清单未登记时为 {@code null}
      * @param version     基线版本：清单登记依赖坐标首个声明的 version；未登记或未声明版本时为 {@code null}
      *                    （官方 starter 走 Boot BOM 不声明版本，内部 starter 声明基线版本如 1.2.0）
+     * @param requires    依赖分组（AND-of-OR-groups）：分组内任一被选即满足；
+     *                    前端据此展示「需要 B 或 C」提示，不自动勾选
      */
     public record StarterSearchItem(
             String id,
@@ -45,7 +47,7 @@ public class StarterQueryEngine {
             String description,
             String version,
             boolean required,
-            List<String> requires) {
+            List<List<String>> requires) {
 
         /**
          * 兼容构造：未声明约束时视为可选、无依赖。

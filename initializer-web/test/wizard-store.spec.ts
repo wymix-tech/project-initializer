@@ -316,12 +316,17 @@ describe('生成提交', () => {
   })
 })
 
-describe('依赖联动与必选（M3.6）', () => {
+describe('依赖联动与必选（M3.7）', () => {
   const linkStarters: Starter[] = [
     { id: 'web', label: 'Web', maintainer: 'official', category: 'web', description: null, version: null, required: false, requires: [] },
     { id: 'core', label: '框架核心', maintainer: 'internal', category: 'middleware', description: null, version: null, required: false, requires: [] },
-    { id: 'dal', label: '数据访问', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: ['core'] },
-    { id: 'discovery', label: '服务发现', maintainer: 'internal', category: 'middleware', description: null, version: null, required: false, requires: ['core'] },
+    // AND：dal 需要 core 和 log
+    { id: 'dal', label: '数据访问', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: [['core'], ['log']] },
+    // OR：repo 需要 jpa 或 mybatis，二者互斥时只选其一即可
+    { id: 'repo', label: '仓储抽象', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: [['jpa', 'mybatis']] },
+    { id: 'log', label: '日志', maintainer: 'internal', category: 'tool', description: null, version: null, required: false, requires: [] },
+    { id: 'jpa', label: 'JPA 仓储', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: [] },
+    { id: 'mybatis', label: 'MyBatis 仓储', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: [] },
     { id: 'base', label: '启动基座', maintainer: 'internal', category: 'middleware', description: null, version: null, required: true, requires: [] },
   ]
 
@@ -332,34 +337,46 @@ describe('依赖联动与必选（M3.6）', () => {
     return wizard
   }
 
-  it('选中带依赖的 starter 自动带上其依赖', () => {
+  it('选中带依赖的 starter 不再自动勾选依赖项', () => {
     const wizard = linkWizard()
     wizard.toggleStarter('dal')
-    expect([...wizard.selectedStarters].sort()).toEqual(['core', 'dal'])
+    expect([...wizard.selectedStarters]).toEqual(['dal'])
   })
 
-  it('取消依赖方后释放不再被需要的被依赖方', () => {
-    const wizard = linkWizard()
-    wizard.toggleStarter('dal')
-    wizard.toggleStarter('dal')
-    expect([...wizard.selectedStarters]).toEqual([])
-  })
-
-  it('被依赖引入的 starter 不允许单独取消', () => {
+  it('依赖引入项允许单独取消（不再锁定）', () => {
     const wizard = linkWizard()
     wizard.toggleStarter('dal')
     wizard.toggleStarter('core')
-    expect(wizard.selectedStarters.has('core')).toBe(true)
+    wizard.toggleStarter('log')
+    expect([...wizard.selectedStarters].sort()).toEqual(['core', 'dal', 'log'])
+    wizard.toggleStarter('core')
+    expect(wizard.selectedStarters.has('core')).toBe(false)
+    expect(wizard.selectedStarters.has('dal')).toBe(true)
   })
 
-  it('多个依赖方时取消其中一个仍保留被依赖方', () => {
+  it('OR 分组：选中任一选项即满足', () => {
+    const wizard = linkWizard()
+    wizard.toggleStarter('repo')
+    expect(wizard.unsatisfiedRequires.length).toBe(1)
+    wizard.toggleStarter('jpa')
+    expect(wizard.unsatisfiedRequires.length).toBe(0)
+  })
+
+  it('OR 分组：互斥的两个选项可只选一个', () => {
+    const wizard = linkWizard()
+    wizard.toggleStarter('repo')
+    wizard.toggleStarter('jpa')
+    expect(wizard.selectedStarters.has('mybatis')).toBe(false)
+    expect(wizard.unsatisfiedRequires.length).toBe(0)
+  })
+
+  it('AND 分组：必须全部选中才满足', () => {
     const wizard = linkWizard()
     wizard.toggleStarter('dal')
-    wizard.toggleStarter('discovery')
-    wizard.toggleStarter('dal')
-    expect(wizard.selectedStarters.has('core')).toBe(true)
-    expect(wizard.selectedStarters.has('discovery')).toBe(true)
-    expect(wizard.selectedStarters.has('dal')).toBe(false)
+    wizard.toggleStarter('core')
+    expect(wizard.unsatisfiedRequires.length).toBe(1)
+    wizard.toggleStarter('log')
+    expect(wizard.unsatisfiedRequires.length).toBe(0)
   })
 
   it('必选项默认勾选且不可取消', () => {
@@ -370,18 +387,12 @@ describe('依赖联动与必选（M3.6）', () => {
     expect(wizard.selectedStarters.has('base')).toBe(true)
   })
 
-  it('lockedStarters 覆盖必选项与被依赖引入项', () => {
+  it('lockedStarters 仅覆盖必选项，依赖引入项不锁定', () => {
     const wizard = linkWizard()
     wizard.selectRequiredStarters()
     wizard.toggleStarter('dal')
     expect(wizard.lockedStarters.has('base')).toBe(true)
-    expect(wizard.lockedStarters.has('core')).toBe(true)
+    expect(wizard.lockedStarters.has('core')).toBe(false)
     expect(wizard.lockedStarters.has('dal')).toBe(false)
-  })
-
-  it('importedBy 反映引入来源', () => {
-    const wizard = linkWizard()
-    wizard.toggleStarter('dal')
-    expect(wizard.importedBy['core']).toEqual(['dal'])
   })
 })

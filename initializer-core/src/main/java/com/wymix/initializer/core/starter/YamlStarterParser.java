@@ -86,7 +86,7 @@ public final class YamlStarterParser {
         List<DependencyCoord> dependencies = parseDependencies(map.get("dependencies"), id);
         LinkageSpec linkages = parseLinkages(map.get("linkages"), id);
         boolean required = Boolean.TRUE.equals(map.get("required"));
-        List<String> requires = parseRequires(map.get("requires"), id);
+        List<List<String>> requires = parseRequires(map.get("requires"), id);
         List<String> bootVersions = parseBootVersions(map, id);
         return new StarterCatalogEntry(id, category, maintainer, description, dependencies, linkages,
                 required, requires, bootVersions);
@@ -114,17 +114,80 @@ public final class YamlStarterParser {
         return list.stream().map(String::valueOf).map(String::trim).filter(s -> !s.isEmpty()).toList();
     }
 
-    /** 解析 {@code requires}（可选）：依赖联动，选中本 starter 自动带上所列 starter。 */
+    /**
+     * 解析 {@code requires}（可选）：AND-of-OR-groups 依赖联动。
+     *
+     * <p>接受三种写法（混合时拒收）：
+     * <ul>
+     *   <li>扁平字符串列表 {@code [B, C]} — 兼容旧写法，按 AND 解析为 {@code [[B], [C]]}</li>
+     *   <li>列表的列表 {@code [[B, C]]} — OR 组：任一被选即满足</li>
+     *   <li>单字符串 {@code B} — 等价于 {@code [[B]]}</li>
+     * </ul>
+     *
+     * <p>装载期校验在 {@link StarterCatalog#validateRequires(List)} 中进行（悬空 / 自引用 /
+     * 循环依赖 / 跨 Boot 版本作用域），本方法只负责结构归一化。
+     */
     @SuppressWarnings("unchecked")
-    private static List<String> parseRequires(Object node, String starterId) {
+    private static List<List<String>> parseRequires(Object node, String starterId) {
         if (node == null) {
             return List.of();
         }
+        if (node instanceof String single) {
+            String id = single.trim();
+            if (id.isEmpty()) {
+                throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
+                        "starter " + starterId + " requires 条目为空字符串");
+            }
+            return List.of(List.of(id));
+        }
         if (!(node instanceof List<?> list)) {
             throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
-                    "starter " + starterId + " 字段类型非法: requires（必须为列表）");
+                    "starter " + starterId + " requires 字段类型非法（必须为字符串或列表）");
         }
-        return list.stream().map(String::valueOf).map(String::trim).toList();
+        if (list.isEmpty()) {
+            return List.of();
+        }
+        // 推断是否走扁平（每个元素是 String）还是嵌套（每个元素是 List）模式；混合则拒收
+        boolean allStrings = list.stream().allMatch(e -> e instanceof String);
+        boolean allLists = list.stream().allMatch(e -> e instanceof List<?>);
+        if (!allStrings && !allLists) {
+            throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
+                    "starter " + starterId + " requires 元素类型必须全部为字符串或全部为列表，不支持混合");
+        }
+        List<List<String>> groups = new ArrayList<>(list.size());
+        if (allStrings) {
+            for (Object elem : list) {
+                String id = ((String) elem).trim();
+                if (id.isEmpty()) {
+                    throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
+                            "starter " + starterId + " requires 条目为空字符串");
+                }
+                groups.add(List.of(id));
+            }
+        } else {
+            for (Object elem : list) {
+                List<?> inner = (List<?>) elem;
+                if (inner.isEmpty()) {
+                    throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
+                            "starter " + starterId + " requires 的 OR 组不能为空列表");
+                }
+                List<String> group = new ArrayList<>(inner.size());
+                for (Object i : inner) {
+                    if (!(i instanceof String)) {
+                        throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
+                                "starter " + starterId + " requires 的 OR 组内必须全部为字符串");
+                    }
+                    String id = ((String) i).trim();
+                    if (id.isEmpty()) {
+                        throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
+                                "starter " + starterId + " requires 的 OR 组内含空字符串");
+                    }
+                    group.add(id);
+                }
+                groups.add(List.copyOf(group));
+            }
+        }
+        return List.copyOf(groups);
     }
 
     private static Maintainer parseMaintainer(String value, String starterId) {

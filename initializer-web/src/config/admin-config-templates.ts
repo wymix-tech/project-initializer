@@ -123,7 +123,11 @@ category: web                       # 必填。分类，用于前端分组浏览
 maintainer: official                # 必填。维护方：official（Spring 官方）/ internal（公司内部）
 description: Spring MVC + 内嵌 Tomcat # 可选。一句话说明；同时作为前端展示名（推荐填写）
 required: false                     # 可选。true = 必选：前端默认勾选且禁止取消，生成时后端兜底补齐
-requires: []                        # 可选。依赖联动：选中本 starter 自动带上所列 starter（传递闭包）
+requires: []                        # 可选。依赖联动（AND-of-OR-groups）：
+                                    #       requires: [b, c]      → 需要 b 和 c（扁平写法，历史语义）
+                                    #       requires: [[b, c]]    → 需要 b 或 c（b、c 互斥时只选其一即可）
+                                    #       requires: [[b, c], d] → 需要 (b 或 c) 且 d
+                                    #       前端不自动勾选也不锁定这些项，仅提示「需要 …」，未满足时生成期拒绝
 bootVersions: []                    # 可选。本条目关联的 Boot 版本（值取 metadata 的 bootVersions[].id）；
                                     #       不写/为空 = 对全部 Boot 版本可用；同一 Boot 版本内 ID 不允许重复，
                                     #       不同 Boot 版本允许重复（同一 id 可在不同版本声明不同坐标/版本）
@@ -161,7 +165,7 @@ linkages:                           # 联动规则：选中该 starter 后自动
     { path: 'maintainer', required: true, purpose: '维护方：official（Spring 官方）/ internal（公司内部）' },
     { path: 'description', required: false, purpose: '一句话说明；同时作为前端展示名与检索关键字' },
     { path: 'required', required: false, purpose: '是否必选（原 metadata starters 节能力，已迁移到清单）：true 时前端默认勾选且禁止取消，生成时后端兜底补齐' },
-    { path: 'requires', required: false, purpose: '依赖联动（原 metadata starters 节能力，已迁移到清单）：选中本 starter 自动带上所列 starter（传递闭包）；引用的 ID 必须在本清单登记，不得自引用或成环' },
+    { path: 'requires', required: false, purpose: '依赖联动（AND-of-OR-groups）：分组内任一被选即满足该分组，全部分组满足才算依赖满足。扁平写法 [b, c] 表示需要 b 和 c；嵌套写法 [[b, c]] 表示需要 b 或 c（适合 b、c 互斥场景）。引用的 ID 必须在本清单登记，不得自引用；仅单选项分组参与成环判定（多选项分组可换分支打破环）' },
     { path: 'bootVersions', required: false, purpose: 'Boot 版本关联：值取 metadata 的 bootVersions[].id；不写即对全部版本可用。同一 Boot 版本内 ID 不允许重复（重复发布即拒），不同 Boot 版本允许重复（同一 id 可在不同版本声明不同坐标/版本/联动）' },
     { path: 'dependencies[].groupId', required: true, purpose: 'Maven groupId，选中后写入生成项目构建脚本' },
     { path: 'dependencies[].artifactId', required: true, purpose: 'Maven artifactId，选中后写入生成项目构建脚本' },

@@ -127,7 +127,8 @@ public class ProjectGenerator {
     private GenerateRequest withRequiredStarters(GenerateRequest request) {
         List<String> required = catalog.requiredStarters(request.bootVersion());
         List<String> explicit = request.starters();
-        // 种子 = 必选项 + 用户选择；再按 requires 求传递闭包
+        // 种子 = 必选项 + 用户选择；resolveRequires 不再自动带上 requires 依赖，
+        // 只校验依赖分组是否被满足（未满足即抛 2004），故此处无需再求传递闭包
         List<String> seed = new ArrayList<>(required);
         seed.addAll(explicit);
         List<String> resolved = catalog.resolveRequires(request.bootVersion(), seed);

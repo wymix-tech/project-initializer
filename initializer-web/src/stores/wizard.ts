@@ -36,8 +36,6 @@ export const useWizardStore = defineStore('wizard', {
     selectedJava: '' as string,
     selectedBoot: '' as string,
     selectedStarters: new Set<string>() as Set<string>,
-    /** M3.6：用户显式勾选的 starter（自动引入的依赖不在此集合，取消时据此判断可释放） */
-    explicitStarters: new Set<string>() as Set<string>,
     /**
      * M3.6：starter 注册表（累积加载过的全部 starter，不受搜索过滤影响）。
      * 依赖联动计算必须基于全量，否则被搜索过滤掉的依赖无法解析。
@@ -106,29 +104,33 @@ export const useWizardStore = defineStore('wizard', {
     },
 
     /**
-     * M3.6：starter → 依赖它的已选 starter id 列表（用于「由 X 引入」提示与锁定判断）。
+     * M3.7：不可取消的 starter —— **仅框架必选项**。
+     *
+     * requires 引入的依赖不再锁定：A 需要 (B 或 C) 时用户可能只想选 C，
+     * 也可能 B 与 C 互斥，锁定会让用户无法表达真实意图。
      */
-    importedBy(state): Record<string, string[]> {
-      const map: Record<string, string[]> = {}
-      for (const id of state.selectedStarters) {
-        for (const dep of state.starterRegistry[id]?.requires ?? []) {
-          ;(map[dep] ??= []).push(id)
-        }
-      }
-      return map
-    },
-
-    /** M3.6：不可取消的 starter（必选项 + 被其他已选项依赖引入的项）。 */
     lockedStarters(state): Set<string> {
       const locked = new Set<string>()
       for (const st of Object.values(state.starterRegistry)) {
         if (st.required) locked.add(st.id)
       }
-      const by: Record<string, string[]> = this.importedBy
-      for (const [id, importers] of Object.entries(by)) {
-        if (importers.some((i) => state.selectedStarters.has(i))) locked.add(id)
-      }
       return locked
+    },
+
+    /**
+     * M3.7：已选 starter 中依赖分组未被满足的条目（本地即时提示，生成期后端兜底校验）。
+     *
+     * requires 为 AND-of-OR-groups：分组内任一被选即满足该分组，全部分组满足才算满足。
+     */
+    unsatisfiedRequires(state): { id: string; group: string[] }[] {
+      const selected = state.selectedStarters
+      const out: { id: string; group: string[] }[] = []
+      for (const id of selected) {
+        for (const group of state.starterRegistry[id]?.requires ?? []) {
+          if (!group.some((dep) => selected.has(dep))) out.push({ id, group })
+        }
+      }
+      return out
     },
 
     /** 生成请求体。 */
@@ -178,7 +180,6 @@ export const useWizardStore = defineStore('wizard', {
     async selectBoot(bootId: string): Promise<void> {
       this.selectedBoot = bootId
       this.selectedStarters = new Set()
-      this.explicitStarters = new Set()
       this.starterRegistry = {}
       this.starterKeyword = ''
       this.starterCategory = ''
@@ -229,56 +230,21 @@ export const useWizardStore = defineStore('wizard', {
       for (const st of list) this.starterRegistry[st.id] = st
     },
 
-    /** M3.6：计算 requires 传递闭包（基于全量注册表）。 */
-    closureOf(ids: string[]): Set<string> {
-      const result = new Set<string>()
-      const queue = [...ids]
-      while (queue.length > 0) {
-        const id = queue.shift() as string
-        if (result.has(id)) continue
-        result.add(id)
-        for (const dep of this.starterRegistry[id]?.requires ?? []) queue.push(dep)
-      }
-      return result
-    },
-
-    /** M3.6：释放不再被任何已选项依赖的自动引入项。 */
-    pruneAutoStarters(): void {
-      let changed = true
-      while (changed) {
-        changed = false
-        for (const id of [...this.selectedStarters]) {
-          if (this.explicitStarters.has(id)) continue
-          if (this.starterRegistry[id]?.required) continue
-          const stillNeeded = [...this.selectedStarters].some(
-            (sel) => sel !== id && (this.starterRegistry[sel]?.requires ?? []).includes(id),
-          )
-          if (!stillNeeded) {
-            this.selectedStarters.delete(id)
-            changed = true
-          }
-        }
-      }
-    },
-
     /**
-     * M3.6：切换 starter 选中态（含依赖联动）。
-     * - 选中：自动带上其 requires 传递闭包
-     * - 取消：必选项与被其他已选项依赖的项禁止取消；取消后释放不再需要的自动引入项
+     * M3.7：切换 starter 选中态。
+     *
+     * 不再自动带上/释放 requires 依赖：requires 只作为「需要 B 或 C」的提示与生成期校验依据，
+     * 依赖是否勾选完全由用户决定（A 需要 B 或 C 时只选一个即可；B 与 C 互斥时也不会被强制同选）。
+     *
+     * 仅框架必选项（required=true）禁止取消。
      */
     toggleStarter(starterId: string): void {
       if (this.selectedStarters.has(starterId)) {
-        const importers = (this.importedBy[starterId] ?? []).filter((id) =>
-          this.selectedStarters.has(id),
-        )
-        if (this.starterRegistry[starterId]?.required || importers.length > 0) return
+        if (this.starterRegistry[starterId]?.required) return
         this.selectedStarters.delete(starterId)
-        this.explicitStarters.delete(starterId)
-        this.pruneAutoStarters()
         return
       }
-      for (const id of this.closureOf([starterId])) this.selectedStarters.add(id)
-      this.explicitStarters.add(starterId)
+      this.selectedStarters.add(starterId)
     },
 
     /** 更新元信息字段；group/artifact 变化且用户未手改包名时自动推导。 */

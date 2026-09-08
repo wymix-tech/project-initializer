@@ -31,8 +31,16 @@ export interface Starter {
   version: string | null
   /** 是否必选（M3.6）：true 时默认勾选且禁止取消，生成时后端兜底自动补齐 */
   required: boolean
-  /** 依赖联动（M3.6）：选中本 starter 时自动带上的 starter id（后端会求传递闭包） */
-  requires: string[]
+  /**
+   * 依赖联动（M3.7）：AND-of-OR-groups。每项为一个分组，分组内任一被选即满足该分组，
+   * 全部分组满足才算本 starter 的依赖被满足。
+   *
+   * - `[['B', 'C']]` —— 需要 B **或** C（B、C 互斥时可只选其一）
+   * - `[['B'], ['C']]` —— 需要 B **和** C
+   *
+   * 前端不自动勾选、不锁定这些依赖项，由用户显式选择；未满足时给出提示，生成期后端兜底拒绝。
+   */
+  requires: string[][]
 }
 
 /** 冲突规则清单项：GET /api/metadata/conflict-rules（M3.5） */

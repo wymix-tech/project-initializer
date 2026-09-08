@@ -135,7 +135,13 @@ class MetadataCatalogTest {
             MetadataCatalog merged = catalog(yaml).merge(catalog);
             assertThat(merged.starterDefinition("core").required()).isTrue();
             assertThat(merged.requiredStarters("3.2.5")).containsExactly("core");
-            assertThat(merged.resolveRequires("3.2.5", List.of("dal"))).containsExactly("dal", "core");
+            // M3.7：不再自动带上 requires 依赖——依赖已满足时原样返回选中项
+            assertThat(merged.resolveRequires("3.2.5", List.of("dal", "core")))
+                    .containsExactly("dal", "core");
+            // 依赖未满足（选了 dal 却没选 core）即拒绝
+            assertThatThrownBy(() -> merged.resolveRequires("3.2.5", List.of("dal")))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.MISSING_DEPENDENCY));
         }
 
         @Test

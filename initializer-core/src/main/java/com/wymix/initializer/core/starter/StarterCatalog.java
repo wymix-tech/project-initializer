@@ -129,28 +129,33 @@ public class StarterCatalog {
      */
     private void validateRequires(List<StarterCatalogEntry> parsed) {
         List<String> bootVersionIds = List.copyOf(byBootVersion.keySet());
+        // 拍平所有分组内的 ID 一次性校验自引用、悬空、跨 Boot 版本作用域
         for (StarterCatalogEntry entry : parsed) {
-            for (String dep : entry.requires()) {
-                if (dep.equals(entry.id())) {
-                    throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
-                            "starter " + entry.id() + " 的 requires 不能引用自身: " + dep);
-                }
-                if (!contains(dep)) {
-                    throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
-                            "starter " + entry.id() + " 的 requires 引用了未登记的 starter: " + dep);
-                }
-                // 作用域校验：依赖必须在本条目可见的每个 Boot 版本维度内都可解析。
-                // 仅做全局 contains 校验会留下「装载通过但生成期按 Boot 版本取不到」的缺口
-                // （entry(bootVersionId, id) 只在该版本专属条目或全版本条目中查找）。
-                for (String scope : visibleScopes(entry, bootVersionIds)) {
-                    if (!resolvableIn(scope, dep)) {
+            for (List<String> group : entry.requires()) {
+                for (String dep : group) {
+                    if (dep.equals(entry.id())) {
                         throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
-                                "starter " + entry.id() + " 的 requires 引用了 " + dep
-                                        + "，但后者在 Boot 版本 " + scope + " 下未登记");
+                                "starter " + entry.id() + " 的 requires 不能引用自身: " + dep);
+                    }
+                    if (!contains(dep)) {
+                        throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
+                                "starter " + entry.id() + " 的 requires 引用了未登记的 starter: " + dep);
+                    }
+                    // 作用域校验：依赖必须在本条目可见的每个 Boot 版本维度内都可解析。
+                    // 仅做全局 contains 校验会留下「装载通过但生成期按 Boot 版本取不到」的缺口
+                    // （entry(bootVersionId, id) 只在该版本专属条目或全版本条目中查找）。
+                    for (String scope : visibleScopes(entry, bootVersionIds)) {
+                        if (!resolvableIn(scope, dep)) {
+                            throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
+                                    "starter " + entry.id() + " 的 requires 引用了 " + dep
+                                            + "，但后者在 Boot 版本 " + scope + " 下未登记");
+                        }
                     }
                 }
             }
         }
+        // 循环依赖：仅沿「强依赖」（单选项分组）做 DFS，颜色标记（0 未访问 / 1 访问中 / 2 已完成）。
+        // 多选项分组可通过选择其他分支打破环，故不参与环判定，否则会把可满足的配置误判为循环。
         Map<String, Integer> state = new LinkedHashMap<>();
         for (StarterCatalogEntry entry : parsed) {
             visitRequires(entry.id(), state, new LinkedHashSet<>());
@@ -182,8 +187,12 @@ public class StarterCatalog {
         path.add(id);
         StarterCatalogEntry entry = entry(id);
         if (entry != null) {
-            for (String dep : entry.requires()) {
-                visitRequires(dep, state, path);
+            for (List<String> group : entry.requires()) {
+                // 仅单选项分组是强依赖（无法绕开）；多选项分组可换分支打破环，跳过
+                if (group.size() != 1) {
+                    continue;
+                }
+                visitRequires(group.get(0), state, path);
             }
         }
         path.remove(id);

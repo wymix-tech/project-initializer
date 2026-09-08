@@ -1,5 +1,6 @@
 package com.wymix.initializer.core.starter;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -18,6 +19,18 @@ import java.util.List;
  *
  * <p>官方 starter 与内部 starter 统一入清单，以 {@link Maintainer} 区分维护方。
  *
+ * <p>**依赖联动**（{@code requires}）：AND-of-OR-groups。每一项为一个分组，分组内任一 starter
+ * 被选中即满足本分组；所有分组均被满足才算本 starter 的依赖被满足。
+ *
+ * <pre>{@code
+ * requires: [B, C]              // 兼容：AND，需要 B 和 C
+ * requires: [[B, C]]            // OR：需要 B 或 C
+ * requires: [[B, C], [D]]       // (B 或 C) 且 D
+ * }</pre>
+ *
+ * <p>前端不再自动勾选/锁定依赖引入项；用户需显式选择，发布期校验每个分组至少有一项被选中。
+ * 若 A 与 B/C 互斥或 B/C 互斥，由冲突规则（{@code catalog/conflict-rules.yml}）另作处理。
+ *
  * <p>线程安全性：不可变对象，线程安全。
  */
 public record StarterCatalogEntry(
@@ -35,27 +48,54 @@ public record StarterCatalogEntry(
         LinkageSpec linkages,
         /** 是否必选：true 时前端默认勾选且禁止取消，生成时后端兜底补齐 */
         boolean required,
-        /** 依赖联动：选中本 starter 自动带上所列 starter（传递闭包） */
-        List<String> requires,
+        /** 依赖联动分组：每项为 OR-group，组之间为 AND（详见类 Javadoc） */
+        List<List<String>> requires,
         /** 关联的 Boot 版本 ID 清单（空 = 全部版本可用） */
         List<String> bootVersions) {
 
     public StarterCatalogEntry {
         dependencies = dependencies == null ? List.of() : List.copyOf(dependencies);
-        requires = requires == null ? List.of() : List.copyOf(requires);
+        requires = normalizeRequires(requires);
         bootVersions = bootVersions == null ? List.of() : List.copyOf(bootVersions);
     }
 
-    /** 兼容构造：对全部 Boot 版本可用。 */
-    public StarterCatalogEntry(String id, String category, Maintainer maintainer, String description,
-                               List<DependencyCoord> dependencies, LinkageSpec linkages,
-                               boolean required, List<String> requires) {
-        this(id, category, maintainer, description, dependencies, linkages, required, requires, List.of());
+    /** 浅复制每层不可变视图，过滤空组。 */
+    private static List<List<String>> normalizeRequires(List<List<String>> groups) {
+        if (groups == null || groups.isEmpty()) return List.of();
+        List<List<String>> copy = new ArrayList<>(groups.size());
+        for (List<String> g : groups) {
+            if (g == null || g.isEmpty()) continue;
+            copy.add(List.copyOf(g));
+        }
+        return List.copyOf(copy);
     }
 
-    /** 兼容构造：无必选标记与依赖联动，对全部 Boot 版本可用。 */
+    /**
+     * 兼容构造（扁平 requires，语义 AND）：对全部 Boot 版本可用。
+     *
+     * <p>扁平列表按**每个元素一个分组**展开，即 {@code [B, C]} → {@code [[B], [C]]}（需要 B 和 C），
+     * 与历史语义一致；表达「B 或 C」请使用嵌套写法 {@code List.of(List.of("B", "C"))}。
+     */
+    public StarterCatalogEntry(String id, String category, Maintainer maintainer, String description,
+                               List<DependencyCoord> dependencies, LinkageSpec linkages,
+                               boolean required, List<String> flatRequires) {
+        this(id, category, maintainer, description, dependencies, linkages, required,
+                asAndGroups(flatRequires), List.of());
+    }
+
+    /** 兼容构造（无必选标记与依赖联动）：对全部 Boot 版本可用。 */
     public StarterCatalogEntry(String id, String category, Maintainer maintainer, String description,
                                List<DependencyCoord> dependencies, LinkageSpec linkages) {
         this(id, category, maintainer, description, dependencies, linkages, false, List.of(), List.of());
+    }
+
+    /** 扁平列表 → AND 分组（每元素一组的不可变视图）。 */
+    private static List<List<String>> asAndGroups(List<String> flat) {
+        if (flat == null || flat.isEmpty()) return List.of();
+        List<List<String>> groups = new ArrayList<>(flat.size());
+        for (String id : flat) {
+            groups.add(List.of(id));
+        }
+        return List.copyOf(groups);
     }
 }

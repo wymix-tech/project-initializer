@@ -91,32 +91,47 @@ public class MetadataCatalog {
     }
 
     /**
-     * 依赖闭包解析（M3.6）：给定选中清单，返回「选中项 + 其 requires 传递依赖」，
+     * 依赖校验（M3.7）：给定选中清单，校验每个已选 starter 的 requires 分组均被满足，
      * 且限定在指定 Boot 版本的可选清单内（不在清单内的依赖被忽略，避免引入不支持的 starter）。
+     *
+     * <p>与旧版（M3.6）的关键差异：**不再自动把 requires 依赖拉进选中集合**。
+     * requires 为 AND-of-OR-groups——分组内任一被选即满足该分组，全部分组满足才算依赖满足。
+     * 前端据此展示「需要 B 或 C」提示并让用户显式选择（不默认勾选、不锁定），
+     * 由本方法在生成期做最终校验，未满足即拒绝（错误码
+     * {@link ErrorCode#MISSING_DEPENDENCY}），错误明细列出缺失分组。
      *
      * @param bootVersionId Boot 版本 ID
      * @param selected      用户选中的 starter ID 清单（可含重复，保持首次出现顺序）
-     * @return 闭包结果（选中项顺序在前，依赖按发现顺序追加，不可变）
-     * @throws BusinessException Boot 版本不存在（错误码 {@link ErrorCode#METADATA_NOT_FOUND}）
+     * @return 去重后的选中清单（顺序保持，不追加任何隐式依赖，不可变）
+     * @throws BusinessException Boot 版本不存在（错误码 {@link ErrorCode#METADATA_NOT_FOUND}）；
+     *                           依赖未满足（错误码 {@link ErrorCode#MISSING_DEPENDENCY}）
      */
     public List<String> resolveRequires(String bootVersionId, List<String> selected) {
         Set<String> available = new LinkedHashSet<>(bootVersion(bootVersionId).starters());
-        Set<String> result = new LinkedHashSet<>();
-        Deque<String> queue = new java.util.ArrayDeque<>();
-        if (selected != null) {
-            queue.addAll(selected);
-        }
-        while (!queue.isEmpty()) {
-            String id = queue.poll();
-            if (!available.contains(id) || !result.add(id)) {
+        Set<String> chosen = selected == null ? new LinkedHashSet<>() : new LinkedHashSet<>(selected);
+        List<String> missing = new ArrayList<>();
+        for (String id : chosen) {
+            // 不在本 Boot 版本可选清单内的项忽略（与既有语义一致，不引入不支持的 starter）
+            if (!available.contains(id)) {
                 continue;
             }
             StarterDefinition sd = starterDefinitions.get(id);
-            if (sd != null) {
-                queue.addAll(sd.requires());
+            if (sd == null) {
+                continue;
+            }
+            for (List<String> group : sd.requires()) {
+                boolean satisfied = group.stream()
+                        .anyMatch(dep -> chosen.contains(dep) && available.contains(dep));
+                if (!satisfied) {
+                    missing.add(id + " 需要 " + String.join(" 或 ", group));
+                }
             }
         }
-        return List.copyOf(result);
+        if (!missing.isEmpty()) {
+            throw new BusinessException(ErrorCode.MISSING_DEPENDENCY,
+                    "依赖未满足：" + String.join("；", missing));
+        }
+        return List.copyOf(chosen);
     }
 
     /** @return 全量 Java 版本清单（按配置顺序，不可变） */

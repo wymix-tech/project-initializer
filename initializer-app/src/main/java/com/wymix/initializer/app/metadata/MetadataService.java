@@ -157,7 +157,8 @@ public class MetadataService {
      * 补充基线版本透出——内部 starter 展示清单声明版本，官方 starter 为 null 走 Boot BOM）。
      */
     public record StarterDto(String id, String label, String maintainer, String category,
-                             String description, String version, boolean required, List<String> requires) {
+                             String description, String version, boolean required,
+                             List<List<String>> requires) {
 
         static StarterDto from(StarterQueryEngine.StarterSearchItem item) {
             return new StarterDto(item.id(), item.label(),

@@ -32,6 +32,9 @@ public enum ErrorCode {
     /** 请求的 starter 不在所选 Boot 版本清单内（M2.0 设计对齐：与 2002 元数据缺失区分） */
     UNKNOWN_STARTER(2003, "请求的 starter 不存在"),
 
+    /** 依赖未满足（M3.7）：已选 starter 的 requires 分组无一被选中 */
+    MISSING_DEPENDENCY(2004, "缺少必需的依赖 starter"),
+
     /** 生成过程中模板渲染失败 */
     TEMPLATE_RENDER_FAILED(3001, "模板渲染失败"),
 
