@@ -1,4 +1,4 @@
-# AI Agent 指导提示词：分析框架项目并生成脚手架平台配置（v3）
+# AI Agent 指导提示词：分析框架项目并生成脚手架平台配置（v4）
 
 > 用途：将本提示词交给 AI Agent，让其通读一个框架项目代码库，产出可接入本脚手架平台的四段 YAML 配置（metadata / starter / conflict-rule / template）。
 
@@ -32,7 +32,33 @@
 6. 提供 `application.yml` / `additional-spring-configuration-metadata.json` 约定的默认配置
 7. 存在 `provide` / `requires` 式 SPI 文件（`META-INF/services/`）
 
-对每个候选提取：GAV 坐标、版本、分类、功能描述、需要用户编写的配置类、需追加进 application.yml 的配置片段、可继承的抽象类、**是否必选**。识别结果先列一张"候选清单"（模块/能力 → GAV → 判定依据 → **是否必选 + 必选依据** → **依赖哪些能力（requires）**），确认无遗漏再产出 YAML。
+对每个候选提取：GAV 坐标、版本、分类、功能描述、需要用户编写的配置类、需追加进 application.yml 的配置片段、可继承的抽象类、**是否必选**。识别结果先列一张"候选清单"（模块/能力 → 子模块 `<artifactId>` → **清单 id（= artifactId）** → GAV → 判定依据 → **是否必选 + 必选依据** → **依赖哪些能力（requires）**），确认无遗漏再产出 YAML。
+
+### starter id 取值规则（**一律取模块 artifactId**）
+
+starter 清单的 `id` **直接取"实际承载能力的子模块"的 `<artifactId>` 原文**，不缩写、不翻译、不自造、不加减前后缀。
+
+```yaml
+# 子模块 POM 中：<artifactId>acme-dynamic-datasource</artifactId>
+id: acme-dynamic-datasource     # ✅ 与 <artifactId> 字面完全一致
+# id: dynamic-datasource          # ❌ 截断，回查不到模块
+# id: acme-dynamic-ds             # ❌ 缩写，与 artifactId 对不上
+# id: AcmeDynamicDatasource       # ❌ 改了命名风格，不再是 artifactId
+```
+
+为什么这样规定：
+
+- **可追溯**：看到 id 就能在框架仓库里直接 grep 到对应模块，人工复核与后续维护零成本
+- **零歧义**：父子多模块下不同子模块可能有相似能力，artifactId 天然唯一（多 Boot 线再用 `bootVersions` 区分）
+- **免映射表**：`metadata.bootVersions[].starters`、`requires`、`conflict-rule.starters`、模板路径 `starters/{id}/…` 全部复用同一字面值，不需要维护"展示名 ↔ 模块名"的第二张表
+
+执行要点：
+
+- 大小写、中划线、下划线**照抄** artifactId，不要改成驼峰或点分
+- 父子多模块取**承载该能力的子模块** `<artifactId>`，**不要**取根 POM 或中间父 POM 的（与上面"结构判定"的 GAV 口径一致）
+- 单模块仓库按能力拆分出多个 starter 时，id 仍以 artifactId 为前缀并加能力后缀（如 `acme-framework-core-web`），须在候选清单注明拆分依据
+- **同一 id 在四段配置中必须字面一致**：清单 `id` ↔ `metadata.bootVersions[].starters` ↔ `requires` ↔ `conflict-rule.starters` ↔ 模板 `name` 中的 `starters/{id}/` 路径
+- 官方 starter（`web` / `data-jpa` / `data-redis` / `actuator` 等）不受此规则约束，但**框架未提供时不得引用**
 
 ### 必选能力判定（`required: true`）
 
@@ -51,16 +77,17 @@
 - 只是"推荐搭配"或"多数项目会用到"，但去掉仍能正常启动的能力
 - 在代码里找不到明确依据的能力
 
-产出时：先在候选清单标注每个能力是否必选**及依据**，再据此在 metadata 的 `starters.<id>` 上写 `required: true`（默认省略即为可选）。
+产出时：先在候选清单标注每个能力是否必选**及依据**，再据此在**第二节 starter 清单**对应文档上写 `required: true`（默认省略即为可选；metadata 已无 `starters` 节，不要写在那边）。
 
 ### 依赖联动判定（`requires`）
 
 `requires` 表达"**选了 A 就必须有 B**"。采用 **AND-of-OR-groups** 结构：每一项是一个分组，分组内任一被选即满足该分组，全部分组都满足才算 A 的依赖被满足。
 
 ```yaml
-requires: [b, c]          # 需要 b 和 c（扁平写法，历史语义，每项各成一个分组）
-requires: [[b, c]]        # 需要 b 或 c —— b、c 互斥或二选一时用这种
-requires: [[b, c], d]     # 需要 (b 或 c) 且 d
+# 以下 id 均为各能力模块的 <artifactId>
+requires: [acme-framework-core, acme-security]        # 需要 core 和 security（扁平写法，每项各成一个分组）
+requires: [[acme-jpa-repository, acme-mybatis-repository]]   # 需要 jpa 或 mybatis —— 二者互斥/二选一时用这种
+requires: [[acme-jpa-repository, acme-mybatis-repository], acme-framework-core]  # 需要 (jpa 或 mybatis) 且 core
 ```
 
 前端**不再自动勾选、也不锁定**这些依赖项，只在卡片上提示「需要 b 或 c」；未满足时在依赖区给出告警，生成期后端以 `2004 缺少必需的依赖 starter` 兜底拒绝。这样 A 依赖 B 或 C 时用户只勾一个即可，B 与 C 互斥也不会被强制同选。
@@ -71,7 +98,7 @@ requires: [[b, c], d]     # 需要 (b 或 c) 且 d
 2. **A 的文档/注释明确声明依赖 B**（如"服务发现依赖 Feign 通信"，而 Feign 基座由 core 提供）
 3. **A 离开 B 会运行时报错**：`NoClassDefFoundError` / `NoSuchBeanDefinitionException`
 
-**"或"关系的判定**：若 A 只需 B、C 中任意一个即可工作（例如 A 依赖"某个 ORM 仓储实现"，JPA 与 MyBatis 二选一），写 `requires: [[jpa, mybatis]]`；若两者都缺才报错，不要写成两个分组。
+**"或"关系的判定**：若 A 只需 B、C 中任意一个即可工作（例如 A 依赖"某个 ORM 仓储实现"，`acme-jpa-repository` 与 `acme-mybatis-repository` 二选一），写 `requires: [[acme-jpa-repository, acme-mybatis-repository]]`；若两者都缺才报错，不要拆成两个分组（那会变成"两个都要"）。
 
 不应声明为依赖：
 
@@ -79,7 +106,7 @@ requires: [[b, c], d]     # 需要 (b 或 c) 且 d
 - 依赖方向写反：B 用到 A，应写 `B.requires: [A]`，不是 `A.requires: [B]`
 - 循环依赖（A→B 且 B→A，且两组都是单选项）：平台发布期直接拒绝，正确做法是抽出公共基座 C，改为 `A.requires: [C]`、`B.requires: [C]`；若某分组是多选项（可换分支打破环），平台不再判环
 
-**方向口诀：被依赖的基础能力写在后面**——`dal.requires: [core]`，不是 `core.requires: [dal]`。
+**方向口诀：被依赖的基础能力写在后面**——`acme-dal.requires: [acme-framework-core]`，不是 `acme-framework-core.requires: [acme-dal]`。
 
 ### 版本与互斥
 
@@ -99,7 +126,8 @@ bootVersions:
     label: "Spring Boot 3.2.5"
     official: true                  # false = 公司定制版 Boot
     supportedJavaVersions: ["17", "21"]
-    starters: ["web", "your-starter-id"]   # 该 Boot 版本可选的 starter id 全集
+    # 只能列本框架实际提供的 id；每个 id = 对应能力模块的 <artifactId>
+    starters: ["acme-framework-core", "acme-dynamic-datasource"]
     frameworkParent:                # 可选：该 Boot 版本生成项目挂接的框架父 POM（pom.xml 的 <parent>）
       groupId: com.yourcompany      # 不同 Boot 版本可声明不同父 POM
       artifactId: your-framework-parent
@@ -108,7 +136,7 @@ bootVersions:
     label: "Spring Boot 2.7.18"
     official: true
     supportedJavaVersions: ["8"]
-    starters: ["web"]
+    starters: ["acme-framework-core"]
 # frameworkParent 未配置（且顶层也未声明全局默认）时，生成器回退 org.springframework.boot:spring-boot-starter-parent:<bootVersion>
 # 注意：metadata 已不再维护 starters 节——必选（required）与依赖联动（requires）
 # 全部在第二节 starter 清单里声明，展示名与坐标也来自清单，此处无需（也不应）重复写。
@@ -117,7 +145,7 @@ bootVersions:
 规则：
 
 - `bootVersions[].supportedJavaVersions` 只能引用已声明的 `javaVersions[].id`
-- `bootVersions[].starters` **只能列出本框架实际提供的 starter id**（即第二节 starter 清单各文档的 `id`）。框架未提供官方 starter 时，不得出现 `web` / `data-jpa` / `data-redis` / `actuator` 等官方 id（这些 id 不是默认必填项，列了而框架没有就是错的）
+- `bootVersions[].starters` **只能列出本框架实际提供的 starter id**（即第二节 starter 清单各文档的 `id`，也就是各能力模块的 `<artifactId>`）。框架未提供官方 starter 时，不得出现 `web` / `data-jpa` / `data-redis` / `actuator` 等官方 id（这些 id 不是默认必填项，列了而框架没有就是错的）；此处 id 必须与清单 `id` **字面完全一致**（同一 artifactId，不缩写、不改名）
 - **starter 的一切信息只在第二节 starter 清单写一次**：`description` → 展示名，`dependencies[0]` → 坐标 + version，`required` → 是否必选，`requires` → 依赖联动。第一节 metadata **不再有 `starters` 节**，平台发布时自动把清单合并进元数据
 - `bootVersions[].starters`（**保留，重要**）：列出该 Boot 版本**可引用**的 starter id 白名单（不同 Boot 版本可用不同 starter）。**可整体省略**——省略或为空即该版本对全部清单条目可选；列出的 id 必须在第二节有清单条目，否则该 starter 不可见
 - Java id 必须带引号写成字符串
@@ -135,24 +163,27 @@ bootVersions:
 
 ```yaml
 ---
-id: your-starter-id                # 必须与 metadata bootVersions[].starters 引用一致
+id: acme-dynamic-datasource        # 【必填】= 承载本能力的子模块 <artifactId> 原文，见第〇步 id 规则
 category: middleware               # web / middleware / tool ...
 maintainer: internal               # official / internal
 description: 一句话描述功能（即前端展示名）
 required: true                     # 可选：true = 必选依赖（默认 false）
-requires: [other-starter-id]       # 可选：依赖联动，选中本项自动带上所列 starter（默认 []）
+# 可选：依赖联动（AND-of-OR-groups），默认 []
+# 下方 = 需要 jpa 或 mybatis（二者互斥时只选其一即可），不是"两个都要"
+requires: [[acme-jpa-repository, acme-mybatis-repository]]
 bootVersions: ["3.2.5"]            # 可选：本条目关联的 Boot 版本（不写 = 对全部 Boot 版本可用）
 dependencies:
   - groupId: com.yourcompany
-    artifactId: your-capability-module
+    artifactId: acme-dynamic-datasource   # 与 id 同源：同一子模块的 <artifactId>
     version: "1.2.0"               # official 或由 BOM 管理时可省略
 linkages: {}                       # 无联动时写 {}
 ```
 
 约束字段说明（原 metadata `starters` 节能力，全部迁移至此）：
 
-- `required`（可选，默认 false）：设为 `true` 即**必选依赖**——前端默认勾选且禁止取消，后端生成时兜底自动补齐（绕过前端直调 API 也会加上）。框架中"不选就跑不起来"的能力（如核心包 core、统一配置/鉴权基础模块）应标为必选；其余能力保持可选
-- `requires`（可选，默认 `[]`）：**依赖联动**——选中本 starter 时自动带上所列 starter（平台求传递闭包），取消后不再被其他选中项需要的连带项自动释放。校验规则：引用的 id 必须在**本清单**中登记（悬空即拒绝）、不得引用自身、不得成环（发布期报`循环依赖`并拒绝）。方向为「上层能力 → 基础能力」，如 `dal.requires: [core]`
+- `id`（**必填**）：取承载本能力的子模块 `<artifactId>` 原文，**不缩写、不翻译、不自造**（理由与例外见第〇步「starter id 取值规则」）。同一 id 必须在 `metadata.bootVersions[].starters`、`requires`、`conflict-rule.starters`、模板 `name` 的 `starters/{id}/` 路径中**字面一致**
+- `required`（可选，默认 false）：设为 `true` 即**必选依赖**——前端默认勾选且禁止取消，后端生成时兜底自动补齐（绕过前端直调 API 也会加上）。框架中"不选就跑不起来"的能力（如核心包、统一配置/鉴权基础模块）应标为必选；其余能力保持可选
+- `requires`（可选，默认 `[]`）：**依赖联动（AND-of-OR-groups）**——分组内任一被选即满足该分组，全部分组满足才算依赖满足。前端**不自动勾选、不锁定**这些项，只提示「需要 X 或 Y」并在未满足时告警；后端生成期兜底拒绝（`2004 缺少必需的依赖 starter`）。校验规则：引用的 id 必须在**本清单**中登记（悬空即拒绝）、不得引用自身、不得成环（多选项分组可换分支打破环，不判环；单选项成环发布期报`循环依赖`并拒绝）。方向为「上层能力 → 基础能力」，如 `acme-dal.requires: [acme-framework-core]`
 - `bootVersions`（**Boot 版本关联**）：声明本条目属于哪些 Boot 版本（值取 metadata 的 `bootVersions[].id`）。**不写即对全部 Boot 版本可用**。
   框架对多个 Boot 线（如 2.x / 3.x）提供不同坐标或版本的能力模块时，**用同一个 id 写多条文档、各自声明 `bootVersions`**——
   **同一 Boot 版本内 id 不允许重复（重复发布即拒绝），不同 Boot 版本之间允许重复**，平台按当前选中的 Boot 版本取对应条目（坐标、version、联动规则一并生效）
@@ -163,10 +194,11 @@ linkages: {}                       # 无联动时写 {}
 linkages:
   config-package: "{basePackage}.config"          # 配置类生成到的包
   templates:
-    - source: "starters/{starter-id}/XxxConfig.java.ftl"   # 相对 templates/ 目录
-      target: "src/main/java/{packagePath}/config/XxxConfig.java"
+    # 路径中的 acme-dynamic-datasource 必须与本条目的 id（= artifactId）字面一致
+    - source: "starters/acme-dynamic-datasource/DynamicDataSourceConfig.java.ftl"   # 相对 templates/ 目录
+      target: "src/main/java/{packagePath}/config/DynamicDataSourceConfig.java"
   application-yml-fragments:
-    - source: "starters/{starter-id}/application-xxx.yml"
+    - source: "starters/acme-dynamic-datasource/application-dynamic-datasource.yml"
       merge-strategy: append       # 目前仅支持 append
   abstract-classes:
     - fqcn: "com.yourcompany.xxx.XxxSupport"      # 框架中的集成抽象类全限定名
@@ -179,9 +211,9 @@ linkages:
 
 ```yaml
 rules:
-  - id: your-a-vs-your-b            # 发布清单内唯一
+  - id: acme-jpa-repository-vs-acme-mybatis-repository   # 发布清单内唯一（建议用两个 artifactId 拼接，便于定位）
     type: pair                      # pair（恰好 2 个）或 group（≥2 个，组内互斥）
-    starters: [your-starter-a, your-starter-b]   # 只能引用 metadata 已声明的 starter id
+    starters: [acme-jpa-repository, acme-mybatis-repository]   # 必须逐字照抄清单 id（= artifactId）
     message: 两者均注册 CacheManager（A: XxxCacheConfiguration#cacheManager，B: YyyCacheConfiguration#cacheManager），请二选一
 ```
 
@@ -202,7 +234,7 @@ rules:
 
 规则：
 
-- `rules[].starters` 只能引用**第一节 metadata 已声明的 starter id**，禁止引用未声明的官方 id（`web`/`data-jpa`/`data-redis`/`actuator` 等）凑数；引用未声明 id 发布即失败
+- `rules[].starters` 只能引用**已声明的 starter id**，且必须与第二节清单 `id`（= 子模块 `<artifactId>`）**字面完全一致**，禁止缩写或改写成能力简称，也禁止引用未声明的官方 id（`web`/`data-jpa`/`data-redis`/`actuator` 等）凑数；引用未声明 id 发布即失败
 - 每条规则必须有第 1/2 条判定依据（同名或同类型 Bean），并在 `message` 中给出 Bean 名/类型 + 源码位置
 - 纯"共用底层资源"的组合不产出规则，可在候选清单里标注为依赖关系即可
 
@@ -211,7 +243,7 @@ rules:
 每份模板一个文档，`name` 为相对 `templates/` 目录的路径，`content` 为模板全文（用块标量承载）：
 
 ```yaml
-name: starters/your-starter-id/YourConfig.java.ftl
+name: starters/acme-dynamic-datasource/DynamicDataSourceConfig.java.ftl   # 路径中的 id 必须逐字照抄清单 id
 content: |
   package ${configPackage};
 
@@ -227,7 +259,7 @@ content: |
       }
   }
 ---
-name: starters/your-starter-id/application-xxx.yml
+name: starters/acme-dynamic-datasource/application-dynamic-datasource.yml
 content: |
   spring:
     xxx:
@@ -272,17 +304,18 @@ content: |
 带 `@ConfigurationProperties(prefix = "...")` 的 starter，**默认提供一份 `application-*.yml` 片段模板**，
 在片段中列出该前缀下的**全部属性及框架真实默认值**（属性名/默认值取自框架代码，不得编造），并遵循 `%24` 转义规则。
 
-### 四处引用一致性（拆分为三条独立约束）
+### 引用一致性（拆分为四条独立约束）
 
 1. **starter 单一数据源 + Boot 版本关联**：每个 starter 在第二节清单声明（id / description / dependencies / required / requires / bootVersions），不得在 metadata 里重复登记；`bootVersions[].starters` 列出的 id 必须有对应清单条目且该条目关联本 Boot 版本；**同一 Boot 版本内 id 不重复**（多 Boot 线共用 id 时用 `bootVersions` 拆成多条文档）
-2. **冲突规则引用不越界**：`conflict-rule` 的 `rules[].starters` ⊆ metadata 已声明的 starter id
-3. **模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（**数量 + 路径双一致**，无多余、无缺失）
+2. **id 字面一致（= artifactId）**：清单 `id` == 子模块 `<artifactId>`；且 `metadata.bootVersions[].starters`、`requires`、`conflict-rule.starters`、模板 `name` 的 `starters/{id}/` 路径中出现的同一 starter，**字面值完全相同**（不缩写、不改命名风格）
+3. **冲突规则引用不越界**：`conflict-rule` 的 `rules[].starters` ⊆ 清单已声明的 starter id
+4. **模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（**数量 + 路径双一致**，无多余、无缺失）
 
 ## 输出格式要求
 
 按以下顺序输出，每段用一级标题分隔（既可直接落盘到外部清单目录，也可分别复制到管理后台对应草稿页发布）：
 
-0. `## 候选清单`（父子结构必须给出：模块/能力 → GAV → 判定依据 → **必选标记与依据** → **依赖的能力（requires）**，供人工复核）
+0. `## 候选清单`（必须给出：模块/能力 → 子模块 `<artifactId>` → **清单 id（= artifactId）** → GAV → 判定依据 → **必选标记与依据** → **依赖的能力（requires，注明是"和"还是"或"）**，供人工复核）
 1. `## metadata`
 2. `## starter`（多文档）
 3. `## conflict-rule`
@@ -299,25 +332,28 @@ content: |
 - **`.ftl` 与配置文件均可在管理端维护**：发布后覆盖 classpath 同名模板/片段，新增或修改模板不需要改代码、不需要重新打 jar
 - **配置文件必须 `%24` 转义 `$`**：否则发布期 FreeMarker 预校验拒绝（详见第四节）
 - **必选项（`required: true`）双重保障**：前端默认勾选且禁止取消，后端生成时兜底自动补齐，绕过前端直调 API 也会带上；仅当该 starter 属于当前 Boot 版本可选清单时才强制
-- **依赖联动（`requires`）双重保障**：前端选中即自动带上依赖并标记「由 X 引入」（被依赖期间禁止取消，取消依赖方后自动释放），后端生成时同样求闭包补齐；仅当依赖属于当前 Boot 版本可选清单时才生效
-- **依赖图必须是有向无环图**：`requires` 悬空引用 / 自引用 / 成环会在**发布期**直接拒绝（不会等到生成才报错）
+- **依赖联动（`requires`）不再自动带上**：前端只提示「需要 X 或 Y」、**不默认勾选、不锁定**依赖引入项（用户可自由取消，A 依赖 B 或 C 时只勾一个即可，B/C 互斥也不会被强制同选）；未满足时前端告警，后端生成期以 `2004 缺少必需的依赖 starter` 兜底拒绝；仅当依赖属于当前 Boot 版本可选清单时才参与校验
+- **依赖图约束**：`requires` 悬空引用 / 自引用会在**发布期**直接拒绝；成环仅在**分组为单选项（强依赖）**时拒绝——多选项分组可通过换分支打破环，平台不判环（不会等到生成才报错）
 - **首发必须带 metadata**：空 metadata 发布会被拒（报 `metadata 配置缺失`），四段配置中 metadata 必须先有内容
 
 ## 输出前自检
 
 - [ ] **模块识别按特征而非命名**：每个 starter 都有第〇步特征依据，候选清单无遗漏
 - [ ] **父子结构 GAV 取自实际承载能力的子模块**，未误用根 POM 或中间父 POM 坐标
+- [ ] **每个 starter 的 `id` 就是该能力模块的 `<artifactId>` 原文**：未缩写、未翻译、未改命名风格、未自造；在框架仓库里能直接 grep 到对应模块
+- [ ] **同一 id 全文字面一致**：清单 `id` ↔ `metadata.bootVersions[].starters` ↔ `requires` ↔ `conflict-rule.starters` ↔ 模板 `name` 的 `starters/{id}/` 路径，五处逐字相同
 - [ ] **BOM/dependencyManagement 管理的依赖未写 version**（内部 starter 仅在版本自持时写）
 - [ ] **框架统一父 POM 已填入各 `bootVersions[].frameworkParent`**（或顶层声明全局默认 / 明确说明框架无统一父 POM），三项齐全
 - [ ] 兼容矩阵闭环：Java → Boot → starter 引用无悬空 id
 - [ ] 占位符仅在白名单六项内
 - [ ] 冲突规则 id 唯一，starters 数量符合 type（pair=2，group≥2）
 - [ ] **① starter 单一数据源 + 版本关联**：每个 starter 只在第二节清单声明（坐标/展示名/必选/联动），metadata 未出现 `starters:` 节；`bootVersions[].starters` 的每个 id 都有清单条目且关联本 Boot 版本；**同一 Boot 版本内无重复 id**（多 Boot 线共用 id 时已用 `bootVersions` 拆成多条文档）
-- [ ] **② 冲突规则引用不越界**：`rules[].starters` ⊆ metadata 已声明的 starter id，无官方 id 凑数
+- [ ] **② 冲突规则引用不越界**：`rules[].starters` ⊆ 清单已声明的 starter id 且逐字照抄 artifactId，无官方 id 凑数
 - [ ] **③ 模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（数量 + 路径双一致）
 - [ ] **互斥判定无误判**：每条冲突规则都有「同名 Bean / 同类型 Bean」依据，且 `message` 写明 Bean 名或类型 + 源码位置；不存在"仅共用底层资源"却被判为冲突的规则
 - [ ] **必选项保守且有依据**：标了 `required: true` 的 starter 都能指出核心包/缺了起不来/父 POM 直接依赖之一的证据，并已在候选清单注明；不存在"只是推荐搭配"却被标成必选项（必选无法取消，宁少勿多）
-- [ ] **依赖联动闭环**：`requires` 引用的 id 均已登记（无悬空）、无自引用、无循环；方向为「上层能力 → 基础能力」；不存在"通常一起用"的伪依赖
+- [ ] **依赖联动闭环**：`requires` 引用的 id 均已登记（无悬空）、无自引用、单选项分组无循环；方向为「上层能力 → 基础能力」；不存在"通常一起用"的伪依赖
+- [ ] **`requires` 的"和/或"表达正确**：确为二选一/互斥的能力写成了单分组 `[[a, b]]`，而非拆成 `[[a], [b]]`（后者含义是"两个都要"）
 - [ ] **配置文件模板（`application-*.yml`）中的 `$` 已全部写成 `%24`**，无裸写 `${`
 - [ ] YAML 可被 SnakeYAML SafeConstructor 解析（禁止锚点/自定义 tag/任意类实例化）
 - [ ] 所有 GAV 坐标、抽象类 fqcn 均取自框架仓库真实代码，未编造
