@@ -83,10 +83,43 @@ public class LinkageRenderer {
      * @return 联动渲染结果；选中的 starter 均无联动规则时返回空产物
      * @throws BusinessException 模板 target 冲突（3002）、yml 合并冲突（3004）、渲染失败（3001）
      */
+    /**
+     * 执行联动渲染（忽略 Boot 版本关联，兼容旧调用方）。
+     *
+     * @param starterIds 请求中选中的 starter ID 清单（按选择顺序）
+     * @param model      基础模板数据模型
+     * @return 联动渲染结果
+     */
     public LinkageResult render(List<String> starterIds, Map<String, Object> model) {
-        Map<String, byte[]> templateFiles = renderTemplates(starterIds, model);
-        Map<String, Object> mergedYml = mergeYmlFragments(starterIds);
+        return render(null, starterIds, model);
+    }
+
+    /**
+     * 执行联动渲染（按 Boot 版本关联解析清单条目）。
+     *
+     * @param bootVersionId 当前 Boot 版本 ID（null 表示忽略版本关联）
+     * @param starterIds    请求中选中的 starter ID 清单（按选择顺序）
+     * @param model         基础模板数据模型（含 basePackage/packagePath 等占位符取值）
+     * @return 联动渲染结果；选中的 starter 均无联动规则时返回空产物
+     * @throws BusinessException 模板 target 冲突（3002）、yml 合并冲突（3004）、渲染失败（3001）
+     */
+    public LinkageResult render(String bootVersionId, List<String> starterIds, Map<String, Object> model) {
+        Map<String, byte[]> templateFiles = renderTemplates(bootVersionId, starterIds, model);
+        Map<String, Object> mergedYml = mergeYmlFragments(bootVersionId, starterIds);
         return new LinkageResult(templateFiles, mergedYml);
+    }
+
+    /** 按 Boot 版本关联取条目（bootVersionId 为 null 时忽略版本关联）；未登记返回 null。 */
+    private StarterCatalogEntry entryFor(String bootVersionId, String starterId) {
+        boolean known = bootVersionId == null
+                ? starterCatalog.contains(starterId)
+                : starterCatalog.contains(bootVersionId, starterId);
+        if (!known) {
+            return null;
+        }
+        return bootVersionId == null
+                ? starterCatalog.entry(starterId)
+                : starterCatalog.entry(bootVersionId, starterId);
     }
 
     /**
@@ -94,13 +127,14 @@ public class LinkageRenderer {
      * 多个 starter 声明同 alias 不同 fqcn 时显式报错（不静默覆盖），
      * 与「冲突显式失败」的整体原则保持一致。同 alias 同 fqcn 视为合法重复。
      */
-    private void validateAliasConflicts(List<String> starterIds) {
+    private void validateAliasConflicts(String bootVersionId, List<String> starterIds) {
         Map<String, String> owner = new LinkedHashMap<>();
         for (String starterId : starterIds) {
-            if (!starterCatalog.contains(starterId)) {
+            StarterCatalogEntry entry = entryFor(bootVersionId, starterId);
+            if (entry == null) {
                 continue;
             }
-            for (AbstractClassLinkage linkage : starterCatalog.entry(starterId).linkages().abstractClasses()) {
+            for (AbstractClassLinkage linkage : entry.linkages().abstractClasses()) {
                 String previous = owner.putIfAbsent(linkage.alias(), linkage.fqcn());
                 if (previous != null && !previous.equals(linkage.fqcn())) {
                     throw new BusinessException(ErrorCode.TEMPLATE_TARGET_CONFLICT,
@@ -112,16 +146,17 @@ public class LinkageRenderer {
     }
 
     /** 逐 starter 渲染模板联动，并做 target 路径冲突检测。 */
-    private Map<String, byte[]> renderTemplates(List<String> starterIds, Map<String, Object> model) {
-        validateAliasConflicts(starterIds);
+    private Map<String, byte[]> renderTemplates(String bootVersionId, List<String> starterIds,
+                                               Map<String, Object> model) {
+        validateAliasConflicts(bootVersionId, starterIds);
         Map<String, byte[]> files = new LinkedHashMap<>();
         Map<String, String> targetOwner = new LinkedHashMap<>();
         for (String starterId : starterIds) {
             // 未登记 starter 清单的（如仅登记在 metadata.yml 的官方 starter）无联动规则，跳过
-            if (!starterCatalog.contains(starterId)) {
+            StarterCatalogEntry entry = entryFor(bootVersionId, starterId);
+            if (entry == null) {
                 continue;
             }
-            StarterCatalogEntry entry = starterCatalog.entry(starterId);
             for (TemplateLinkage template : entry.linkages().templates()) {
                 String target = PlaceholderPolicy.replace(template.target(), model);
                 String previous = targetOwner.putIfAbsent(target, starterId);
@@ -130,8 +165,8 @@ public class LinkageRenderer {
                             "模板产物路径冲突: " + target + "（" + previous + " 与 " + starterId + "）");
                 }
                 Map<String, Object> templateModel = new LinkedHashMap<>(model);
-                templateModel.putAll(abstractClassAliases(starterId));
-                String configPackage = resolveConfigPackage(starterId, model);
+                templateModel.putAll(abstractClassAliases(bootVersionId, starterId));
+                String configPackage = resolveConfigPackage(bootVersionId, starterId, model);
                 if (configPackage != null) {
                     templateModel.put("configPackage", configPackage);
                 }
@@ -155,13 +190,14 @@ public class LinkageRenderer {
      * @return 合并后的 yml 树；选中的 starter 均无片段时为 null
      * @throws BusinessException 片段来源均不存在（3004）或读取失败（3004）
      */
-    private Map<String, Object> mergeYmlFragments(List<String> starterIds) {
+    private Map<String, Object> mergeYmlFragments(String bootVersionId, List<String> starterIds) {
         List<YmlFragmentMerger.Fragment> fragments = new ArrayList<>();
         for (String starterId : starterIds) {
-            if (!starterCatalog.contains(starterId)) {
+            StarterCatalogEntry entry = entryFor(bootVersionId, starterId);
+            if (entry == null) {
                 continue;
             }
-            LinkageSpec linkages = starterCatalog.entry(starterId).linkages();
+            LinkageSpec linkages = entry.linkages();
             for (YmlFragmentLinkage fragmentLinkage : linkages.ymlFragments()) {
                 String source = fragmentLinkage.source();
                 try {
@@ -233,12 +269,13 @@ public class LinkageRenderer {
     }
 
     /** 抽象类联动：alias → fqcn 映射，注入模板 context（跨 starter 冲突已由 {@link #validateAliasConflicts} 前置拦截）。 */
-    private Map<String, Object> abstractClassAliases(String starterId) {
-        if (!starterCatalog.contains(starterId)) {
+    private Map<String, Object> abstractClassAliases(String bootVersionId, String starterId) {
+        StarterCatalogEntry entry = entryFor(bootVersionId, starterId);
+        if (entry == null) {
             return Map.of();
         }
         Map<String, Object> aliases = new LinkedHashMap<>();
-        for (AbstractClassLinkage linkage : starterCatalog.entry(starterId).linkages().abstractClasses()) {
+        for (AbstractClassLinkage linkage : entry.linkages().abstractClasses()) {
             aliases.put(linkage.alias(), linkage.fqcn());
         }
         return aliases;
@@ -252,10 +289,23 @@ public class LinkageRenderer {
      * @return 解析后的包名；starter 未声明 config-package 时为 null
      */
     public String resolveConfigPackage(String starterId, Map<String, Object> model) {
-        if (!starterCatalog.contains(starterId)) {
+        return resolveConfigPackage(null, starterId, model);
+    }
+
+    /**
+     * 按 Boot 版本关联解析配置类包名。
+     *
+     * @param bootVersionId Boot 版本 ID（null 表示忽略版本关联）
+     * @param starterId     starter ID
+     * @param model         占位符取值
+     * @return 解析后的包名；starter 未声明 config-package 或未关联该版本时为 null
+     */
+    public String resolveConfigPackage(String bootVersionId, String starterId, Map<String, Object> model) {
+        StarterCatalogEntry entry = entryFor(bootVersionId, starterId);
+        if (entry == null) {
             return null;
         }
-        String configPackage = starterCatalog.entry(starterId).linkages().configPackage();
+        String configPackage = entry.linkages().configPackage();
         return configPackage == null ? null : PlaceholderPolicy.replace(configPackage, model);
     }
 
@@ -266,12 +316,24 @@ public class LinkageRenderer {
      * @return 依赖坐标清单
      */
     public List<DependencyCoord> resolveDependencies(List<String> starterIds) {
+        return resolveDependencies(null, starterIds);
+    }
+
+    /**
+     * 依赖坐标汇总（按 Boot 版本关联解析清单条目）：按请求顺序取各 starter 声明的坐标（去重，保留首次出现）。
+     *
+     * @param bootVersionId Boot 版本 ID（null 表示忽略版本关联）
+     * @param starterIds    starter ID 清单
+     * @return 依赖坐标清单
+     */
+    public List<DependencyCoord> resolveDependencies(String bootVersionId, List<String> starterIds) {
         LinkedHashMap<String, DependencyCoord> deps = new LinkedHashMap<>();
         for (String starterId : starterIds) {
-            if (!starterCatalog.contains(starterId)) {
+            StarterCatalogEntry entry = entryFor(bootVersionId, starterId);
+            if (entry == null) {
                 continue;
             }
-            for (DependencyCoord dep : starterCatalog.entry(starterId).dependencies()) {
+            for (DependencyCoord dep : entry.dependencies()) {
                 String key = dep.groupId() + ":" + dep.artifactId();
                 deps.putIfAbsent(key, dep);
             }
@@ -279,8 +341,15 @@ public class LinkageRenderer {
         return List.copyOf(deps.values());
     }
 
-    /** @return starter 是否已在清单登记 */
+    /** @return starter 是否已在清单登记（忽略 Boot 版本关联） */
     public boolean registered(String starterId) {
         return starterCatalog.contains(starterId);
+    }
+
+    /** @return starter 是否已在清单登记且关联指定 Boot 版本 */
+    public boolean registered(String bootVersionId, String starterId) {
+        return bootVersionId == null
+                ? starterCatalog.contains(starterId)
+                : starterCatalog.contains(bootVersionId, starterId);
     }
 }

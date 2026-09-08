@@ -25,20 +25,19 @@ class CatalogRefresherConflictTest {
                 official: true
                 supportedJavaVersions: ["17"]
                 starters: ["web", "xxx-redis-spring-boot-starter"]
-            starters:
-              web:
-                label: "Spring Web"
-                dependency:
-                  groupId: "org.springframework.boot"
-                  artifactId: "spring-boot-starter-web"
-              xxx-redis-spring-boot-starter:
-                label: "内部 Redis 封装 starter"
-                dependency:
-                  groupId: "com.company"
-                  artifactId: "xxx-redis-spring-boot-starter"
             """;
 
+    /** web 与内部 redis 均在 starter 清单登记（starter 元信息唯一数据源）。 */
     private static final String STARTER_YAML = """
+            id: web
+            category: web
+            maintainer: official
+            description: Spring Web
+            dependencies:
+              - groupId: org.springframework.boot
+                artifactId: spring-boot-starter-web
+            linkages: {}
+            ---
             id: xxx-redis-spring-boot-starter
             category: middleware
             maintainer: internal
@@ -92,7 +91,7 @@ class CatalogRefresherConflictTest {
 
     @Test
     void validateAndBuild_conflictReferenceKnownByBothSides_allowed() {
-        // 规则同时引用 metadata 登记条目（web）与仅 starter 清单登记条目（M3.3 自动补位语义）→ 合法
+        // 规则引用的条目均在 starter 清单登记 → 合法（清单为 starter 唯一数据源）
         CatalogSnapshot snapshot = refresher.validateAndBuild(METADATA_YAML, STARTER_YAML, null, CONFLICT_YAML);
         assertThat(snapshot.conflictCatalog().evaluate(Set.of("web", "xxx-redis-spring-boot-starter")))
                 .extracting(c -> c.ruleId())

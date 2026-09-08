@@ -20,6 +20,9 @@ public enum ErrorCode {
     /** 元信息参数非法（Group/Artifact/Package 等不满足命名规范） */
     INVALID_METADATA(1001, "元信息校验失败"),
 
+    /** 请求参数非法（缺参、类型不匹配、请求体格式错误等，区别于 1001 的业务语义校验） */
+    INVALID_REQUEST(1002, "请求参数非法"),
+
     /** 版本组合不兼容（如 Java 8 搭配 Boot 3.x） */
     INCOMPATIBLE_VERSION(2001, "版本组合不兼容"),
 

@@ -75,13 +75,19 @@ class LinkageEndToEndSnapshotTest {
                 .getResourceAsStream("/catalog/e2e/another-redis-e2e-spring-boot-starter.yml");
              InputStream conflictIn = LinkageEndToEndSnapshotTest.class
                 .getResourceAsStream("/catalog/e2e/yml-conflict-e2e-starter.yml")) {
-            MetadataCatalog catalog = MetadataCatalog.load(metadataIn);
             List<StarterCatalogEntry> entries = new ArrayList<>();
+            // web 复用主资源清单条目（e2e 夹具仅含内部 starter）
+            try (InputStream webIn = LinkageEndToEndSnapshotTest.class
+                    .getResourceAsStream("/catalog/starters/web-starter.yml")) {
+                entries.add(YamlStarterParser.parse(webIn));
+            }
             entries.add(YamlStarterParser.parse(starterIn));
             entries.add(YamlStarterParser.parse(anotherIn));
             entries.add(YamlStarterParser.parse(conflictIn));
-            generator = new ProjectGenerator(catalog, new TemplateRenderer(),
-                    StarterCatalog.of(entries));
+            StarterCatalog starterCatalog = StarterCatalog.of(entries);
+            // starter 元信息来自清单：装载 metadata 后联动合并
+            MetadataCatalog catalog = MetadataCatalog.load(metadataIn).merge(starterCatalog);
+            generator = new ProjectGenerator(catalog, new TemplateRenderer(), starterCatalog);
         } catch (Exception e) {
             throw new IllegalStateException("联动端到端快照测试环境初始化失败", e);
         }

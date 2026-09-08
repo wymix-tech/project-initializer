@@ -17,7 +17,7 @@
   - GAV 以**实际承载能力的子模块**为准（artifactId 取该子模块自己的 `<artifactId>`，不要取根 POM 的）
   - 注意 `dependencyManagement` / BOM：子模块依赖版本可能由根 POM 或父 POM 统一管理，此时依赖处不写 version，需在 metadata 中确认由哪个 Boot 版本管理
   - 多层嵌套（父 → 中间父 → 子）也按同样方式递归下探
-  - **顺带记录框架父 POM**：那个被各子模块 `<parent>` 引用、或集中声明 `dependencyManagement` 的 POM，其 GAV + version 填入第一节 `frameworkParent`（生成的项目将继承它，由它统一管理 Boot BOM 与内部依赖版本）
+  - **顺带记录框架父 POM**：那个被各子模块 `<parent>` 引用、或集中声明 `dependencyManagement` 的 POM，其 GAV + version 填入第一节各 `bootVersions[].frameworkParent`（生成的项目将继承它，由它统一管理 Boot BOM 与内部依赖版本；不同 Boot 版本可挂不同父 POM）
 - **单模块**：整个仓库就是一个能力包，按"能力"而不是"模块"切分 starter——同一模块内如果有多组独立可用的自动装配（各自的 `@ConfigurationProperties` + `@AutoConfiguration`），应拆成多个 starter
 
 ### 能力模块识别特征（命名仅作线索，不作为依据）
@@ -80,11 +80,6 @@
 ## 第一节：元数据（kind = `metadata`）
 
 ```yaml
-frameworkParent:                   # 可选：框架统一父 POM（生成项目 pom.xml 的 <parent>）
-  groupId: com.yourcompany
-  artifactId: your-framework-parent
-  version: "1.0.0-SNAPSHOT"        # 支持 ${revision} 等 Maven 属性占位写法
-# 不配置时生成器回退 org.springframework.boot:spring-boot-starter-parent:<bootVersion>
 javaVersions:
   - id: "17"                        # 字符串！兼容矩阵引用此值
     label: "Java 17"
@@ -96,44 +91,62 @@ bootVersions:
     official: true                  # false = 公司定制版 Boot
     supportedJavaVersions: ["17", "21"]
     starters: ["web", "your-starter-id"]   # 该 Boot 版本可选的 starter id 全集
-starters:
-  your-starter-id:                  # key 即 starter id
-    label: "前端展示名"
-    required: true                  # 可选：true = 必选依赖（默认 false）
-    requires: [other-starter-id]    # 可选：依赖联动，选中本项自动带上所列 starter（默认 []）
-    dependency:
-      groupId: com.yourcompany
-      artifactId: your-capability-module   # 取实际承载能力的模块 GAV，非命名推断
-      # version: "1.2.0"            # 仅内部 starter 写；官方 starter / 由 BOM 管理的版本禁止写
+    frameworkParent:                # 可选：该 Boot 版本生成项目挂接的框架父 POM（pom.xml 的 <parent>）
+      groupId: com.yourcompany      # 不同 Boot 版本可声明不同父 POM
+      artifactId: your-framework-parent
+      version: "1.0.0-SNAPSHOT"     # 支持 ${revision} 等 Maven 属性占位写法
+  - id: "2.7.18"                    # 仅当框架确实适配了多个 Boot 版本时才添加此条目
+    label: "Spring Boot 2.7.18"
+    official: true
+    supportedJavaVersions: ["8"]
+    starters: ["web"]
+# frameworkParent 未配置（且顶层也未声明全局默认）时，生成器回退 org.springframework.boot:spring-boot-starter-parent:<bootVersion>
+# 注意：metadata 已不再维护 starters 节——必选（required）与依赖联动（requires）
+# 全部在第二节 starter 清单里声明，展示名与坐标也来自清单，此处无需（也不应）重复写。
 ```
 
 规则：
 
 - `bootVersions[].supportedJavaVersions` 只能引用已声明的 `javaVersions[].id`
-- `bootVersions[].starters` **只能列出本框架实际提供的 starter id**（即 `starters:` 节的 key）。框架未提供官方 starter 时，不得出现 `web` / `data-jpa` / `data-redis` / `actuator` 等官方 id（这些 id 不是默认必填项，列了而框架没有就是错的）
-- `bootVersions[].starters` 与 `starters:` 节的 key 必须**完全一致**（数量与 id 双向校验）：既不能有"清单列了但 starters 节未登记"的悬空 id（发布直接失败），也不能有"starters 节登记了但清单未列出"的遗漏 id（该 starter 将永远不出现在可选清单中）
+- `bootVersions[].starters` **只能列出本框架实际提供的 starter id**（即第二节 starter 清单各文档的 `id`）。框架未提供官方 starter 时，不得出现 `web` / `data-jpa` / `data-redis` / `actuator` 等官方 id（这些 id 不是默认必填项，列了而框架没有就是错的）
+- **starter 的一切信息只在第二节 starter 清单写一次**：`description` → 展示名，`dependencies[0]` → 坐标 + version，`required` → 是否必选，`requires` → 依赖联动。第一节 metadata **不再有 `starters` 节**，平台发布时自动把清单合并进元数据
+- `bootVersions[].starters`（**保留，重要**）：列出该 Boot 版本**可引用**的 starter id 白名单（不同 Boot 版本可用不同 starter）。**可整体省略**——省略或为空即该版本对全部清单条目可选；列出的 id 必须在第二节有清单条目，否则该 starter 不可见
 - Java id 必须带引号写成字符串
-- `starters.<id>.required`（可选，默认 false）：设为 `true` 即**必选依赖**——前端默认勾选且禁止取消，后端生成时兜底自动补齐（绕过前端直调 API 也会加上）。框架中"不选就跑不起来"的能力（如核心包 core、统一配置/鉴权基础模块）应标为必选；其余能力保持可选
-- `starters.<id>.requires`（可选，默认 `[]`）：**依赖联动**——选中本 starter 时自动带上所列 starter（平台求传递闭包），取消后不再被其他选中项需要的连带项自动释放。校验规则：引用的 id 必须已在 `starters` 节登记（悬空即拒绝）、不得引用自身、不得成环（发布期报`循环依赖`并拒绝）。方向为「上层能力 → 基础能力」，如 `dal.requires: [core]`
-- `frameworkParent`（**强烈建议填写**）：若框架仓库存在统一父 POM / BOM（聚合根 POM、`*-parent`、`*-dependencies`、或集中 `dependencyManagement` 的 POM），必须在此声明，生成的项目才继承该父 POM 并由它统一管理版本；三项（groupId/artifactId/version）必须齐全，缺一发布失败。确实没有统一父 POM 时整节省略，生成器回退官方 `spring-boot-starter-parent`
+- 必选与依赖联动的写法见第二节（`required` / `requires` 字段），不要在 metadata 里写
+- `bootVersions[].frameworkParent`（**强烈建议填写**）：若框架仓库存在统一父 POM / BOM（聚合根 POM、`*-parent`、`*-dependencies`、或集中 `dependencyManagement` 的 POM），必须**在每个 Boot 版本条目内**声明（不同 Boot 版本可挂不同父 POM，例如 2.x 线与 3.x 线分别由不同框架父 POM 管理）；生成的项目才继承该父 POM 并由它统一管理版本。也可在 metadata.yml 顶层声明一次 `frameworkParent` 作为全局默认，条目内未声明时继承。三项（groupId/artifactId/version）必须齐全，缺一发布失败。确实没有统一父 POM 时整节省略，生成器回退官方 `spring-boot-starter-parent`
 - 版本取自框架父 POM 真实 `<version>`（如 `3.0.0-SNAPSHOT`）；若父 POM 用 `${revision}` 之类的属性占位，照抄该占位写法即可
 
 ## 第二节：starter 清单（kind = `starter`，多文档 YAML）
+
+**这一节是 starter 的唯一数据源**：展示名（`description`）、依赖坐标 + version（`dependencies`）、
+分类、维护方、联动规则，**以及是否必选（`required`）与依赖联动（`requires`）**全部在此声明。
+第一节 metadata 不再有 `starters` 节，发布时平台自动把清单合并进元数据。
 
 一个能力一段文档，用 `---` 分隔，可合并为一份多文档 YAML 提交：
 
 ```yaml
 ---
-id: your-starter-id                # 必须与文档名/metadata 中引用一致
+id: your-starter-id                # 必须与 metadata bootVersions[].starters 引用一致
 category: middleware               # web / middleware / tool ...
 maintainer: internal               # official / internal
-description: 一句话描述功能
+description: 一句话描述功能（即前端展示名）
+required: true                     # 可选：true = 必选依赖（默认 false）
+requires: [other-starter-id]       # 可选：依赖联动，选中本项自动带上所列 starter（默认 []）
+bootVersions: ["3.2.5"]            # 可选：本条目关联的 Boot 版本（不写 = 对全部 Boot 版本可用）
 dependencies:
   - groupId: com.yourcompany
     artifactId: your-capability-module
     version: "1.2.0"               # official 或由 BOM 管理时可省略
 linkages: {}                       # 无联动时写 {}
 ```
+
+约束字段说明（原 metadata `starters` 节能力，全部迁移至此）：
+
+- `required`（可选，默认 false）：设为 `true` 即**必选依赖**——前端默认勾选且禁止取消，后端生成时兜底自动补齐（绕过前端直调 API 也会加上）。框架中"不选就跑不起来"的能力（如核心包 core、统一配置/鉴权基础模块）应标为必选；其余能力保持可选
+- `requires`（可选，默认 `[]`）：**依赖联动**——选中本 starter 时自动带上所列 starter（平台求传递闭包），取消后不再被其他选中项需要的连带项自动释放。校验规则：引用的 id 必须在**本清单**中登记（悬空即拒绝）、不得引用自身、不得成环（发布期报`循环依赖`并拒绝）。方向为「上层能力 → 基础能力」，如 `dal.requires: [core]`
+- `bootVersions`（**Boot 版本关联**）：声明本条目属于哪些 Boot 版本（值取 metadata 的 `bootVersions[].id`）。**不写即对全部 Boot 版本可用**。
+  框架对多个 Boot 线（如 2.x / 3.x）提供不同坐标或版本的能力模块时，**用同一个 id 写多条文档、各自声明 `bootVersions`**——
+  **同一 Boot 版本内 id 不允许重复（重复发布即拒绝），不同 Boot 版本之间允许重复**，平台按当前选中的 Boot 版本取对应条目（坐标、version、联动规则一并生效）
 
 **内部能力（`maintainer: internal`）带联动时**，`linkages` 可含四类：
 
@@ -252,13 +265,13 @@ content: |
 
 ### 四处引用一致性（拆分为三条独立约束）
 
-1. **metadata 内部双向一致**：`starters:` 节的 key ↔ `bootVersions[].starters`，数量与 id 必须完全相等
+1. **starter 单一数据源 + Boot 版本关联**：每个 starter 在第二节清单声明（id / description / dependencies / required / requires / bootVersions），不得在 metadata 里重复登记；`bootVersions[].starters` 列出的 id 必须有对应清单条目且该条目关联本 Boot 版本；**同一 Boot 版本内 id 不重复**（多 Boot 线共用 id 时用 `bootVersions` 拆成多条文档）
 2. **冲突规则引用不越界**：`conflict-rule` 的 `rules[].starters` ⊆ metadata 已声明的 starter id
 3. **模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（**数量 + 路径双一致**，无多余、无缺失）
 
 ## 输出格式要求
 
-按以下顺序输出，每段用一级标题分隔，便于我分别复制到管理后台对应草稿页：
+按以下顺序输出，每段用一级标题分隔（既可直接落盘到外部清单目录，也可分别复制到管理后台对应草稿页发布）：
 
 0. `## 候选清单`（父子结构必须给出：模块/能力 → GAV → 判定依据 → **必选标记与依据** → **依赖的能力（requires）**，供人工复核）
 1. `## metadata`
@@ -268,7 +281,12 @@ content: |
 
 ## 平台行为约定（影响产出写法）
 
-- **发布即热生效**：管理端发布后快照原子切换，生成接口立即可用；重启服务时会从数据库还原最近一次发布，无需重新发布
+- **两条生效路径（任选其一）**：
+  1. **外部清单目录（推荐给运维）**：把 `metadata.yml`、`starters/*.yml`、`conflict-rules.yml`、`templates/**` 直接放进清单目录
+     （配置项 `initializer.catalog.dir`，未配置时默认 **jar 同级的 `catalog/`**），**重启即生效**——
+     不需要在管理端保存草稿、不需要点发布、不与内置 metadata.yml 做一致性校验，格式正确即可用
+  2. **管理端发布（热生效）**：发布后快照原子切换，生成接口立即可用；重启服务时会从数据库还原最近一次发布，无需重新发布
+  （两者同时存在时，**外部清单目录优先级更高**；管理端再次发布会覆盖内存快照）
 - **`.ftl` 与配置文件均可在管理端维护**：发布后覆盖 classpath 同名模板/片段，新增或修改模板不需要改代码、不需要重新打 jar
 - **配置文件必须 `%24` 转义 `$`**：否则发布期 FreeMarker 预校验拒绝（详见第四节）
 - **必选项（`required: true`）双重保障**：前端默认勾选且禁止取消，后端生成时兜底自动补齐，绕过前端直调 API 也会带上；仅当该 starter 属于当前 Boot 版本可选清单时才强制
@@ -281,11 +299,11 @@ content: |
 - [ ] **模块识别按特征而非命名**：每个 starter 都有第〇步特征依据，候选清单无遗漏
 - [ ] **父子结构 GAV 取自实际承载能力的子模块**，未误用根 POM 或中间父 POM 坐标
 - [ ] **BOM/dependencyManagement 管理的依赖未写 version**（内部 starter 仅在版本自持时写）
-- [ ] **框架统一父 POM 已填入 `frameworkParent`**（或明确说明框架无统一父 POM），三项齐全
+- [ ] **框架统一父 POM 已填入各 `bootVersions[].frameworkParent`**（或顶层声明全局默认 / 明确说明框架无统一父 POM），三项齐全
 - [ ] 兼容矩阵闭环：Java → Boot → starter 引用无悬空 id
 - [ ] 占位符仅在白名单六项内
 - [ ] 冲突规则 id 唯一，starters 数量符合 type（pair=2，group≥2）
-- [ ] **① metadata 内部双向一致**：`starters:` 节 key ↔ `bootVersions[].starters`，数量与 id 完全相等
+- [ ] **① starter 单一数据源 + 版本关联**：每个 starter 只在第二节清单声明（坐标/展示名/必选/联动），metadata 未出现 `starters:` 节；`bootVersions[].starters` 的每个 id 都有清单条目且关联本 Boot 版本；**同一 Boot 版本内无重复 id**（多 Boot 线共用 id 时已用 `bootVersions` 拆成多条文档）
 - [ ] **② 冲突规则引用不越界**：`rules[].starters` ⊆ metadata 已声明的 starter id，无官方 id 凑数
 - [ ] **③ 模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（数量 + 路径双一致）
 - [ ] **互斥判定无误判**：每条冲突规则都有「同名 Bean / 同类型 Bean」依据，且 `message` 写明 Bean 名或类型 + 源码位置；不存在"仅共用底层资源"却被判为冲突的规则

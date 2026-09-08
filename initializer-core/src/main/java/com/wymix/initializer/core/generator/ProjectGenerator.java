@@ -190,13 +190,14 @@ public class ProjectGenerator {
      * @param starterIds starter ID 清单
      * @return 依赖坐标模型清单（保持请求顺序，去重）
      */
-    private List<Map<String, String>> resolveStarterDependencies(List<String> starterIds) {
+    private List<Map<String, String>> resolveStarterDependencies(String bootVersionId, List<String> starterIds) {
         List<Map<String, String>> deps = new ArrayList<>();
         // 跨来源统一去重：同一 G:A 坐标可能在 starter 清单与 metadata.yml 两边声明。
         // 约定：先遍历 starter 清单来源（含 version，Gradle GAV 透传），再遍历 metadata.yml 来源，
         // 同坐标冲突时清单声明优先——去重键统一为 groupId:artifactId。
         Set<String> seen = new LinkedHashSet<>();
-        for (DependencyCoord dep : linkageRenderer.resolveDependencies(starterIds)) {
+        // 按 Boot 版本关联解析清单条目（同 ID 在不同 Boot 版本可有不同坐标/版本）
+        for (DependencyCoord dep : linkageRenderer.resolveDependencies(bootVersionId, starterIds)) {
             if (seen.add(dep.groupId() + ":" + dep.artifactId())) {
                 // version 双轨透传（Gradle GAV / Maven <version>）：仅声明了 version 的依赖输出，
                 // 官方 starter 等无 version 坐标继续走 Boot BOM（M2.4 + 验收 P1-1 修复：
@@ -211,8 +212,14 @@ public class ProjectGenerator {
             }
         }
         for (String id : starterIds) {
-            if (!starterRegistered(id)) {
+            if (!starterRegistered(bootVersionId, id)) {
                 MavenDependency dep = catalog.starterDefinition(id).dependency();
+                if (dep == null) {
+                    // 既无 starter 清单文件、metadata starters 节也未登记 dependency：无法生成依赖
+                    throw new BusinessException(ErrorCode.UNKNOWN_STARTER,
+                            "starter " + id + " 缺少依赖坐标：需在 starter 清单（catalog/starters/*.yml）"
+                                    + "声明 dependencies，或在 metadata.yml 的 starters." + id + ".dependency 登记");
+                }
                 if (seen.add(dep.groupId() + ":" + dep.artifactId())) {
                     deps.add(Map.of("groupId", dep.groupId(), "artifactId", dep.artifactId()));
                 }
@@ -221,8 +228,8 @@ public class ProjectGenerator {
         return deps;
     }
 
-    private boolean starterRegistered(String starterId) {
-        return linkageRenderer.registered(starterId);
+    private boolean starterRegistered(String bootVersionId, String starterId) {
+        return linkageRenderer.registered(bootVersionId, starterId);
     }
 
     private Map<String, byte[]> renderAll(GenerateRequest request) {
@@ -258,7 +265,8 @@ public class ProjectGenerator {
         }
 
         // 联动渲染管线（M2.3）：starter 模板联动 + application.yml 片段合并 + 抽象类引用
-        LinkageRenderer.LinkageResult linkage = linkageRenderer.render(request.starters(), model);
+        LinkageRenderer.LinkageResult linkage =
+                linkageRenderer.render(request.bootVersion(), request.starters(), model);
         for (Map.Entry<String, byte[]> entry : linkage.templateFiles().entrySet()) {
             byte[] prev = files.put(request.artifact() + "/" + entry.getKey(), entry.getValue());
             if (prev != null) {
@@ -292,9 +300,12 @@ public class ProjectGenerator {
         model.put(TemplateRenderer.K_BOOT_VERSION, request.bootVersion());
         model.put(TemplateRenderer.K_JAVA_VERSION, request.javaVersion());
         model.put(TemplateRenderer.K_STARTERS, new ArrayList<>(request.starters()));
-        model.put(TemplateRenderer.K_STARTER_DEPENDENCIES, resolveStarterDependencies(request.starters()));
-        // 框架父 POM：未配置时回退 spring-boot-starter-parent:${bootVersion}
-        com.wymix.initializer.core.metadata.FrameworkParent fp = catalog.frameworkParent();
+        model.put(TemplateRenderer.K_STARTER_DEPENDENCIES,
+                resolveStarterDependencies(request.bootVersion(), request.starters()));
+        // 框架父 POM：按所选 Boot 版本取 bootVersions[].frameworkParent（不同版本可挂不同父 POM），
+        // 未配置时回退 spring-boot-starter-parent:${bootVersion}
+        com.wymix.initializer.core.metadata.FrameworkParent fp =
+                catalog.bootVersion(request.bootVersion()).frameworkParent();
         if (fp == null) {
             fp = com.wymix.initializer.core.metadata.FrameworkParent.defaultSpringBootParent(request.bootVersion());
         }

@@ -34,17 +34,6 @@ class CatalogRefresherTest {
                 official: true
                 supportedJavaVersions: ["17"]
                 starters: ["web", "xxx-redis-spring-boot-starter"]
-            starters:
-              web:
-                label: "Spring Web"
-                dependency:
-                  groupId: "org.springframework.boot"
-                  artifactId: "spring-boot-starter-web"
-              xxx-redis-spring-boot-starter:
-                label: "内部 Redis 封装 starter"
-                dependency:
-                  groupId: "com.company"
-                  artifactId: "xxx-redis-spring-boot-starter"
             """;
 
     /** 合法 starter 配置：多文档（web 无联动 + 内部 redis 完整联动）。 */
@@ -107,15 +96,15 @@ class CatalogRefresherTest {
     }
 
     @Test
-    void validateAndBuild_danglingStarterReferenceInMetadata_throws4002() {
-        // metadata.bootVersions.starters 引用未登记的 starter → 悬空引用拒绝发布（验收标准）
+    void validateAndBuild_unknownStarterInBootList_hasNoDefinition() {
+        // 新模型：bootVersions.starters 中的 id 若 starter 清单未登记，发布不拒绝，
+        // 但不会产生 starter 定义（不可见于可选清单，生成时按「缺少依赖坐标」报错）
         String dangling = METADATA_YAML.replace(
                 "starters: [\"web\", \"xxx-redis-spring-boot-starter\"]",
                 "starters: [\"web\", \"no-such-starter\"]");
-        assertThatThrownBy(() -> refresher.validateAndBuild(dangling, STARTER_YAML))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED))
-                .hasMessageContaining("no-such-starter");
+        CatalogSnapshot snapshot = refresher.validateAndBuild(dangling, STARTER_YAML);
+        assertThat(snapshot.metadataCatalog().starterDefinitionOrNull("web")).isNotNull();
+        assertThat(snapshot.metadataCatalog().starterDefinitionOrNull("no-such-starter")).isNull();
     }
 
     @Test

@@ -64,12 +64,13 @@ class ValidateControllerTest {
     }
 
     @Test
-    void validate_shouldReturn500ForMalformedJson() throws Exception {
+    void validate_shouldReturn400ForMalformedJson() throws Exception {
+        // 报文不可读属客户端错误：应映射 400 + 1002，而非 500 + 9001
         mockMvc.perform(post("/api/validate")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{invalid"))
-                .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.code").value(9001));
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(1002));
     }
 
     @Test
@@ -95,6 +96,6 @@ class ValidateControllerTest {
         mockMvc.perform(get("/api/derive-package")
                         .param("artifact", "demo"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value(1001));
+                .andExpect(jsonPath("$.code").value(1002));
     }
 }

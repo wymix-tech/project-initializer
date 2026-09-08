@@ -46,11 +46,24 @@ class TemplateSnapshotTest {
     @BeforeAll
     static void setUp() {
         try (InputStream in = TemplateSnapshotTest.class.getResourceAsStream("/catalog/metadata.yml")) {
-            MetadataCatalog catalog = MetadataCatalog.load(in);
-            generator = new ProjectGenerator(catalog, new TemplateRenderer());
+            com.wymix.initializer.core.starter.StarterCatalog starterCatalog = snapshotStarterCatalog();
+            // starter 元信息来自清单：装载 metadata 后联动合并
+            MetadataCatalog catalog = MetadataCatalog.load(in).merge(starterCatalog);
+            generator = new ProjectGenerator(catalog, new TemplateRenderer(), starterCatalog);
         } catch (Exception e) {
             throw new IllegalStateException("快照测试环境初始化失败", e);
         }
+    }
+
+    /** 快照固定输入用到的 starter（web / data-redis）清单。 */
+    private static com.wymix.initializer.core.starter.StarterCatalog snapshotStarterCatalog() throws Exception {
+        List<com.wymix.initializer.core.starter.StarterCatalogEntry> entries = new java.util.ArrayList<>();
+        for (String name : List.of("web-starter.yml", "data-redis-starter.yml")) {
+            try (InputStream in = TemplateSnapshotTest.class.getResourceAsStream("/catalog/starters/" + name)) {
+                entries.add(com.wymix.initializer.core.starter.YamlStarterParser.parse(in));
+            }
+        }
+        return com.wymix.initializer.core.starter.StarterCatalog.of(entries);
     }
 
     @Test

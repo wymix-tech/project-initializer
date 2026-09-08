@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import StepIndicator from '@/components/StepIndicator.vue'
 import StepJava from '@/components/StepJava.vue'
 import StepBoot from '@/components/StepBoot.vue'
 import StepStarters from '@/components/StepStarters.vue'
@@ -38,23 +37,6 @@ function storeOf(wrapper: { vm: unknown }): ReturnType<typeof useWizardStore> {
   return useWizardStore()
 }
 
-describe('StepIndicator', () => {
-  it('渲染四步标签', () => {
-    const wrapper = mountWithPinia(StepIndicator, { props: { current: 1 } })
-    expect(wrapper.findAll('.step')).toHaveLength(4)
-    expect(wrapper.text()).toContain('Java 版本')
-    expect(wrapper.text()).toContain('元信息')
-  })
-
-  it('当前步与已完成步样式正确', () => {
-    const wrapper = mountWithPinia(StepIndicator, { props: { current: 3 } })
-    const steps = wrapper.findAll('.step')
-    expect(steps[2].classes()).toContain('active')
-    expect(steps[0].classes()).toContain('done')
-    expect(steps[0].text()).toContain('✓')
-  })
-})
-
 describe('StepJava', () => {
   const javaVersions: JavaVersion[] = [
     { id: '8', label: 'Java 8', deprecated: false, recommendedBootVersion: '2.7.18' },
@@ -73,14 +55,14 @@ describe('StepJava', () => {
     expect(wrapper.text()).toContain('已废弃')
   })
 
-  it('点击版本触发联动并前进', async () => {
+  it('点击版本触发联动选中', async () => {
     const wrapper = mountWithPinia(StepJava)
     const wizard = useWizardStore()
     wizard.javaVersions = javaVersions
     await wrapper.vm.$nextTick()
     await wrapper.findAll('.option')[0].trigger('click')
     await new Promise((r) => setTimeout(r, 50))
-    expect(wizard.step).toBe(2)
+    expect(wizard.selectedJava).toBe('8')
   })
 
   it('空清单时显示占位文案', async () => {
@@ -103,16 +85,15 @@ describe('StepBoot', () => {
     expect(wrapper.text()).toContain('官方')
   })
 
-  it('点击版本触发联动并前进', async () => {
+  it('点击版本触发联动选中', async () => {
     const wrapper = mountWithPinia(StepBoot)
     const wizard = useWizardStore()
     wizard.selectedJava = '17'
-    wizard.step = 2
     wizard.bootVersions = bootVersions
     await wrapper.vm.$nextTick()
     await wrapper.find('.option').trigger('click')
     await new Promise((r) => setTimeout(r, 50))
-    expect(wizard.step).toBe(3)
+    expect(wizard.selectedBoot).toBe('3.2.5')
   })
 
   it('空清单显示占位文案', async () => {

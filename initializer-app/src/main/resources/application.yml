@@ -21,6 +21,12 @@ mybatis-plus:
     map-underscore-to-camel-case: true
 
 initializer:
+  catalog:
+    # 外部清单目录（jar 外维护配置）：目录下放置 metadata.yml / starters/*.yml /
+    # conflict-rules.yml / templates/** / validation.yml，格式正确即生效（重启生效），
+    # 无需在管理端发布，也不与内置清单做一致性校验；starters 条目无需在 metadata.yml 登记。
+    # 留空时默认使用 jar 所在目录下的 catalog/ 目录；目录不存在则回退内置/管理端配置。
+    dir: ${INITIALIZER_CATALOG_DIR:}
   # 内置清单开关：仅当 jar 启动携带 --demo 时加载 classpath 内置清单（Java/Boot/starter）并播种。
   # 该值由 InitializerApplication#main 依据 --demo 以 system property 覆盖（优先级更高），
   # 故生产启动不带 --demo 时为空清单，数据全部由管理端发布提供；

@@ -2,6 +2,8 @@ package com.wymix.initializer.core.metadata;
 
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
+import com.wymix.initializer.core.starter.StarterCatalog;
+import com.wymix.initializer.core.starter.StarterCatalogEntry;
 
 import java.io.InputStream;
 import java.util.ArrayDeque;
@@ -13,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 元数据目录：加载 {@code catalog/metadata.yml}，提供版本清单与兼容矩阵查询。
@@ -32,11 +35,6 @@ public class MetadataCatalog {
     private final Map<String, JavaVersion> javaVersions = new LinkedHashMap<>();
     private final Map<String, BootVersion> bootVersions = new LinkedHashMap<>();
     private final Map<String, StarterDefinition> starterDefinitions = new LinkedHashMap<>();
-    /**
-     * 框架父 POM 配置（顶层 metadata 可选字段）：生成 {@code pom.xml} 的 {@code <parent>} 坐标。
-     * null 时生成器回退默认 {@code org.springframework.boot:spring-boot-starter-parent:&lt;bootVersion&gt;}。
-     */
-    private final FrameworkParent frameworkParent;
 
     /**
      * 从 YAML 输入流装载元数据目录。
@@ -47,7 +45,7 @@ public class MetadataCatalog {
      */
     public static MetadataCatalog load(InputStream yaml) {
         YamlMetadataParser.ParsedMetadata parsed = YamlMetadataParser.parse(yaml);
-        return new MetadataCatalog(parsed.javaVersions(), parsed.bootVersions(), parsed.starters(), parsed.frameworkParent());
+        return new MetadataCatalog(parsed.javaVersions(), parsed.bootVersions(), List.of());
     }
 
     /**
@@ -64,10 +62,9 @@ public class MetadataCatalog {
 
     /** 空目录单例：三个维度均为空表，无悬空引用可校验。 */
     private static final MetadataCatalog EMPTY =
-            new MetadataCatalog(List.of(), List.of(), List.of(), null);
+            new MetadataCatalog(List.of(), List.of(), List.of());
 
-    private MetadataCatalog(List<JavaVersion> javaList, List<BootVersion> bootList, List<StarterDefinition> starterList,
-                            FrameworkParent frameworkParent) {
+    private MetadataCatalog(List<JavaVersion> javaList, List<BootVersion> bootList, List<StarterDefinition> starterList) {
         for (JavaVersion jv : javaList) {
             if (javaVersions.putIfAbsent(jv.id(), jv) != null) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Java 版本 ID 重复: " + jv.id());
@@ -88,65 +85,9 @@ public class MetadataCatalog {
         for (StarterDefinition sd : starterList) {
             starterDefinitions.put(sd.id(), sd);
         }
-        // 悬空引用校验：bootVersions.starters 引用的 starter 必须在 starters 节登记
-        for (BootVersion bv : bootList) {
-            for (String starterId : bv.starters()) {
-                if (!starterDefinitions.containsKey(starterId)) {
-                    throw new BusinessException(ErrorCode.INTERNAL_ERROR,
-                            "Boot 版本 " + bv.id() + " 引用了未定义的 starter: " + starterId);
-                }
-            }
-        }
-        // M3.6 依赖联动校验：requires 引用必须已登记，且不得自引用/成环
-        validateRequires(starterList);
-        this.frameworkParent = frameworkParent;
-    }
-
-    /**
-     * 依赖联动（requires）合法性校验：悬空引用、自引用、循环依赖一律拒绝（配置错误早暴露）。
-     *
-     * @param starterList 全部 starter 定义
-     * @throws BusinessException 引用未定义（9002）、自引用（9002）、存在环（9002）
-     */
-    private void validateRequires(List<StarterDefinition> starterList) {
-        for (StarterDefinition sd : starterList) {
-            for (String dep : sd.requires()) {
-                if (dep.equals(sd.id())) {
-                    throw new BusinessException(ErrorCode.INTERNAL_ERROR,
-                            "starter " + sd.id() + " 的 requires 不能引用自身: " + dep);
-                }
-                if (!starterDefinitions.containsKey(dep)) {
-                    throw new BusinessException(ErrorCode.INTERNAL_ERROR,
-                            "starter " + sd.id() + " 的 requires 引用了未定义的 starter: " + dep);
-                }
-            }
-        }
-        Map<String, Integer> state = new LinkedHashMap<>();
-        for (StarterDefinition sd : starterList) {
-            visitRequires(sd.id(), state, new LinkedHashSet<>());
-        }
-    }
-
-    /** requires 有向图 DFS：0/未访问 1/访问中 2/已完成，回边即环。 */
-    private void visitRequires(String id, Map<String, Integer> state, LinkedHashSet<String> path) {
-        Integer visited = state.get(id);
-        if (visited != null && visited == 2) {
-            return;
-        }
-        if (visited != null && visited == 1) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR,
-                    "starter requires 存在循环依赖: " + String.join(" -> ", path) + " -> " + id);
-        }
-        state.put(id, 1);
-        path.add(id);
-        StarterDefinition sd = starterDefinitions.get(id);
-        if (sd != null) {
-            for (String dep : sd.requires()) {
-                visitRequires(dep, state, path);
-            }
-        }
-        path.remove(id);
-        state.put(id, 2);
+        // starter 元信息不再由 metadata 提供（全部来自 starter 清单，经 merge 联动），
+        // bootVersions.starters 的悬空引用不在此强校验：未知 id 在查询/生成时自然不可见或报错，
+        // requires（悬空/自引用/成环）校验由 StarterCatalog 装载期负责
     }
 
     /**
@@ -315,17 +256,74 @@ public class MetadataCatalog {
                 }
             }
             bootList.add(new BootVersion(bv.id(), bv.label(), bv.official(),
-                    bv.supportedJavaVersions(), starters));
+                    bv.supportedJavaVersions(), starters, bv.frameworkParent()));
         }
-        return new MetadataCatalog(List.copyOf(javaVersions.values()), bootList, defs, frameworkParent);
+        return new MetadataCatalog(List.copyOf(javaVersions.values()), bootList, defs);
     }
 
     /**
-     * 框架父 POM 坐标（生成 {@code pom.xml} 的 {@code <parent>}）。null 时由生成器回退默认
-     * {@code org.springframework.boot:spring-boot-starter-parent:&lt;bootVersion&gt;}。
+     * starter 清单联动合并：starter 的**全部元信息**（展示名、依赖坐标、必选标记、依赖联动）
+     * 以 {@link StarterCatalog}（{@code catalog/starters/*.yml}）为唯一数据源，
+     * metadata.yml 不再维护 starters 节，避免两处重复配置。
+     *
+     * <p>合并语义：
+     * <ul>
+     *   <li>starter 定义：全部由清单生成（展示名取 description，再兜底 ID；坐标取 dependencies 首条；
+     *       {@code required} / {@code requires} 取清单声明，悬空/自引用/成环已在清单装载期拒绝）</li>
+     *   <li>{@code bootVersions[].starters}：**省略或为空**即该版本对全部清单条目可选（自动填充）；
+     *       显式列出则为白名单，并自动追加清单新增条目（与既有「清单条目自动可选」语义一致）</li>
+     * </ul>
+     *
+     * @param starterCatalog 生效 starter 清单
+     * @return 合并后的新元数据目录（原对象不变）
      */
-    public FrameworkParent frameworkParent() {
-        return frameworkParent;
+    public MetadataCatalog merge(StarterCatalog starterCatalog) {
+        if (starterCatalog == null) {
+            return this;
+        }
+        // starter 定义：跨 Boot 版本按 ID 去重（全版本条目优先），坐标取清单声明
+        List<StarterDefinition> defs = new ArrayList<>();
+        for (StarterCatalogEntry entry : starterCatalog.all()) {
+            defs.add(new StarterDefinition(entry.id(), displayNameOf(entry), primaryCoord(entry),
+                    entry.required(), entry.requires()));
+        }
+        // 清单中登记过的全部 ID（用于识别「声明了 bootVersions 但不含本版本」的条目）
+        Set<String> allCatalogIds = starterCatalog.all().stream()
+                .map(StarterCatalogEntry::id)
+                .collect(Collectors.toSet());
+        List<BootVersion> boots = new ArrayList<>();
+        for (BootVersion bv : bootVersions.values()) {
+            // 该 Boot 版本可用的清单条目：全版本条目 + 声明了该版本的条目（同 ID 版本专属优先）
+            List<String> available = starterCatalog.allForBoot(bv.id()).stream()
+                    .map(StarterCatalogEntry::id)
+                    .toList();
+            // 白名单（bootVersions[].starters）+ 清单中关联本版本的条目（自动可选）
+            List<String> starters = new ArrayList<>(bv.starters());
+            for (String id : available) {
+                if (!starters.contains(id)) {
+                    starters.add(id);
+                }
+            }
+            // 关联校验：清单条目声明了 bootVersions 但不含本版本 → 本版本不可引用
+            starters.removeIf(id -> allCatalogIds.contains(id) && !available.contains(id));
+            boots.add(new BootVersion(bv.id(), bv.label(), bv.official(),
+                    bv.supportedJavaVersions(), starters, bv.frameworkParent()));
+        }
+        return new MetadataCatalog(List.copyOf(javaVersions.values()), boots, defs);
+    }
+
+    /** starter 清单条目的展示名：description 优先，缺失用 ID。 */
+    private static String displayNameOf(StarterCatalogEntry entry) {
+        return entry.description() == null || entry.description().isBlank() ? entry.id() : entry.description();
+    }
+
+    /** starter 清单条目的主坐标：dependencies 首条的 groupId/artifactId（无依赖时 null）。 */
+    private static MavenDependency primaryCoord(StarterCatalogEntry entry) {
+        if (entry.dependencies().isEmpty()) {
+            return null;
+        }
+        com.wymix.initializer.core.starter.DependencyCoord primary = entry.dependencies().get(0);
+        return new MavenDependency(primary.groupId(), primary.artifactId());
     }
 
     /** @return 全部已登记 starter ID 集合（M3.3 同步保留集计算用，不可变） */

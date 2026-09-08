@@ -3,12 +3,10 @@ package com.wymix.initializer.app.admin.refresh;
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.core.conflict.ConflictCatalog;
+import com.wymix.initializer.core.conflict.ConflictRule;
 import com.wymix.initializer.core.conflict.ConflictRuleParser;
 import com.wymix.initializer.core.generator.TemplateRenderer;
-import com.wymix.initializer.core.metadata.MavenDependency;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
-import com.wymix.initializer.core.metadata.StarterDefinition;
-import com.wymix.initializer.core.starter.DependencyCoord;
 import com.wymix.initializer.core.starter.StarterCatalog;
 import com.wymix.initializer.core.starter.StarterCatalogEntry;
 import com.wymix.initializer.core.starter.YamlStarterParser;
@@ -23,8 +21,10 @@ import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 清单热刷新器（M3.1/M3.2）：草稿 YAML → 装载期校验 → 快照构建 → 原子切换。
@@ -58,12 +58,12 @@ public class CatalogRefresher {
      * @param metadataYaml   metadata 草稿全文（null 时拒绝——首发快照必须显式提供）
      * @param starterYaml    starter 草稿全文（多文档），null 时视为空清单
      * @param templateYaml   TEMPLATE 草稿全文（多文档 {name, content}），null 时视为无模板覆盖
-     * @param conflictYamlYaml CONFLICT_RULE 草稿全文（conflict-rules.yml 同构），null 时视为无规则
+     * @param conflictYaml   CONFLICT_RULE 草稿全文（conflict-rules.yml 同构），null 时视为无规则
      * @return 校验通过的新快照
      * @throws BusinessException 解析/装载校验失败（4002：metadata 缺失或 starter/模板/冲突规则非法）
      */
     public CatalogSnapshot validateAndBuild(String metadataYaml, String starterYaml, String templateYaml,
-                                            String conflictYamlYaml) {
+                                            String conflictYaml) {
         if (metadataYaml == null || metadataYaml.isBlank()) {
             throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
                     "发布校验失败: metadata 配置缺失，首发快照必须显式提供 metadata.yml 同构配置");
@@ -71,13 +71,13 @@ public class CatalogRefresher {
         MetadataCatalog metadataCatalog = parseMetadata(metadataYaml);
         StarterCatalog starterCatalog = parseStarters(starterYaml);
         Map<String, String> templateOverrides = parseTemplates(templateYaml);
-        ConflictCatalog conflictCatalog = ConflictRuleParser.parseText(conflictYamlYaml);
+        ConflictCatalog conflictCatalog = ConflictRuleParser.parseText(conflictYaml);
         validateConflictReferences(conflictCatalog, metadataCatalog, starterCatalog);
-        // M3.3 自动补位：starter 清单条目未在 metadata 登记时，追加为全部 Boot 版本可选
-        // （制品库同步条目可见性；手工 yml 条目原本也可只登记清单——行为升级为自动可选）
-        metadataCatalog = extendWithUnregistered(metadataCatalog, starterCatalog);
-        // 交叉校验：metadata.bootVersions.starters 引用的 starter 必须在 starter 清单登记
-        validateCrossReferences(metadataCatalog, starterCatalog);
+        // starter 清单联动：展示名与依赖坐标以 starter 清单为准，
+        // 清单条目未在 metadata 登记时自动登记并追加为全部 Boot 版本可选（无需两边重复配置）。
+        // 双向悬空引用由 MetadataCatalog 装载期校验覆盖（bootVersions.starters 引用的 ID
+        // 必须在 metadata starters 节登记），此处不再重复一次只告警不拦截的伪校验。
+        metadataCatalog = metadataCatalog.merge(starterCatalog);
         return new CatalogSnapshot(metadataCatalog, starterCatalog, templateOverrides, conflictCatalog);
     }
 
@@ -107,7 +107,7 @@ public class CatalogRefresher {
     }
 
 
-/**
+    /**
      * M3.3：解析 starter 清单 yml（多文档）中登记的全部条目 ID（不做清单级校验）。
      *
      * <p>供同步链路构建「手工配置保留集」与识别同步来源条目；解析失败视为空清单
@@ -116,8 +116,8 @@ public class CatalogRefresher {
      * @param starterYaml starter 配置全文（多文档，可空）
      * @return 条目 ID 集合（保持配置顺序，去重）
      */
-    public java.util.Set<String> parseStarterIds(String starterYaml) {
-        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+    public Set<String> parseStarterIds(String starterYaml) {
+        Set<String> ids = new LinkedHashSet<>();
         if (starterYaml == null || starterYaml.isBlank()) {
             return ids;
         }
@@ -132,36 +132,6 @@ public class CatalogRefresher {
             }
         }
         return ids;
-    }
-
-        /**
-     * M3.3：metadata 自动补位——将 starter 清单中未登记 metadata 的条目追加为
-     * 全部 Boot 版本可选（展示名取描述，坐标取首条依赖）。
-     *
-     * @param metadataCatalog 解析后的元数据目录
-     * @param starterCatalog  解析后的 starter 清单
-     * @return 原目录（全部已登记）或补位后的新目录
-     */
-    private MetadataCatalog extendWithUnregistered(MetadataCatalog metadataCatalog, StarterCatalog starterCatalog) {
-        List<String> missingIds = starterCatalog.all().stream()
-                .filter(entry -> !metadataCatalog.starterDefinitionIds().contains(entry.id()))
-                .map(StarterCatalogEntry::id)
-                .toList();
-        if (missingIds.isEmpty()) {
-            return metadataCatalog;
-        }
-        List<StarterDefinition> addedDefs = starterCatalog.all().stream()
-                .filter(entry -> missingIds.contains(entry.id()))
-                .map(entry -> {
-                    String label = entry.description() == null || entry.description().isBlank()
-                            ? entry.id() : entry.description();
-                    DependencyCoord primary = entry.dependencies().get(0);
-                    return new StarterDefinition(entry.id(), label,
-                            new MavenDependency(primary.groupId(), primary.artifactId()));
-                })
-                .toList();
-        log.info("starter 清单自动补位 metadata: {} 个条目（全部 Boot 版本可选）", missingIds.size());
-        return metadataCatalog.withAdditionalStarters(addedDefs, missingIds);
     }
 
     /**
@@ -269,7 +239,7 @@ public class CatalogRefresher {
      */
     private void validateConflictReferences(ConflictCatalog conflictCatalog, MetadataCatalog metadataCatalog,
                                             StarterCatalog starterCatalog) {
-        for (com.wymix.initializer.core.conflict.ConflictRule rule : conflictCatalog.all()) {
+        for (ConflictRule rule : conflictCatalog.all()) {
             for (String starterId : rule.starters()) {
                 boolean known = metadataCatalog.starterDefinitionIds().contains(starterId)
                         || starterCatalog.contains(starterId);
@@ -282,30 +252,26 @@ public class CatalogRefresher {
     }
 
     /**
-     * 交叉悬空引用校验：M3.1 发布期兜底（metadata 装载期无法感知 starter 草稿清单）。
+     * 按 YAML 文档分隔符切分多文档；单文档原样返回。
      *
-     * <p>注意：web 等官方 starter 允许只在 metadata.yml 的 starters 节登记（无 starter 清单
-     * yml，无联动规则）；此处校验的是 bootVersions.starters 引用的 ID 至少在 metadata
-     * starters 节存在——该检查已由 MetadataCatalog 悬空引用校验覆盖，本方法额外校验
-     * starter 清单与 metadata 双边都未登记的 ID 不可能存在（双边独立装载后天然保证）。
+     * <p>分隔符判定严格限定为**行首（列 0）且内容恰为 {@code ---}**：YAML 文档分隔符
+     * 必须顶格书写，而块标量（模板 content、application-yml-fragments 全文）的内容一律
+     * 相对父键缩进，因此按列 0 判定不会误切块标量内部出现的 {@code ---} 行。若使用
+     * {@code trim()} 后比较，模板正文中缩进的 {@code ---} 会被误认为文档边界，
+     * 导致发布期静默截断配置内容。
+     *
+     * @param yaml 配置全文（多文档，可空）
+     * @return 非空文档清单（保持配置顺序）
      */
-    private void validateCrossReferences(MetadataCatalog metadataCatalog, StarterCatalog starterCatalog) {
-        starterCatalog.all().forEach(entry -> {
-            if (metadataCatalog.starterDefinitionOrNull(entry.id()) == null) {
-                log.warn("starter 清单条目 {} 未在 metadata.yml starters 节登记（允许：仅清单维护，无展示名）", entry.id());
-            }
-        });
-    }
-
-
-    /**
-     * 按 YAML 文档分隔符（行首 --- ）切分多文档；单文档原样返回。
-     */
-    static List<String> splitDocuments(String yaml) {
+    public static List<String> splitDocuments(String yaml) {
         List<String> documents = new ArrayList<>();
+        if (yaml == null || yaml.isBlank()) {
+            return documents;
+        }
         StringBuilder current = new StringBuilder();
-        for (String line : yaml.split("\n", -1)) {
-            if (line.trim().equals("---")) {
+        for (String rawLine : yaml.split("\n", -1)) {
+            String line = rawLine.endsWith("\r") ? rawLine.substring(0, rawLine.length() - 1) : rawLine;
+            if (line.equals("---")) {
                 if (!current.toString().isBlank()) {
                     documents.add(current.toString());
                 }

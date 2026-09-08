@@ -23,13 +23,16 @@ final class YamlMetadataParser {
     private YamlMetadataParser() {
     }
 
-    /** 解析结果载体：Java 版本、Boot 版本、starter 元信息与可选框架父 POM。 */
-    record ParsedMetadata(List<JavaVersion> javaVersions, List<BootVersion> bootVersions,
-                          List<StarterDefinition> starters, FrameworkParent frameworkParent) {
+    /** 解析结果载体：Java 版本与 Boot 版本（starter 元信息全部来自 starter 清单，经 merge 联动）。 */
+    record ParsedMetadata(List<JavaVersion> javaVersions, List<BootVersion> bootVersions) {
     }
 
     /**
      * 解析 metadata.yml 输入流。
+     *
+     * <p>starter 相关信息（展示名/坐标/必选/依赖联动）**全部由 starter 清单提供**，
+     * 本文件不再维护 starters 节；bootVersions[].starters 也可省略
+     * （省略即该版本对全部清单条目可选，由 {@link MetadataCatalog#merge} 填充）。
      *
      * @param yaml 输入流
      * @return 解析结果
@@ -45,13 +48,15 @@ final class YamlMetadataParser {
         if (root == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "metadata.yml 内容为空");
         }
-        return new ParsedMetadata(parseJavaVersions(root.get("javaVersions")), parseBootVersions(root.get("bootVersions")),
-                parseStarters(root.get("starters")), parseFrameworkParent(root.get("frameworkParent")));
+        return new ParsedMetadata(parseJavaVersions(root.get("javaVersions")),
+                parseBootVersions(root.get("bootVersions"), parseFrameworkParent(root.get("frameworkParent"))));
     }
 
     /**
-     * 解析顶层 {@code frameworkParent}（可选）：生成 {@code pom.xml} 的 {@code <parent>} 坐标。
-     * 三字段任一缺失或全部缺失均视为未配置（null），由生成器回退默认 spring-boot-starter-parent。
+     * 解析 {@code frameworkParent} 节（可选）：生成 {@code pom.xml} 的 {@code <parent>} 坐标。
+     * 声明位置：每个 {@code bootVersions[]} 条目内（不同 Boot 版本可挂不同框架父 POM）；
+     * 顶层声明为全局默认，条目内未声明时继承。
+     * 三字段任一缺失视为未配置（返回 null，由生成器回退默认 spring-boot-starter-parent）。
      *
      * @param node frameworkParent 节点
      * @return FrameworkParent；未配置返回 null
@@ -90,8 +95,17 @@ final class YamlMetadataParser {
         return result;
     }
 
+    /**
+     * 解析 bootVersions 节：每个条目内可独立声明 {@code frameworkParent}（可选），
+     * 未声明时继承全局默认（顶层 frameworkParent，也可为 null）——
+     * 不同 Boot 版本可挂接不同框架父 POM。
+     *
+     * @param node           bootVersions 节点
+     * @param globalFallback 顶层 frameworkParent（全局默认，可 null）
+     * @return Boot 版本清单
+     */
     @SuppressWarnings("unchecked")
-    private static List<BootVersion> parseBootVersions(Object node) {
+    private static List<BootVersion> parseBootVersions(Object node, FrameworkParent globalFallback) {
         requireList(node, "bootVersions");
         List<BootVersion> result = new ArrayList<>();
         for (Object item : (List<Object>) node) {
@@ -101,43 +115,11 @@ final class YamlMetadataParser {
             boolean official = !Boolean.FALSE.equals(map.get("official"));
             List<String> javaIds = toStringList(map.get("supportedJavaVersions"), "bootVersions[].supportedJavaVersions");
             List<String> starters = toStringList(map.get("starters"), "bootVersions[].starters");
-            result.add(new BootVersion(id, label, official, javaIds, starters));
-        }
-        return result;
-    }
-
-    /**
-     * 解析 starters 节：starter ID → {label, dependency{groupId, artifactId}}。
-     *
-     * @param node starters 节点（Map 结构；缺失时为空清单）
-     * @return starter 定义清单（按配置顺序）
-     * @throws BusinessException 结构非法或缺少必需字段（错误码 {@link ErrorCode#INTERNAL_ERROR}）
-     */
-    @SuppressWarnings("unchecked")
-    private static List<StarterDefinition> parseStarters(Object node) {
-        if (node == null) {
-            return List.of();
-        }
-        if (!(node instanceof Map)) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "metadata.yml 字段类型非法: starters");
-        }
-        List<StarterDefinition> result = new ArrayList<>();
-        for (Map.Entry<String, Object> entry : ((Map<String, Object>) node).entrySet()) {
-            String id = entry.getKey();
-            if (!(entry.getValue() instanceof Map)) {
-                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "metadata.yml 字段类型非法: starters." + id);
+            FrameworkParent parent = parseFrameworkParent(map.get("frameworkParent"));
+            if (parent == null) {
+                parent = globalFallback;
             }
-            Map<String, Object> map = (Map<String, Object>) entry.getValue();
-            String label = requireString(map, "label", "starters." + id + ".label");
-            if (!(map.get("dependency") instanceof Map)) {
-                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "metadata.yml 缺少必需字段: starters." + id + ".dependency");
-            }
-            Map<String, Object> dep = (Map<String, Object>) map.get("dependency");
-            String groupId = requireString(dep, "groupId", "starters." + id + ".dependency.groupId");
-            String artifactId = requireString(dep, "artifactId", "starters." + id + ".dependency.artifactId");
-            boolean required = Boolean.TRUE.equals(map.get("required"));
-            List<String> requires = toStringList(map.get("requires"), "starters." + id + ".requires");
-            result.add(new StarterDefinition(id, label, new MavenDependency(groupId, artifactId), required, requires));
+            result.add(new BootVersion(id, label, official, javaIds, starters, parent));
         }
         return result;
     }

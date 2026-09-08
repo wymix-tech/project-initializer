@@ -80,25 +80,36 @@ public class StarterQueryEngine {
         String keyword = normalize(q);
         String categoryFilter = normalize(category);
         return catalog.starters(bootVersionId).stream()
-                .map(id -> toItem(catalog, starterCatalog, id))
+                .map(id -> toItem(catalog, starterCatalog, bootVersionId, id))
+                .filter(item -> item != null)
                 .filter(item -> matchesKeyword(item, keyword))
                 .filter(item -> matchesCategory(item, categoryFilter))
                 .toList();
     }
 
-    private StarterSearchItem toItem(MetadataCatalog catalog, StarterCatalog starterCatalog, String starterId) {
-        StarterDefinition sd = catalog.starterDefinition(starterId);
-        Maintainer maintainer = starterCatalog.contains(starterId)
-                ? starterCatalog.entry(starterId).maintainer()
+    /**
+     * 构造检索条目；starter 无定义（清单未登记的遗留 id）时返回 {@code null} 并被过滤——
+     * starter 元信息全部来自 starter 清单，未登记即在可选清单中不可见。
+     */
+    private StarterSearchItem toItem(MetadataCatalog catalog, StarterCatalog starterCatalog,
+                                     String bootVersionId, String starterId) {
+        StarterDefinition sd = catalog.starterDefinitionOrNull(starterId);
+        if (sd == null) {
+            return null;
+        }
+        // 按 Boot 版本关联解析清单条目（同 ID 在不同版本可有不同坐标/版本）
+        boolean known = starterCatalog.contains(bootVersionId, starterId);
+        Maintainer maintainer = known
+                ? starterCatalog.entry(bootVersionId, starterId).maintainer()
                 : Maintainer.OFFICIAL;
-        String category = starterCatalog.contains(starterId)
-                ? starterCatalog.entry(starterId).category()
+        String category = known
+                ? starterCatalog.entry(bootVersionId, starterId).category()
                 : null;
-        String description = starterCatalog.contains(starterId)
-                ? starterCatalog.entry(starterId).description()
+        String description = known
+                ? starterCatalog.entry(bootVersionId, starterId).description()
                 : null;
-        String version = starterCatalog.contains(starterId)
-                ? baselineVersion(starterCatalog.entry(starterId).dependencies())
+        String version = known
+                ? baselineVersion(starterCatalog.entry(bootVersionId, starterId).dependencies())
                 : null;
         return new StarterSearchItem(starterId, sd.label(), maintainer, category, description, version,
                 sd.required(), List.copyOf(sd.requires()));

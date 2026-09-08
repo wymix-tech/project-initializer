@@ -7,5 +7,7 @@ dist/
 *.log
 .flattened-pom.xml
 data/
+logs/
+.tools/
 .Trash-0/
 .Trash-*/

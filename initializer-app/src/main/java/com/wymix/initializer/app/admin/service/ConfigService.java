@@ -13,6 +13,7 @@ import com.wymix.initializer.app.admin.repository.ConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -27,9 +28,12 @@ import java.util.List;
  *   <li>乐观锁：草稿携带加载时 version 更新，交叉修改后写方失败（4003）</li>
  *   <li>回滚（M3.2）：回滚 = 取历史发布全文重新走完整发布校验，通过后切换——
  *       不绕过校验通道，历史版本也可能因后续规则演进变得非法</li>
+ *   <li>发布原子性：发布/回滚整体处于同一数据库事务内，并叠加进程内互斥锁；
+ *       快照切换置于事务末尾——切换失败则事务回滚，绝不出现「已写发布记录但快照未切换」
+ *       或「快照已切换但无发布记录」的不一致状态</li>
  * </ul>
  *
- * <p>线程安全性：无状态单例（并发发布由数据库乐观锁 + 快照原子切换保证一致性），线程安全。
+ * <p>线程安全性：无状态单例（并发发布由进程内锁 + 数据库事务 + 快照原子切换保证一致性），线程安全。
  */
 @Service
 public class ConfigService {
@@ -48,6 +52,9 @@ public class ConfigService {
     private final ConfigRepository repository;
     private final CatalogRefresher refresher;
     private final CatalogSnapshotHolder snapshotHolder;
+
+    /** 发布/回滚进程内互斥锁：避免并发发布同时通过校验后互相覆盖快照与发布记录。 */
+    private final Object publishLock = new Object();
 
     /**
      * @param repository      配置存储仓库
@@ -134,16 +141,28 @@ public class ConfigService {
     }
 
     /**
-     * 发布：读全部草稿 → 全量校验 → 快照构建 → 原子切换 → 发布历史落库。
+     * 发布：读全部草稿 → 全量校验 → 快照构建 → 事务内落库 + 原子切换。
      *
      * <p>校验失败整体拒绝（4002 + 明细清单），草稿保留；成功后新快照立即对全部读路径生效。
+     *
+     * <p>事务边界：{@code noRollbackFor = BusinessException.class} —— 校验失败时仍要提交
+     * 失败审计（{@code PUBLISH_FAILED}），否则留痕会随回滚一并消失，管理端无从排查。
+     * 成功路径上发布记录与成功审计同处一个事务，快照切换置于事务末尾：切换失败即触发回滚，
+     * 不会留下「已写发布记录但快照未切换」的中间态。
      *
      * @param operator 发布人
      * @param remark   发布备注（可空）
      * @return 发布结果（发布记录 ID + 快照概况）
      * @throws BusinessException 校验失败（4002/9002）或草稿缺失（4002）
      */
+    @Transactional(noRollbackFor = BusinessException.class)
     public PublishResult publish(String operator, String remark) {
+        synchronized (publishLock) {
+            return doPublish(operator, remark);
+        }
+    }
+
+    private PublishResult doPublish(String operator, String remark) {
         ConfigDraftEntity metadataDraft = repository.findDraft(ConfigKind.METADATA);
         ConfigDraftEntity starterDraft = repository.findDraft(ConfigKind.STARTER);
         ConfigDraftEntity templateDraft = repository.findDraft(ConfigKind.TEMPLATE);
@@ -169,18 +188,20 @@ public class ConfigService {
                 templateDraft == null ? null : templateDraft.getContentYaml(),
                 conflictDraft == null ? null : conflictDraft.getContentYaml(),
                 operator, remark);
-        snapshotHolder.swap(snapshot);
         repository.insertAudit(ACTION_PUBLISH, null, operator,
                 "发布 #" + release.getId() + "：Java " + snapshot.metadataCatalog().javaVersions().size()
                         + " 个版本 / starter 清单 " + snapshot.starterCatalog().size()
                         + " 项 / 模板覆盖 " + snapshot.templateOverrides().size()
                         + " 个 / 冲突规则 " + snapshot.conflictCatalog().size() + " 条");
         log.info("配置已发布: releaseId={}, operator={}", release.getId(), operator);
-        return new PublishResult(release.getId(),
+        PublishResult result = new PublishResult(release.getId(),
                 snapshot.metadataCatalog().javaVersions().size(),
                 snapshot.starterCatalog().size(),
                 snapshot.templateOverrides().size(),
                 snapshot.conflictCatalog().size());
+        // 快照切换置于事务末尾：切换失败抛异常即触发回滚，不留「已发布但未生效」的中间态
+        snapshotHolder.swap(snapshot);
+        return result;
     }
 
     /**
@@ -194,7 +215,14 @@ public class ConfigService {
      * @return 回滚结果（新发布记录 ID + 快照概况）
      * @throws BusinessException 发布记录不存在（4002 语义）或目标版本校验失败（4002）
      */
+    @Transactional(noRollbackFor = BusinessException.class)
     public PublishResult rollback(long releaseId, String operator) {
+        synchronized (publishLock) {
+            return doRollback(releaseId, operator);
+        }
+    }
+
+    private PublishResult doRollback(long releaseId, String operator) {
         ConfigReleaseEntity release = repository.findRelease(releaseId);
         if (release == null) {
             throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
@@ -219,15 +247,17 @@ public class ConfigService {
                 release.getMetadataYaml(), release.getStarterYaml(), release.getTemplateYaml(),
                 release.getConflictYaml(),
                 operator, "回滚自 #" + releaseId);
-        snapshotHolder.swap(snapshot);
         repository.insertAudit(ACTION_ROLLBACK, null, operator,
                 "回滚 #" + releaseId + " → 新发布 #" + newRelease.getId());
         log.info("配置已回滚: from={}, to={}, operator={}", releaseId, newRelease.getId(), operator);
-        return new PublishResult(newRelease.getId(),
+        PublishResult result = new PublishResult(newRelease.getId(),
                 snapshot.metadataCatalog().javaVersions().size(),
                 snapshot.starterCatalog().size(),
                 snapshot.templateOverrides().size(),
                 snapshot.conflictCatalog().size());
+        // 与发布同理：切换失败触发事务回滚，避免「回滚记录已写但快照未切换」
+        snapshotHolder.swap(snapshot);
+        return result;
     }
 
     /** @return 发布历史（最新在前） */
@@ -247,6 +277,7 @@ public class ConfigService {
      */
     public record DraftView(String kind, String contentYaml, Integer version, java.time.Instant updatedAt) {
     }
+
     /**
      * 发布/回滚结果 DTO（M3.2 增加模板覆盖计数；M3 评审遗留项 5：补充冲突规则计数，
      * 管理端发布响应可直接展示生效规则规模）。

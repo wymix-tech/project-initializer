@@ -24,7 +24,6 @@ dependencies {
     implementation '${dep.groupId}:${dep.artifactId}'
 </#if>
 </#list>
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
 
 tasks.named('test') {

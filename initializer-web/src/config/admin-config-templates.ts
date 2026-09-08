@@ -64,6 +64,10 @@ bootVersions:
     label: "Spring Boot 3.2.5"      # 必填。下拉框展示文案
     official: true                  # 可选。是否官方发布版本，公司内部定制版填 false
     supportedJavaVersions: ["17", "21"] # 必填。兼容的 Java 版本 ID 列表，版本联动过滤的唯一依据
+    frameworkParent:                # 可选。该版本生成项目挂接的框架父 POM（不同 Boot 版本可不同）
+      groupId: com.yourcompany      # 必填（声明时）。Maven groupId
+      artifactId: your-framework-parent # 必填（声明时）。Maven artifactId
+      version: "1.0.0-SNAPSHOT"     # 必填（声明时）。支持 \${revision} 等 Maven 属性占位写法
     starters:                       # 必填。该 Boot 版本可选的 starter ID 列表，须在下方 starters 节登记
       - web
       - data-jpa
@@ -79,28 +83,8 @@ bootVersions:
       - actuator
       - xxx-redis-spring-boot-starter
 
-# starters：starter 元信息（展示名 + Maven 坐标映射），键为 starter 全局唯一 ID
-starters:
-  web:                              # 键即 starter ID，与 bootVersions.starters 引用对齐
-    label: "Spring Web"             # 必填。前端依赖选择区展示名
-    dependency:                     # 必填。写入生成项目构建脚本的依赖坐标
-      groupId: org.springframework.boot # 必填。Maven groupId
-      artifactId: spring-boot-starter-web # 必填。Maven artifactId
-  data-jpa:
-    label: "Spring Data JPA"
-    dependency:
-      groupId: org.springframework.boot
-      artifactId: spring-boot-starter-data-jpa
-  actuator:
-    label: "Spring Boot Actuator"
-    dependency:
-      groupId: org.springframework.boot
-      artifactId: spring-boot-starter-actuator
-  xxx-redis-spring-boot-starter:
-    label: "内部 Redis 封装 starter"
-    dependency:
-      groupId: com.company
-      artifactId: xxx-redis-spring-boot-starter
+# 说明：本配置不再维护 starters 节——展示名、依赖坐标、是否必选（required）、
+# 依赖联动（requires）全部在「starter 清单」（kind = starter）里配置，发布时自动联动合并。
 `,
   fields: [
     { path: 'javaVersions[].id', required: true, purpose: 'Java 版本标识，前端下拉框回传值，需与 bootVersions.supportedJavaVersions 元素对齐' },
@@ -111,15 +95,17 @@ starters:
     { path: 'bootVersions[].label', required: true, purpose: '下拉框展示文案，如「Spring Boot 3.2.5」' },
     { path: 'bootVersions[].official', required: false, purpose: '是否官方发布版本，公司内部定制版填 false' },
     { path: 'bootVersions[].supportedJavaVersions', required: true, purpose: '兼容的 Java 版本 ID 列表，是「选 Java 后过滤 Boot」的唯一依据' },
+    { path: 'bootVersions[].frameworkParent', required: false, purpose: '该版本生成项目挂接的框架父 POM（写入 pom.xml 的 <parent>），不同 Boot 版本可不同；也可在顶层声明一次作为全局默认，条目内未声明时继承' },
+    { path: 'bootVersions[].frameworkParent.groupId', required: false, purpose: '父 POM groupId；声明 frameworkParent 时必填' },
+    { path: 'bootVersions[].frameworkParent.artifactId', required: false, purpose: '父 POM artifactId；声明 frameworkParent 时必填' },
+    { path: 'bootVersions[].frameworkParent.version', required: false, purpose: '父 POM version，支持 ${revision} 等 Maven 属性占位写法；声明 frameworkParent 时必填' },
     { path: 'bootVersions[].starters', required: true, purpose: '该 Boot 版本可选的 starter ID 列表，每项必须在 starters 节登记，否则发布期悬空引用拒绝' },
-    { path: 'starters.<id>', required: true, purpose: '映射键即 starter 全局唯一 ID，供 bootVersions.starters 引用' },
-    { path: 'starters.<id>.label', required: true, purpose: '前端依赖选择区展示名' },
-    { path: 'starters.<id>.dependency.groupId', required: true, purpose: 'Maven groupId，写入生成项目构建脚本' },
-    { path: 'starters.<id>.dependency.artifactId', required: true, purpose: 'Maven artifactId，写入生成项目构建脚本' },
-    { path: 'starters.<id>.required', required: false, purpose: '是否必选：true 时前端默认勾选且禁止取消，生成时后端自动补齐，用户无法去掉该依赖' },
+    { path: 'bootVersions[].starters', required: false, purpose: '【保留】该 Boot 版本可引用的 starter ID 白名单；省略或为空即该版本对全部 starter 清单条目可选；列出的 ID 必须在 starter 清单中存在，否则不可见' },
   ],
   notes: [
-    'bootVersions.starters 引用的 ID 必须在同一份配置的 starters 节登记，否则发布期按悬空引用拒绝。',
+    'starter 的展示名、依赖坐标、是否必选（required）、依赖联动（requires）全部在「starter 清单」（kind = starter）里维护，本配置不再有 starters 节，发布时自动联动合并。',
+    'bootVersions.starters 保留：用于声明该 Boot 版本可引用哪些 starter；引用的 ID 必须有对应的 starter 清单条目，否则该 starter 不可见。',
+    'frameworkParent 建议声明在每个 Boot 版本条目内（不同版本可挂不同父 POM）；groupId/artifactId/version 三项任缺其一即装载失败，整节省略时回退官方 spring-boot-starter-parent。',
     '版本 ID 与 starter ID 不得重复，重复即装载失败。',
     '本配置为首发快照必需项，空白会导致发布被拒绝。',
   ],
@@ -127,15 +113,20 @@ starters:
 
 /** starter 清单（与 catalog/starters/*.yml 同构，多文档）：依赖坐标 + 选中后的联动生成规则。 */
 const STARTER_TEMPLATE: AdminConfigTemplate = {
-  summary: '登记 starter 的依赖坐标与「选中后自动生成」的联动规则；多个 starter 用 --- 分隔成多文档。',
+  summary: 'starter 的权威数据源：依赖坐标（含版本）、展示名、分类、维护方与「选中后自动生成」的联动规则；多个 starter 用 --- 分隔成多文档。发布后自动合并进元数据，无需在 metadata 里重复登记。',
   sample: `# ===== starter 清单（与 catalog/starters/*.yml 同构）=====
 # 多个 starter 以 --- 分隔为多个 YAML 文档；下方示例含「无联动」与「全联动」两种典型形态。
 
 # ---- 文档 1：官方 starter（无联动规则，仅依赖坐标）----
-id: web                             # 必填。starter 唯一 ID，与 metadata 的 starters 节键对齐
+id: web                             # 必填。starter 唯一 ID，与 metadata 的 bootVersions[].starters 引用对齐
 category: web                       # 必填。分类，用于前端分组浏览：web / data / middleware / tool
 maintainer: official                # 必填。维护方：official（Spring 官方）/ internal（公司内部）
-description: Spring MVC + 内嵌 Tomcat # 可选。一句话说明；metadata 未登记展示名时兜底作为展示名
+description: Spring MVC + 内嵌 Tomcat # 可选。一句话说明；同时作为前端展示名（推荐填写）
+required: false                     # 可选。true = 必选：前端默认勾选且禁止取消，生成时后端兜底补齐
+requires: []                        # 可选。依赖联动：选中本 starter 自动带上所列 starter（传递闭包）
+bootVersions: []                    # 可选。本条目关联的 Boot 版本（值取 metadata 的 bootVersions[].id）；
+                                    #       不写/为空 = 对全部 Boot 版本可用；同一 Boot 版本内 ID 不允许重复，
+                                    #       不同 Boot 版本允许重复（同一 id 可在不同版本声明不同坐标/版本）
 dependencies:                       # 必填。选中后写入构建脚本的依赖坐标清单
   - groupId: org.springframework.boot # 必填。Maven groupId
     artifactId: spring-boot-starter-web # 必填。Maven artifactId
@@ -165,10 +156,13 @@ linkages:                           # 联动规则：选中该 starter 后自动
       alias: redisSupport           # 必填。在模板中的引用别名
 `,
   fields: [
-    { path: 'id', required: true, purpose: 'starter 全局唯一 ID，与 metadata 的 starters 节键对齐' },
+    { path: 'id', required: true, purpose: 'starter 全局唯一 ID，与 metadata 的 bootVersions[].starters 引用对齐' },
     { path: 'category', required: true, purpose: '分类标识，前端按此分组浏览；约定取值：web / data / middleware / tool' },
     { path: 'maintainer', required: true, purpose: '维护方：official（Spring 官方）/ internal（公司内部）' },
-    { path: 'description', required: false, purpose: '一句话说明；metadata 未登记展示名时兜底作为展示名' },
+    { path: 'description', required: false, purpose: '一句话说明；同时作为前端展示名与检索关键字' },
+    { path: 'required', required: false, purpose: '是否必选（原 metadata starters 节能力，已迁移到清单）：true 时前端默认勾选且禁止取消，生成时后端兜底补齐' },
+    { path: 'requires', required: false, purpose: '依赖联动（原 metadata starters 节能力，已迁移到清单）：选中本 starter 自动带上所列 starter（传递闭包）；引用的 ID 必须在本清单登记，不得自引用或成环' },
+    { path: 'bootVersions', required: false, purpose: 'Boot 版本关联：值取 metadata 的 bootVersions[].id；不写即对全部版本可用。同一 Boot 版本内 ID 不允许重复（重复发布即拒），不同 Boot 版本允许重复（同一 id 可在不同版本声明不同坐标/版本/联动）' },
     { path: 'dependencies[].groupId', required: true, purpose: 'Maven groupId，选中后写入生成项目构建脚本' },
     { path: 'dependencies[].artifactId', required: true, purpose: 'Maven artifactId，选中后写入生成项目构建脚本' },
     { path: 'dependencies[].version', required: false, purpose: '显式版本号；缺省交由 Spring Boot BOM 统一管理（内部 starter 通常必填）' },

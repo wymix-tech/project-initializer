@@ -2,6 +2,11 @@ package com.wymix.initializer.core.metadata;
 
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
+import com.wymix.initializer.core.starter.DependencyCoord;
+import com.wymix.initializer.core.starter.LinkageSpec;
+import com.wymix.initializer.core.starter.Maintainer;
+import com.wymix.initializer.core.starter.StarterCatalog;
+import com.wymix.initializer.core.starter.StarterCatalogEntry;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +19,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * {@link MetadataCatalog} 单元测试：覆盖装载、图校验、兼容矩阵遍历、异常路径。
+ * {@link MetadataCatalog} 单元测试：覆盖装载、图校验、兼容矩阵遍历、starter 清单联动与异常路径。
+ *
+ * <p>新模型：starter 元信息（展示名/坐标/必选/依赖联动）全部由 starter 清单提供，
+ * metadata.yml 不再维护 starters 节；{@link MetadataCatalog#merge} 是唯一联动入口。
  */
 class MetadataCatalogTest {
 
@@ -45,21 +53,111 @@ class MetadataCatalogTest {
                 official: false
                 supportedJavaVersions: ["17"]
                 starters: ["web"]
-            starters:
-              web:
-                label: "Spring Web"
-                dependency:
-                  groupId: "org.springframework.boot"
-                  artifactId: "spring-boot-starter-web"
-              data-jpa:
-                label: "Spring Data JPA"
-                dependency:
-                  groupId: "org.springframework.boot"
-                  artifactId: "spring-boot-starter-data-jpa"
             """;
+
+    /** 测试用 starter 清单：与 VALID_YAML 的 boot starters 对齐（web / data-jpa）。 */
+    private static StarterCatalog testStarterCatalog() {
+        return entryCatalog(
+                entry("web", "Spring MVC + 内嵌 Tomcat", false, List.of()),
+                entry("data-jpa", "Spring Data JPA 持久层", false, List.of()));
+    }
+
+    private static StarterCatalogEntry entry(String id, String description, boolean required, List<String> requires) {
+        return new StarterCatalogEntry(id, "web", Maintainer.OFFICIAL, description,
+                List.of(new DependencyCoord("org.springframework.boot", "spring-boot-starter-" + id, null)),
+                new LinkageSpec(null, List.of(), List.of(), List.of()), required, requires);
+    }
+
+    private static StarterCatalog entryCatalog(StarterCatalogEntry... entries) {
+        return StarterCatalog.of(List.of(entries));
+    }
 
     private static MetadataCatalog catalog(String yaml) {
         return MetadataCatalog.load(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Nested
+    class MergeWithStarterCatalog {
+
+        @Test
+        void merge_suppliesStarterDefinitionsFromCatalog() {
+            MetadataCatalog merged = catalog(VALID_YAML).merge(testStarterCatalog());
+            var sd = merged.starterDefinition("web");
+            assertThat(sd.id()).isEqualTo("web");
+            assertThat(sd.label()).isEqualTo("Spring MVC + 内嵌 Tomcat");
+            assertThat(sd.dependency().groupId()).isEqualTo("org.springframework.boot");
+            assertThat(sd.dependency().artifactId()).isEqualTo("spring-boot-starter-web");
+        }
+
+        @Test
+        void merge_emptyBootStarters_meansAllCatalogEntriesAvailable() {
+            String yaml = """
+                    javaVersions:
+                      - id: "17"
+                    bootVersions:
+                      - id: "3.2.5"
+                        supportedJavaVersions: ["17"]
+                    """;
+            MetadataCatalog merged = catalog(yaml).merge(testStarterCatalog());
+            // bootVersions[].starters 省略 → 全部清单条目可选
+            assertThat(merged.starters("3.2.5")).containsExactlyInAnyOrder("web", "data-jpa");
+            assertThat(merged.starterDefinitionIds()).containsExactlyInAnyOrder("web", "data-jpa");
+        }
+
+        @Test
+        void merge_unknownStarterIdInBootList_isNotVisible() {
+            // bootVersions.starters 列出清单没有的 id：装载不报错，但查询/生成不可见
+            String yaml = """
+                    javaVersions:
+                      - id: "8"
+                    bootVersions:
+                      - id: "2.7.18"
+                        supportedJavaVersions: ["8"]
+                        starters: ["ghost"]
+                    """;
+            MetadataCatalog merged = catalog(yaml).merge(StarterCatalog.of(List.of()));
+            assertThat(merged.starters("2.7.18")).containsExactly("ghost");
+            assertThat(merged.starterDefinitionOrNull("ghost")).isNull();
+        }
+
+        @Test
+        void merge_carriesRequiredAndRequiresFromCatalog() {
+            StarterCatalog catalog = entryCatalog(
+                    entry("core", "框架核心", true, List.of()),
+                    entry("dal", "数据访问", false, List.of("core")));
+            String yaml = """
+                    javaVersions:
+                      - id: "17"
+                    bootVersions:
+                      - id: "3.2.5"
+                        supportedJavaVersions: ["17"]
+                    """;
+            MetadataCatalog merged = catalog(yaml).merge(catalog);
+            assertThat(merged.starterDefinition("core").required()).isTrue();
+            assertThat(merged.requiredStarters("3.2.5")).containsExactly("core");
+            assertThat(merged.resolveRequires("3.2.5", List.of("dal"))).containsExactly("dal", "core");
+        }
+
+        @Test
+        void merge_keepsWithAdditionalStartersCompatible() {
+            MetadataCatalog base = catalog(VALID_YAML).merge(testStarterCatalog());
+            MetadataCatalog extended = base.withAdditionalStarters(
+                    List.of(new StarterDefinition("xxx-oss", "内部 OSS",
+                            new MavenDependency("com.company", "xxx-oss"))),
+                    List.of("xxx-oss"));
+            assertThat(base.starterDefinitionIds()).doesNotContain("xxx-oss");
+            for (BootVersion bv : extended.bootVersions()) {
+                assertThat(bv.starters()).contains("xxx-oss");
+            }
+            assertThat(extended.starterDefinition("xxx-oss").dependency().groupId())
+                    .isEqualTo("com.company");
+        }
+
+        @Test
+        void startersDefinitionIds_aliasMatchesStarterDefinitionIds() {
+            MetadataCatalog c = catalog(VALID_YAML).merge(testStarterCatalog());
+            assertThat(c.startersDefinitionIds()).isEqualTo(c.starterDefinitionIds());
+        }
     }
 
     @Nested
@@ -67,7 +165,7 @@ class MetadataCatalogTest {
 
         @Test
         void withAdditionalStarters_appendsToAllBootVersionsAndDefinitions() {
-            MetadataCatalog c = catalog(VALID_YAML);
+            MetadataCatalog c = catalog(VALID_YAML).merge(testStarterCatalog());
             MetadataCatalog extended = c.withAdditionalStarters(
                     List.of(new StarterDefinition("xxx-oss", "内部 OSS",
                             new MavenDependency("com.company", "xxx-oss"))),
@@ -87,7 +185,7 @@ class MetadataCatalogTest {
 
         @Test
         void withAdditionalStarters_existingIdNotDuplicatedInBootStarters() {
-            MetadataCatalog c = catalog(VALID_YAML);
+            MetadataCatalog c = catalog(VALID_YAML).merge(testStarterCatalog());
             MetadataCatalog extended = c.withAdditionalStarters(
                     List.of(new StarterDefinition("web", "dup", new MavenDependency("g", "a"))),
                     List.of("web"));
@@ -96,107 +194,112 @@ class MetadataCatalogTest {
                 assertThat(bv.starters().stream().filter("web"::equals).count()).isEqualTo(1);
             }
         }
+    }
+
+    @Nested
+    class RequiresValidation {
+
+        /** 迁移至 StarterCatalog：requires 悬空/自引用/成环在清单装载期拒绝（9002）。 */
+        @Test
+        void requiresUnknownStarter_throwsStarterCatalogInvalid() {
+            assertThatThrownBy(() -> entryCatalog(
+                    entry("dal", "数据访问", false, List.of("nope"))))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.STARTER_CATALOG_INVALID));
+        }
 
         @Test
-        void startersDefinitionIds_aliasMatchesStarterDefinitionIds() {
-            MetadataCatalog c = catalog(VALID_YAML);
-            assertThat(c.startersDefinitionIds()).isEqualTo(c.starterDefinitionIds());
+        void requiresSelf_throwsStarterCatalogInvalid() {
+            assertThatThrownBy(() -> entryCatalog(
+                    entry("dal", "数据访问", false, List.of("dal"))))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.STARTER_CATALOG_INVALID));
+        }
+
+        @Test
+        void requiresCycle_throwsStarterCatalogInvalid() {
+            assertThatThrownBy(() -> entryCatalog(
+                    entry("a", "A", false, List.of("b")),
+                    entry("b", "B", false, List.of("a"))))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.STARTER_CATALOG_INVALID));
         }
     }
 
     @Nested
-    class Requires {
+    class BootVersionScopedStarters {
 
-        /** dal 依赖 core（一级依赖，闭包应自动带出 core）。 */
-        private static final String REQUIRES_YAML = """
-                javaVersions:
-                  - id: "17"
-                    label: "Java 17"
-                bootVersions:
-                  - id: "3.2.5"
-                    label: "Spring Boot 3.2.5"
-                    supportedJavaVersions: ["17"]
-                    starters: ["web", "core", "dal"]
-                starters:
-                  web:
-                    label: "Web"
-                    dependency:
-                      groupId: org.springframework.boot
-                      artifactId: spring-boot-starter-web
-                  core:
-                    label: "核心"
-                    dependency:
-                      groupId: com.company
-                      artifactId: core
-                  dal:
-                    label: "数据访问"
-                    requires: [core]
-                    dependency:
-                      groupId: com.company
-                      artifactId: dal
-                """;
-
-        /** a → b → a 成环，装载期必须拒绝。 */
-        private static final String CYCLE_YAML = """
-                javaVersions:
-                  - id: "17"
-                    label: "Java 17"
-                bootVersions:
-                  - id: "3.2.5"
-                    label: "Spring Boot 3.2.5"
-                    supportedJavaVersions: ["17"]
-                    starters: ["a", "b"]
-                starters:
-                  a:
-                    label: "A"
-                    requires: [b]
-                    dependency:
-                      groupId: com.company
-                      artifactId: a
-                  b:
-                    label: "B"
-                    requires: [a]
-                    dependency:
-                      groupId: com.company
-                      artifactId: b
-                """;
-
+        /** 同一 ID 在两个不同 Boot 版本各登记一份（坐标/版本不同）→ 合法。 */
         @Test
-        void resolveRequires_returnsTransitiveClosure() {
-            MetadataCatalog c = catalog(REQUIRES_YAML);
-            // dal 依赖 core：闭包自动带出 core；无依赖的 web 保持单项
-            assertThat(c.resolveRequires("3.2.5", List.of("dal"))).containsExactly("dal", "core");
-            assertThat(c.resolveRequires("3.2.5", List.of("web"))).containsExactly("web");
+        void sameIdInDifferentBootVersions_allowed() {
+            StarterCatalog catalog = StarterCatalog.of(List.of(
+                    scopedEntry("web", "3.2.5", "1.0.0"),
+                    scopedEntry("web", "4.0.0", "2.0.0")));
+            assertThat(catalog.size()).isEqualTo(1);
+            assertThat(catalog.entry("3.2.5", "web").dependencies().get(0).version()).isEqualTo("1.0.0");
+            assertThat(catalog.entry("4.0.0", "web").dependencies().get(0).version()).isEqualTo("2.0.0");
+            assertThat(catalog.contains("3.2.5", "web")).isTrue();
+            assertThat(catalog.contains("4.0.0", "web")).isTrue();
         }
 
+        /** 同一 Boot 版本内同 ID 重复 → 9002。 */
         @Test
-        void resolveRequires_ignoresStartersNotAvailableInBootVersion() {
-            MetadataCatalog c = catalog(REQUIRES_YAML);
-            // 未登记在本 Boot 版本可选清单的 id 被忽略
-            assertThat(c.resolveRequires("3.2.5", List.of("web", "unknown"))).containsExactly("web");
-        }
-
-        @Test
-        void requiresUnknownStarter_throwsInternalError() {
-            String yaml = REQUIRES_YAML.replace("requires: [core]", "requires: [nope]");
-            assertThatThrownBy(() -> catalog(yaml))
+        void duplicateIdInSameBootVersion_throws9002() {
+            assertThatThrownBy(() -> StarterCatalog.of(List.of(
+                    scopedEntry("web", "3.2.5", "1.0.0"),
+                    scopedEntry("web", "3.2.5", "1.0.1"))))
                     .isInstanceOfSatisfying(BusinessException.class,
-                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INTERNAL_ERROR));
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.STARTER_CATALOG_INVALID))
+                    .hasMessageContaining("Boot 版本 3.2.5")
+                    .hasMessageContaining("web");
         }
 
+        /** 未声明 bootVersions 的条目对全部版本可用，同一 ID 全局重复 → 9002。 */
         @Test
-        void requiresSelf_throwsInternalError() {
-            String yaml = REQUIRES_YAML.replace("requires: [core]", "requires: [dal]");
-            assertThatThrownBy(() -> catalog(yaml))
+        void duplicateGlobalEntry_throws9002() {
+            assertThatThrownBy(() -> StarterCatalog.of(List.of(
+                    scopedEntry("web", List.of(), "1.0.0"),
+                    scopedEntry("web", List.of(), "2.0.0"))))
                     .isInstanceOfSatisfying(BusinessException.class,
-                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INTERNAL_ERROR));
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.STARTER_CATALOG_INVALID))
+                    .hasMessageContaining("ID 重复");
         }
 
+        /** merge 后：声明了其他版本的条目不会出现在本版本可选清单中。 */
         @Test
-        void requiresCycle_throwsInternalError() {
-            assertThatThrownBy(() -> catalog(CYCLE_YAML))
-                    .isInstanceOfSatisfying(BusinessException.class,
-                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INTERNAL_ERROR));
+        void merge_scopedEntryOnlyAvailableInDeclaredBootVersion() {
+            String yaml = """
+                    javaVersions:
+                      - id: "17"
+                      - id: "21"
+                    bootVersions:
+                      - id: "3.2.5"
+                        supportedJavaVersions: ["17"]
+                        starters: ["web"]
+                      - id: "4.0.0"
+                        supportedJavaVersions: ["21"]
+                        starters: ["web"]
+                    """;
+            MetadataCatalog merged = catalog(yaml).merge(StarterCatalog.of(List.of(
+                    scopedEntry("web", "3.2.5", "1.0.0"),
+                    scopedEntry("web", "4.0.0", "2.0.0"))));
+            assertThat(merged.starters("3.2.5")).containsExactly("web");
+            assertThat(merged.starters("4.0.0")).containsExactly("web");
+            // 未声明版本限制的条目才对所有版本生效
+            MetadataCatalog globalOnly = catalog(yaml).merge(StarterCatalog.of(List.of(
+                    scopedEntry("web", List.of(), "1.0.0"))));
+            assertThat(globalOnly.starters("3.2.5")).containsExactly("web");
+            assertThat(globalOnly.starters("4.0.0")).containsExactly("web");
+        }
+
+        private static StarterCatalogEntry scopedEntry(String id, String bootVersion, String version) {
+            return scopedEntry(id, bootVersion == null ? List.of() : List.of(bootVersion), version);
+        }
+
+        private static StarterCatalogEntry scopedEntry(String id, List<String> bootVersions, String version) {
+            return new StarterCatalogEntry(id, "web", Maintainer.OFFICIAL, "Web 封装",
+                    List.of(new DependencyCoord("com.example", id, version)),
+                    new LinkageSpec(null, List.of(), List.of(), List.of()), false, List.of(), bootVersions);
         }
     }
 
@@ -366,34 +469,10 @@ class MetadataCatalogTest {
         }
 
         @Test
-        void starterDefinition_returnsConfiguredMetadata() {
-            var sd = catalog(VALID_YAML).starterDefinition("web");
-            assertThat(sd.id()).isEqualTo("web");
-            assertThat(sd.label()).isEqualTo("Spring Web");
-            assertThat(sd.dependency().groupId()).isEqualTo("org.springframework.boot");
-            assertThat(sd.dependency().artifactId()).isEqualTo("spring-boot-starter-web");
-        }
-
-        @Test
         void starterDefinition_unknownId_throwsMetadataNotFound() {
-            assertThatThrownBy(() -> catalog(VALID_YAML).starterDefinition("no-such"))
+            assertThatThrownBy(() -> catalog(VALID_YAML).merge(testStarterCatalog()).starterDefinition("no-such"))
                     .isInstanceOfSatisfying(BusinessException.class,
                             e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.METADATA_NOT_FOUND));
-        }
-
-        @Test
-        void load_danglingStarterReference_throwsInternalError() {
-            String yaml = """
-                    javaVersions:
-                      - id: "8"
-                    bootVersions:
-                      - id: "2.7.18"
-                        supportedJavaVersions: ["8"]
-                        starters: ["ghost"]
-                    """;
-            assertThatThrownBy(() -> catalog(yaml))
-                    .isInstanceOfSatisfying(BusinessException.class,
-                            e -> assertThat(e.getMessage()).contains("ghost"));
         }
 
         @Test

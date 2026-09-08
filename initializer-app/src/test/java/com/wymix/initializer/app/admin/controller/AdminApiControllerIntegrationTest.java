@@ -38,17 +38,23 @@ class AdminApiControllerIntegrationTest {
                 official: true
                 supportedJavaVersions: ["17"]
                 starters: ["web"]
-            starters:
-              web:
-                label: "Spring Web"
-                dependency:
-                  groupId: "org.springframework.boot"
-                  artifactId: "spring-boot-starter-web"
             """;
 
-    /** 悬空引用非法草稿（验收标准：发布被拒 + 旧快照继续服务）。 */
+    /** starter 草稿：starter 元信息（展示名/坐标）唯一来源，metadata 不再维护 starters 节。 */
+    private static final String VALID_STARTER = """
+            id: web
+            category: web
+            maintainer: official
+            description: Spring Web
+            dependencies:
+              - groupId: "org.springframework.boot"
+                artifactId: "spring-boot-starter-web"
+            linkages: {}
+            """;
+
+    /** 非法草稿：Boot 引用未定义的 Java 版本（验收标准：发布被拒 + 旧快照继续服务）。 */
     private static final String INVALID_METADATA = VALID_METADATA.replace(
-            "starters: [\"web\"]", "starters: [\"ghost\"]");
+            "supportedJavaVersions: [\"17\"]", "supportedJavaVersions: [\"ghost\"]");
 
     @Autowired
     private TestRestTemplate rest;
@@ -74,6 +80,7 @@ class AdminApiControllerIntegrationTest {
         // 发布前确保草稿为指定内容；冲突规则草稿重置为空规则（M3.5 后发布链路会消费并校验该草稿）
         putDraft("conflict-rule", "rules: []", null);
         putDraft("metadata", yaml, null);
+        putDraft("starter", VALID_STARTER, null);
         String body = "{\"operator\":\"tester\",\"remark\":\"M3.1 集成测试\"}";
         return rest.exchange("/api/admin/config/publish", HttpMethod.POST,
                 new HttpEntity<>(body, adminHeaders()), String.class);
@@ -133,7 +140,7 @@ class AdminApiControllerIntegrationTest {
         ResponseEntity<String> resp = publish(VALID_METADATA);
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         assertThat(resp.getBody()).contains("\"javaVersionCount\":1");
-        assertThat(resp.getBody()).contains("\"starterCount\":0"); // starter 草稿未保存 → 空清单
+        assertThat(resp.getBody()).contains("\"starterCount\":1"); // starter 草稿登记 web
 
         ResponseEntity<String> releases = rest.exchange("/api/admin/releases",
                 HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);

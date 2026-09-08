@@ -34,8 +34,9 @@ class GeneratorServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         try (InputStream in = getClass().getResourceAsStream("/catalog/metadata.yml")) {
-            var catalog = com.wymix.initializer.core.metadata.MetadataCatalog.load(in);
-            var starterCatalog = com.wymix.initializer.core.starter.StarterCatalog.of(java.util.List.of());
+            var starterCatalog = webStarterCatalog();
+            // starter 元信息来自清单：装载 metadata 后联动合并
+            var catalog = com.wymix.initializer.core.metadata.MetadataCatalog.load(in).merge(starterCatalog);
             ProjectGenerator generator = new ProjectGenerator(catalog,
                     new com.wymix.initializer.core.generator.TemplateRenderer(), starterCatalog);
             service = new GeneratorService(new com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder(),
@@ -48,6 +49,17 @@ class GeneratorServiceTest {
     private static GenerateRequest request() {
         return new GenerateRequest("com.example", "demo-app", "com.example.demo",
                 "17", "3.2.5", List.of("web"));
+    }
+
+    /** 测试用 starter 清单（starter 元信息唯一数据源）：官方 web。 */
+    static StarterCatalog webStarterCatalog() {
+        return StarterCatalog.of(List.of(webEntry()));
+    }
+
+    static StarterCatalogEntry webEntry() {
+        return new StarterCatalogEntry("web", "web", Maintainer.OFFICIAL, "Spring Web",
+                List.of(new DependencyCoord("org.springframework.boot", "spring-boot-starter-web", null)),
+                new LinkageSpec(null, List.of(), List.of(), List.of()));
     }
 
     @Test
@@ -63,6 +75,12 @@ class GeneratorServiceTest {
         // 验收修复（P1-2）回归：热发布仅新增/调整清单（无模板覆盖）时，生成侧同样走快照引擎，
         // 新 starter 对生成接口即时生效——原实现回退 classpath 兜底清单导致新 starter 选中即 2003
         CatalogSnapshotHolder holder = new CatalogSnapshotHolder();
+        StarterCatalog snapshotStarters = StarterCatalog.of(List.of(
+                webEntry(),
+                new StarterCatalogEntry("hot-new-internal-starter", "middleware", Maintainer.INTERNAL,
+                        "热发布新增内部 starter",
+                        List.of(new DependencyCoord("com.company", "hot-new-internal-starter", "1.2.0")),
+                        new LinkageSpec(null, List.of(), List.of(), List.of()))));
         MetadataCatalog snapshotMetadata = MetadataCatalog.load(new ByteArrayInputStream(
                 """
                 javaVersions:
@@ -74,29 +92,13 @@ class GeneratorServiceTest {
                     official: true
                     supportedJavaVersions: ["17"]
                     starters: ["web", "hot-new-internal-starter"]
-                starters:
-                  web:
-                    label: "Spring Web"
-                    dependency:
-                      groupId: org.springframework.boot
-                      artifactId: spring-boot-starter-web
-                  hot-new-internal-starter:
-                    label: "热发布新增内部 starter"
-                    dependency:
-                      groupId: com.company
-                      artifactId: hot-new-internal-starter
-                """.getBytes(StandardCharsets.UTF_8)));
-        StarterCatalog snapshotStarters = StarterCatalog.of(List.of(
-                new StarterCatalogEntry("hot-new-internal-starter", "middleware", Maintainer.INTERNAL,
-                        "热发布新增内部 starter",
-                        List.of(new DependencyCoord("com.company", "hot-new-internal-starter", "1.2.0")),
-                        new LinkageSpec(null, List.of(), List.of(), List.of()))));
+                """.getBytes(StandardCharsets.UTF_8))).merge(snapshotStarters);
         holder.seed(new CatalogSnapshot(snapshotMetadata, snapshotStarters));
 
         ProjectGenerator classpathFallback = new ProjectGenerator(
-                MetadataCatalog.load(getClass().getResourceAsStream("/catalog/metadata.yml")),
-                new com.wymix.initializer.core.generator.TemplateRenderer(),
-                StarterCatalog.of(List.of()));
+                MetadataCatalog.load(getClass().getResourceAsStream("/catalog/metadata.yml"))
+                        .merge(webStarterCatalog()),
+                new com.wymix.initializer.core.generator.TemplateRenderer(), webStarterCatalog());
         GeneratorService snapService = new GeneratorService(holder, classpathFallback, validationService());
         GenerateRequest req = new GenerateRequest("com.example", "demo-app", "com.example.demo",
                 "17", "3.2.5", List.of("web", "hot-new-internal-starter"));

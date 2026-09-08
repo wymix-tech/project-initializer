@@ -11,9 +11,9 @@ vi.mock('@/api/client', async (importOriginal) => {
   return {
     ...actual,
     api: {
-      listJavaVersions: vi.fn(),
-      listBootVersions: vi.fn(),
-      listStarters: vi.fn(),
+      listJavaVersions: vi.fn().mockResolvedValue([]),
+      listBootVersions: vi.fn().mockResolvedValue([]),
+      listStarters: vi.fn().mockResolvedValue([]),
       validate: vi.fn(),
       derivePackage: vi.fn(),
       generateProject: vi.fn(),
@@ -51,7 +51,6 @@ describe('StepMeta', () => {
     mockApi.validate.mockResolvedValue({ valid: true, errors: null })
     const wrapper = mountPage()
     const wizard = useWizardStore()
-    wizard.step = 4
     await vi.runOnlyPendingTimersAsync()
     await wizard.updateMeta('group', 'com.example')
     await wizard.updateMeta('artifact', 'demo')
@@ -105,24 +104,25 @@ describe('构建工具选择（M2.4）', () => {
 })
 
 describe('WizardForm', () => {
-  it('第四步渲染生成按钮，校验失败时禁用', async () => {
+  it('未选版本时生成按钮禁用', async () => {
     mockApi.validate.mockResolvedValue({ valid: false, errors: { group: 'group 非法' } })
     const wrapper = mountPage()
-    const wizard = useWizardStore()
-    wizard.step = 4
     await wrapper.vm.$nextTick()
     await vi.waitFor(() => {
-      expect(wizard.canNext).toBe(false)
+      const wizard = useWizardStore()
+      expect(wizard.canGenerate).toBe(false)
     })
     const btn = wrapper.findAll('button').find((b) => b.text().includes('生成并下载'))
     expect(btn?.attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
 
-  it('渲染步骤指示器与导航按钮', () => {
+  it('渲染单页布局与生成按钮', () => {
     const wrapper = mountPage()
-    expect(wrapper.find('.steps').exists()).toBe(true)
-    expect(wrapper.text()).toContain('下一步')
+    expect(wrapper.find('.wizard-grid').exists()).toBe(true)
+    expect(wrapper.text()).toContain('生成并下载')
+    expect(wrapper.text()).toContain('Java 版本')
+    expect(wrapper.text()).toContain('依赖')
     wrapper.unmount()
   })
 
@@ -130,7 +130,8 @@ describe('WizardForm', () => {
     mockApi.validate.mockResolvedValue({ valid: true, errors: null })
     const wrapper = mountPage()
     const wizard = useWizardStore()
-    wizard.step = 4
+    wizard.selectedJava = '17'
+    wizard.selectedBoot = '3.2.5'
     wizard.meta = { group: 'g', artifact: 'a', packageName: 'p', packageTouched: true, buildTool: 'maven' }
     wizard.validationErrors = {}
     wizard.submitState = 'generating'
@@ -144,7 +145,8 @@ describe('WizardForm', () => {
     mockApi.validate.mockResolvedValue({ valid: true, errors: null })
     const wrapper = mountPage()
     const wizard = useWizardStore()
-    wizard.step = 4
+    wizard.selectedJava = '17'
+    wizard.selectedBoot = '3.2.5'
     wizard.meta = { group: 'g', artifact: 'a', packageName: 'p', packageTouched: true, buildTool: 'maven' }
     wizard.validationErrors = {}
     wizard.errorMessage = '生成失败：[2001] 版本组合不兼容'

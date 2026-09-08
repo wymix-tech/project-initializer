@@ -25,22 +25,50 @@ class ProjectGeneratorTest {
     @BeforeAll
     static void setUp() {
         try (InputStream in = ProjectGeneratorTest.class.getResourceAsStream("/catalog/metadata.yml")) {
-            MetadataCatalog catalog = MetadataCatalog.load(in);
+            // starter 元信息来自清单：装载 metadata 后联动合并
+            MetadataCatalog catalog = MetadataCatalog.load(in).merge(testStarterCatalog());
             generator = new ProjectGenerator(catalog, new TemplateRenderer(), testStarterCatalog());
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
     }
 
-    /** 测试用 starter 清单：官方 web + 内部 xxx-redis（复用主资源，联动渲染断言用）。 */
+    /** 测试用 starter 清单：复用主资源全部清单（starter 元信息唯一数据源，联动渲染断言用）。 */
     private static com.wymix.initializer.core.starter.StarterCatalog testStarterCatalog() throws Exception {
         List<com.wymix.initializer.core.starter.StarterCatalogEntry> entries = new java.util.ArrayList<>();
-        for (String name : List.of("web-starter.yml", "xxx-redis-spring-boot-starter.yml")) {
+        for (String name : List.of("web-starter.yml", "data-jpa-starter.yml", "data-redis-starter.yml",
+                "actuator-starter.yml", "xxx-redis-spring-boot-starter.yml")) {
             try (InputStream in = ProjectGeneratorTest.class.getResourceAsStream("/catalog/starters/" + name)) {
                 entries.add(com.wymix.initializer.core.starter.YamlStarterParser.parse(in));
             }
         }
         return com.wymix.initializer.core.starter.StarterCatalog.of(entries);
+    }
+
+    /**
+     * 合成 starter 清单（starter 元信息唯一数据源）：web 官方、framework-core 必选、
+     * framework-dal 依赖 framework-core。
+     */
+    private static com.wymix.initializer.core.starter.StarterCatalog syntheticCatalog() {
+        return com.wymix.initializer.core.starter.StarterCatalog.of(List.of(
+                new com.wymix.initializer.core.starter.StarterCatalogEntry("web", "web",
+                        com.wymix.initializer.core.starter.Maintainer.OFFICIAL, "Spring Web",
+                        List.of(new com.wymix.initializer.core.starter.DependencyCoord(
+                                "org.springframework.boot", "spring-boot-starter-web", null)),
+                        new com.wymix.initializer.core.starter.LinkageSpec(null, List.of(), List.of(), List.of()),
+                        false, List.of()),
+                new com.wymix.initializer.core.starter.StarterCatalogEntry("framework-core", "tool",
+                        com.wymix.initializer.core.starter.Maintainer.INTERNAL, "框架核心",
+                        List.of(new com.wymix.initializer.core.starter.DependencyCoord(
+                                "com.company", "framework-core", null)),
+                        new com.wymix.initializer.core.starter.LinkageSpec(null, List.of(), List.of(), List.of()),
+                        true, List.of()),
+                new com.wymix.initializer.core.starter.StarterCatalogEntry("framework-dal", "data",
+                        com.wymix.initializer.core.starter.Maintainer.INTERNAL, "数据访问",
+                        List.of(new com.wymix.initializer.core.starter.DependencyCoord(
+                                "com.company", "framework-dal", null)),
+                        new com.wymix.initializer.core.starter.LinkageSpec(null, List.of(), List.of(), List.of()),
+                        false, List.of("framework-core"))));
     }
 
     private static GenerateRequest request(List<String> starters) {
@@ -246,7 +274,7 @@ class ProjectGeneratorTest {
                 .contains("sourceCompatibility = JavaVersion.toVersion('17')")
                 .contains("implementation 'org.springframework.boot:spring-boot-starter-web'")
                 .contains("implementation 'com.company:xxx-redis-spring-boot-starter:1.2.0'")
-                .contains("testImplementation 'org.springframework.boot:spring-boot-starter-test'")
+                .doesNotContain("testImplementation")
                 .doesNotContain("<dependency>");
     }
 
@@ -285,7 +313,7 @@ class ProjectGeneratorTest {
 
     @Test
     void requiredStartersShouldBeAutoIncluded() throws Exception {
-        // M3.6：metadata 中 required: true 的 starter，请求未携带时自动补齐（不报错）
+        // M3.6：starter 清单中 required: true 的 starter，请求未携带时自动补齐（不报错）
         String yaml = """
                 javaVersions:
                   - id: "17"
@@ -297,23 +325,11 @@ class ProjectGeneratorTest {
                     official: true
                     supportedJavaVersions: ["17"]
                     starters: ["web", "framework-core"]
-                starters:
-                  web:
-                    label: "Spring Web"
-                    dependency:
-                      groupId: org.springframework.boot
-                      artifactId: spring-boot-starter-web
-                  framework-core:
-                    label: "框架核心"
-                    required: true
-                    dependency:
-                      groupId: com.company
-                      artifactId: framework-core
                 """;
         MetadataCatalog catalog = MetadataCatalog.load(
-                new java.io.ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
-        ProjectGenerator gen = new ProjectGenerator(catalog, new TemplateRenderer(),
-                com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
+                new java.io.ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)))
+                .merge(syntheticCatalog());
+        ProjectGenerator gen = new ProjectGenerator(catalog, new TemplateRenderer(), syntheticCatalog());
         assertThat(catalog.requiredStarters("3.2.5")).containsExactly("framework-core");
 
         byte[] zip = gen.generate(new GenerateRequest("com.example", "demo-app", "com.example.demo",
@@ -336,29 +352,11 @@ class ProjectGeneratorTest {
                     official: true
                     supportedJavaVersions: ["17"]
                     starters: ["web", "framework-core", "framework-dal"]
-                starters:
-                  web:
-                    label: "Web"
-                    dependency:
-                      groupId: org.springframework.boot
-                      artifactId: spring-boot-starter-web
-                  framework-core:
-                    label: "框架核心"
-                    required: true
-                    dependency:
-                      groupId: com.company
-                      artifactId: framework-core
-                  framework-dal:
-                    label: "数据访问"
-                    requires: [framework-core]
-                    dependency:
-                      groupId: com.company
-                      artifactId: framework-dal
                 """;
         MetadataCatalog catalog = MetadataCatalog.load(
-                new java.io.ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
-        ProjectGenerator gen = new ProjectGenerator(catalog, new TemplateRenderer(),
-                com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
+                new java.io.ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)))
+                .merge(syntheticCatalog());
+        ProjectGenerator gen = new ProjectGenerator(catalog, new TemplateRenderer(), syntheticCatalog());
 
         // 只选 dal：依赖联动自动带出 core
         String pomWithDal = readEntry(gen.generate(new GenerateRequest("com.example", "demo-app",

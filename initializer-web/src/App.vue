@@ -11,25 +11,30 @@ const view = ref<'wizard' | 'admin'>('wizard')
 <template>
   <div class="app" :class="{ 'app-wide': view === 'admin' }">
     <header class="app-header">
-      <nav class="app-nav">
-        <button
-          type="button"
-          class="nav-btn"
-          :class="{ active: view === 'wizard' }"
-          @click="view = 'wizard'"
-        >
-          项目生成
-        </button>
-        <button
-          type="button"
-          class="nav-btn"
-          :class="{ active: view === 'admin' }"
-          @click="view = 'admin'"
-        >
-          管理后台
-        </button>
-      </nav>
-      <p>官方 Boot 版本 · Maven · 基础生成</p>
+      <div class="header-inner">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">项目初始化向导</span>
+        </div>
+        <nav class="app-nav">
+          <button
+            type="button"
+            class="nav-btn"
+            :class="{ active: view === 'wizard' }"
+            @click="view = 'wizard'"
+          >
+            项目生成
+          </button>
+          <button
+            type="button"
+            class="nav-btn"
+            :class="{ active: view === 'admin' }"
+            @click="view = 'admin'"
+          >
+            管理后台
+          </button>
+        </nav>
+      </div>
     </header>
     <main class="app-main">
       <WizardForm v-if="view === 'wizard'" />
@@ -41,28 +46,53 @@ const view = ref<'wizard' | 'admin'>('wizard')
 
 <style>
 :root {
-  font-family: 'Helvetica Neue', Arial, sans-serif;
-  color: #213547;
-  background: #f6f8fa;
+  font-family: -apple-system, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+  color: #1b1f23;
+  background: #fff;
 }
 * { box-sizing: border-box; margin: 0; }
-body { min-height: 100vh; }
+body { min-height: 100vh; background: #fff; }
 .app {
-  /* 向导模式按表单阅读舒适度固定 720；管理后台用 app-wide 撑满更宽视口，避免 YAML 编辑区两侧空旷 */
-  max-width: 720px;
+  max-width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.app-header {
+  background: #1b1f23;
+}
+.header-inner {
+  max-width: inherit;
   margin: 0 auto;
-  padding: 24px 16px;
+  padding: 0 16px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
-.app.app-wide {
-  max-width: min(1280px, calc(100vw - 32px));
+.brand { display: flex; align-items: center; gap: 10px; color: #fff; }
+.brand-mark {
+  width: 18px; height: 18px; border-radius: 4px; background: #6db33f;
+  display: inline-block;
 }
-.app-header h1 { font-size: 24px; margin-bottom: 4px; }
-.app-header p { color: #57606a; font-size: 14px; }
-.app-main { margin-top: 24px; }
-.app-nav { display: flex; gap: 8px; margin-bottom: 8px; }
+.brand-name { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
+.app-nav { display: flex; gap: 4px; }
 .nav-btn {
-  padding: 6px 14px; border-radius: 6px; border: 1px solid #d0d7de;
-  background: #f6f8fa; cursor: pointer; font-size: 14px;
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  font-size: 14px;
 }
-.nav-btn.active { background: #0969da; border-color: #0969da; color: #fff; }
+.nav-btn:hover { color: #fff; }
+.nav-btn.active { color: #6db33f; border-bottom-color: #6db33f; font-weight: 600; }
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 32px 16px 24px;
+}
+.app-main > * { flex: 1; }
 </style>

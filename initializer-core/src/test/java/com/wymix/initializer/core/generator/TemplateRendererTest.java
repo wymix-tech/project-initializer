@@ -28,6 +28,10 @@ class TemplateRendererTest {
         model.put(TemplateRenderer.K_GROUP, "com.example");
         model.put(TemplateRenderer.K_BOOT_VERSION, "3.2.5");
         model.put(TemplateRenderer.K_JAVA_VERSION, "17");
+        // pom.xml.ftl 顶部的 <parent> 为必填模型项（由 ProjectGenerator 按 Boot 版本注入）
+        model.put("parentGroupId", "org.springframework.boot");
+        model.put("parentArtifactId", "spring-boot-starter-parent");
+        model.put("parentVersion", "3.2.5");
         model.put(TemplateRenderer.K_STARTERS, List.of("web"));
         return model;
     }

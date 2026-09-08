@@ -30,33 +30,7 @@ class StarterQueryEngineTest {
                 label: "Spring Boot 3.2.5"
                 official: true
                 supportedJavaVersions: ["17"]
-                starters: ["web", "data-jpa", "data-redis", "actuator", "xxx-redis-spring-boot-starter"]
-            starters:
-              web:
-                label: "Spring Web"
-                dependency:
-                  groupId: org.springframework.boot
-                  artifactId: spring-boot-starter-web
-              data-jpa:
-                label: "Spring Data JPA"
-                dependency:
-                  groupId: org.springframework.boot
-                  artifactId: spring-boot-starter-data-jpa
-              data-redis:
-                label: "Spring Data Redis"
-                dependency:
-                  groupId: org.springframework.boot
-                  artifactId: spring-boot-starter-data-redis
-              actuator:
-                label: "Spring Boot Actuator"
-                dependency:
-                  groupId: org.springframework.boot
-                  artifactId: spring-boot-starter-actuator
-              xxx-redis-spring-boot-starter:
-                label: "内部 Redis 封装 starter"
-                dependency:
-                  groupId: com.company
-                  artifactId: xxx-redis-spring-boot-starter
+            # starters 节已移除：starter 元信息全部由 starter 清单提供，经 merge 联动
             """;
 
     private MetadataCatalog catalog;
@@ -65,16 +39,18 @@ class StarterQueryEngineTest {
 
     @BeforeEach
     void setUp() {
-        catalog = MetadataCatalog.load(
-                new java.io.ByteArrayInputStream(METADATA_YAML.getBytes(StandardCharsets.UTF_8)));
-        // 合成 starter 清单：覆盖 web/data/middleware/tool 四个分类
+        // 合成 starter 清单：覆盖 web/data/middleware/tool 四个分类（starter 元信息唯一数据源）
         starterCatalog = StarterCatalog.of(List.of(
                 entry("web", "web", Maintainer.OFFICIAL, "Spring MVC + 内嵌 Tomcat"),
                 entry("data-jpa", "data", Maintainer.OFFICIAL, "Spring Data JPA 持久层"),
                 entry("data-redis", "data", Maintainer.OFFICIAL, "Spring Data Redis 缓存"),
                 entry("xxx-redis-spring-boot-starter", "middleware", Maintainer.INTERNAL,
                         "内部 Redis 封装 starter"),
-                entry("actuator", "tool", Maintainer.OFFICIAL, "生产可观测端点")));
+                entry("actuator", "tool", Maintainer.OFFICIAL, "Spring Boot Actuator")));
+        // bootVersions[].starters 省略 → merge 后对全部清单条目可选
+        catalog = MetadataCatalog.load(
+                new java.io.ByteArrayInputStream(METADATA_YAML.getBytes(StandardCharsets.UTF_8)))
+                .merge(starterCatalog);
         engine = new StarterQueryEngine();
     }
 
@@ -90,7 +66,7 @@ class StarterQueryEngineTest {
         List<StarterQueryEngine.StarterSearchItem> items =
                 engine.search(catalog, starterCatalog, "3.2.5", null, null);
         assertThat(items).extracting(StarterQueryEngine.StarterSearchItem::id)
-                .containsExactly("web", "data-jpa", "data-redis", "actuator",
+                .containsExactlyInAnyOrder("web", "data-jpa", "data-redis", "actuator",
                         "xxx-redis-spring-boot-starter");
     }
 
@@ -156,14 +132,14 @@ class StarterQueryEngineTest {
         StarterQueryEngine.StarterSearchItem item =
                 engine.search(catalog, starterCatalog, "3.2.5", "actuator", null).get(0);
         assertThat(item.category()).isEqualTo("tool");
-        assertThat(item.description()).isEqualTo("生产可观测端点");
+        assertThat(item.description()).isEqualTo("Spring Boot Actuator");
+        // 展示名取自清单 description（metadata 不再维护 starters 节）
         assertThat(item.label()).isEqualTo("Spring Boot Actuator");
     }
 
     @Test
-    void unregisteredEntry_defaultsOfficialWithNullCategory() {
-        // starter 仅在 metadata 登记而清单未登记：官方兜底 + 分类为 null；
-        // 分类过滤时被排除（无分类信息），关键字过滤仍可用
+    void starterWithoutCatalogDefinition_notVisible() {
+        // starter 元信息以清单为唯一来源：bootVersions.starters 列出但清单未登记的 id 查询时不可见
         MetadataCatalog minimal = MetadataCatalog.load(new java.io.ByteArrayInputStream(
                 """
                 javaVersions:
@@ -172,21 +148,9 @@ class StarterQueryEngineTest {
                   - id: "3.2.5"
                     supportedJavaVersions: ["17"]
                     starters: ["bare-starter"]
-                starters:
-                  bare-starter:
-                    label: "Bare Starter"
-                    dependency:
-                      groupId: org.springframework.boot
-                      artifactId: bare-starter
                 """.getBytes(StandardCharsets.UTF_8)));
-        List<StarterQueryEngine.StarterSearchItem> items =
-                engine.search(minimal, StarterCatalog.of(List.of()), "3.2.5", "bare", null);
-        assertThat(items).hasSize(1);
-        assertThat(items.get(0).maintainer()).isEqualTo(Maintainer.OFFICIAL);
-        assertThat(items.get(0).category()).isNull();
-        // 分类过滤：未登记条目无分类信息，被排除
-        assertThat(engine.search(minimal, StarterCatalog.of(List.of()), "3.2.5", null, "web"))
-                .isEmpty();
+        assertThat(engine.search(minimal, StarterCatalog.of(List.of()), "3.2.5", null, null)).isEmpty();
+        assertThat(engine.search(minimal, StarterCatalog.of(List.of()), "3.2.5", "bare", null)).isEmpty();
     }
 
     @Test

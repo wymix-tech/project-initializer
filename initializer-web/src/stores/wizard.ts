@@ -79,6 +79,20 @@ export const useWizardStore = defineStore('wizard', {
     },
 
     /**
+     * 单页布局下生成按钮可用条件：版本已选 + 元信息完整且校验通过。
+     */
+    canGenerate(state): boolean {
+      return (
+        state.selectedJava !== '' &&
+        state.selectedBoot !== '' &&
+        state.meta.group !== '' &&
+        state.meta.artifact !== '' &&
+        state.meta.packageName !== '' &&
+        Object.keys(state.validationErrors).length === 0
+      )
+    },
+
+    /**
      * M3.5：已选 starter 组合触发的冲突清单（本地即时计算，软提示）。
      */
     triggeredConflicts(state): TriggeredConflict[] {

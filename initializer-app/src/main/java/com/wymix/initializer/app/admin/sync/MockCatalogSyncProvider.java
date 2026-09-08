@@ -2,6 +2,7 @@ package com.wymix.initializer.app.admin.sync;
 
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
+import com.wymix.initializer.app.admin.refresh.CatalogRefresher;
 import com.wymix.initializer.core.sync.CatalogSyncProvider;
 import com.wymix.initializer.core.sync.SyncedStarter;
 import com.wymix.initializer.core.sync.SyncResult;
@@ -122,23 +123,16 @@ public class MockCatalogSyncProvider implements CatalogSyncProvider {
         return value == null ? null : value.toString();
     }
 
-    /** 按 YAML 文档分隔符（行首 --- ）切分多文档。 */
+    /**
+     * 按 YAML 文档分隔符切分多文档。
+     *
+     * <p>统一委托 {@link CatalogRefresher#splitDocuments(String)}：切分规则只保留一份实现，
+     * 避免两处实现漂移（曾出现两处逻辑重复且均按 trim 后比较，会误切块标量内的 --- 行）。
+     *
+     * @param yaml 配置全文（多文档，可空）
+     * @return 非空文档清单
+     */
     static List<String> splitDocuments(String yaml) {
-        List<String> documents = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        for (String line : yaml.split("\n", -1)) {
-            if (line.trim().equals("---")) {
-                if (!current.toString().isBlank()) {
-                    documents.add(current.toString());
-                }
-                current.setLength(0);
-            } else {
-                current.append(line).append('\n');
-            }
-        }
-        if (!current.toString().isBlank()) {
-            documents.add(current.toString());
-        }
-        return documents;
+        return CatalogRefresher.splitDocuments(yaml);
     }
 }

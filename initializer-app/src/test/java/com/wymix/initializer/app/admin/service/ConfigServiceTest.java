@@ -38,13 +38,30 @@ class ConfigServiceTest {
                 official: true
                 supportedJavaVersions: ["17"]
                 starters: ["web"]
-            starters:
-              web:
-                label: "Spring Web"
-                dependency:
-                  groupId: "org.springframework.boot"
-                  artifactId: "spring-boot-starter-web"
             """;
+
+    /**
+     * 测试用 starter 草稿：starter 元信息（展示名/坐标/必选/联动）唯一来源，
+     * metadata 草稿不再维护 starters 节。
+     */
+    private static final String STARTER_YAML = """
+            id: web
+            category: web
+            maintainer: official
+            description: Spring Web
+            dependencies:
+              - groupId: "org.springframework.boot"
+                artifactId: "spring-boot-starter-web"
+            linkages: {}
+            """;
+
+    /** 保存「metadata + starter」基准草稿（starter 元信息来自清单）。 */
+    private void saveValidDrafts() {
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
+                METADATA_YAML, null, "tester");
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.STARTER,
+                STARTER_YAML, null, "tester");
+    }
 
     @Autowired
     private ConfigService configService;
@@ -73,8 +90,7 @@ class ConfigServiceTest {
 
     @Test
     void saveDraft_thenGet_returnsContentWithBumpedVersion() {
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
-                METADATA_YAML, null, "tester");
+        saveValidDrafts();
         DraftView view = configService.getDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA);
         assertThat(view.contentYaml()).isEqualTo(METADATA_YAML);
         assertThat(view.version()).isNotNull();
@@ -101,8 +117,7 @@ class ConfigServiceTest {
 
     @Test
     void publish_withValidDrafts_swapsSnapshot_andWritesReleaseAndAudit() {
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
-                METADATA_YAML, null, "tester");
+        saveValidDrafts();
         PublishResult result = configService.publish("tester", "M3.1 首发测试");
 
         assertThat(result.releaseId()).isPositive();
@@ -123,8 +138,7 @@ class ConfigServiceTest {
 
     @Test
     void publish_withTemplateDraft_templateOverridesHotSwap() {
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
-                METADATA_YAML, null, "tester");
+        saveValidDrafts();
         configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE,
                 "name: README.md.ftl\ncontent: |\n  # 自定义产物说明\n", null, "tester");
         PublishResult result = configService.publish("tester", "模板覆盖发布");
@@ -136,8 +150,7 @@ class ConfigServiceTest {
 
     @Test
     void publish_withBadTemplateDraft_throws4002_andKeepsOldSnapshot() {
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
-                METADATA_YAML, null, "tester");
+        saveValidDrafts();
         configService.publish("tester", "基准快照");
         CatalogSnapshot old = snapshotHolder.current();
 
@@ -153,8 +166,7 @@ class ConfigServiceTest {
     @Test
     void rollback_toRelease_rebuildsSnapshotAtomically() {
         // 第一版：仅 metadata
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
-                METADATA_YAML, null, "tester");
+        saveValidDrafts();
         long v1 = configService.publish("tester", "v1").releaseId();
 
         // 第二版：加模板覆盖
@@ -179,8 +191,10 @@ class ConfigServiceTest {
 
     @Test
     void rollback_unknownRelease_throws4002_andKeepsSnapshot() {
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
-                METADATA_YAML, null, "tester");
+        saveValidDrafts();
+        // 共享 H2 库：重置冲突规则草稿，避免其他用例遗留的规则引用干扰发布校验
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.CONFLICT_RULE,
+                "rules: []", null, "tester");
         configService.publish("tester", "基准");
         CatalogSnapshot old = snapshotHolder.current();
 
@@ -197,15 +211,15 @@ class ConfigServiceTest {
     @Test
     void rollback_invalidHistory_throws4002_andKeepsCurrentSnapshot(@Autowired org.springframework.context.ApplicationContext ctx) {
         // v1 合法发布 → 直接篡改历史记录全文（模拟历史版本因装载规则演进失效）
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
-                METADATA_YAML, null, "tester");
+        saveValidDrafts();
         long v1 = configService.publish("tester", "v1").releaseId();
         CatalogSnapshot current = snapshotHolder.current();
 
-        // 注入悬空引用非法全文到历史记录（绕过草稿通道，模拟历史损坏）
+        // 注入非法全文到历史记录（绕过草稿通道，模拟历史损坏）：Boot 引用未定义的 Java 版本
         var mapper = ctx.getBean(com.wymix.initializer.app.admin.mapper.ConfigReleaseMapper.class);
         var release = mapper.selectById(v1);
-        release.setMetadataYaml(METADATA_YAML.replace("starters: [\"web\"]", "starters: [\"ghost\"]"));
+        release.setMetadataYaml(METADATA_YAML.replace("supportedJavaVersions: [\"17\"]",
+                "supportedJavaVersions: [\"ghost\"]"));
         mapper.updateById(release);
 
         assertThatThrownBy(() -> configService.rollback(v1, "tester"))
@@ -222,13 +236,13 @@ class ConfigServiceTest {
     @Test
     void publish_withInvalidDraft_throws4002_andKeepsOldSnapshotServing() {
         // 前置：先成功发布一次，拿到旧快照
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
-                METADATA_YAML, null, "tester");
+        saveValidDrafts();
         configService.publish("tester", "旧快照基准");
         CatalogSnapshot old = snapshotHolder.current();
 
-        // 写入悬空引用的非法草稿（旧版本号已知，直接走无 If-Match 覆盖路径）
-        String invalid = METADATA_YAML.replace("starters: [\"web\"]", "starters: [\"ghost\"]");
+        // 写入非法草稿（Boot 引用未定义的 Java 版本；旧版本号已知，直接走无 If-Match 覆盖路径）
+        String invalid = METADATA_YAML.replace("supportedJavaVersions: [\"17\"]",
+                "supportedJavaVersions: [\"ghost\"]");
         configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
                 invalid, null, "tester");
 
@@ -246,11 +260,10 @@ class ConfigServiceTest {
 
     @Test
     void publish_withConflictRuleDraft_resultReportsRuleCount() {
-        // METADATA_YAML 仅登记 web；冲突规则引用 web + web2，需一并登记 starter 草稿
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
-                METADATA_YAML, null, "tester");
+        // starter 草稿登记 web（基准）+ web2；冲突规则引用二者
+        saveValidDrafts();
         configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.STARTER,
-                """
+                STARTER_YAML + "\n---\n" + """
                 id: web2
                 category: web
                 maintainer: official

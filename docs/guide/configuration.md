@@ -6,10 +6,35 @@
 
 | 配置 | 位置 | 作用 |
 |---|---|---|
-| `metadata.yml` | `initializer-core/src/main/resources/catalog/` | Java / Boot 版本、兼容矩阵、starter 坐标映射 |
-| `starters/*.yml` | `catalog/starters/` | 单 starter 描述：坐标 + 联动规则 |
+| `metadata.yml` | `initializer-core/src/main/resources/catalog/` | Java / Boot 版本、兼容矩阵、starter 选择约束（可选） |
+| `starters/*.yml` | `catalog/starters/` | 单 starter 描述：**坐标 + 展示名的唯一数据源** + 联动规则 |
 | `validation.yml` | `catalog/` | Group / Artifact / Package 命名校验规则 |
 | 管理后台草稿 | 数据库（H2 文件，可换 JDBC 数据源） | 在线编辑以上配置，发布后热生效 |
+
+> **部署推荐**：清单配置文件不必放在 classpath 内。把上述 yml 放到**外部清单目录**即可生效
+> （配置项 `initializer.catalog.dir`，未配置时默认取 **jar 所在目录下的 `catalog/`**），
+> 详见 [0. 外部清单目录](#0-外部清单目录推荐部署方式)。
+
+---
+
+## 0. 外部清单目录（推荐部署方式）
+
+启动时从 jar 外的目录装载清单，改完重启即生效，无需重新打包、无需在管理后台发布。
+
+```
+catalog/                              # 目录位置：initializer.catalog.dir，默认 <jar 所在目录>/catalog
+├── metadata.yml                      # 版本 + 兼容矩阵 + starter 坐标（可选）
+├── validation.yml                    # 命名校验规则（可选）
+├── conflict-rules.yml                # 依赖冲突规则（可选）
+├── starters/*.yml                    # starter 清单（可选；可递归子目录，单文件支持多文档）
+└── templates/**                      # 模板覆盖（可选；键为相对 templates/ 的路径，未覆盖走内置模板）
+```
+
+- **目录定位**：`initializer.catalog.dir=<绝对路径/相对路径/~/路径>`；留空时用 jar 所在目录下的 `catalog/`。
+- **装载口径**：格式正确即生效，**不做与内置 `metadata.yml` 的一致性校验**；`starters/` 里的条目
+  不必在 `metadata.yml` 的 `starters` 节登记（自动补位为全部 Boot 版本可选）。
+- **容错**：单个文件格式非法只跳过该文件并打印告警日志，不阻断启动；目录不存在则回退内置清单 / 管理端发布配置。
+- **优先级**：外部清单目录 >（`--demo`）classpath 内置清单 > 数据库最新已发布快照。
 
 ---
 
@@ -56,22 +81,72 @@ bootVersions:
     official: true      # false = 公司定制版
     supportedJavaVersions: ["17", "21"]   # 兼容矩阵：决定联动过滤
     starters: ["web", "xxx-redis-spring-boot-starter"]  # 该 Boot 版本可选的 starter
+    frameworkParent:    # 可选。该版本生成项目挂接的框架父 POM（不同 Boot 版本可不同）
+      groupId: com.yourcompany
+      artifactId: your-framework-parent
+      version: "1.0.0-SNAPSHOT"   # 支持 ${revision} 等 Maven 属性占位写法
 ```
 
 **联动规则**：选择 Java 8 → 仅显示 `supportedJavaVersions` 包含 `"8"` 的 Boot 版本；选定 Boot 版本 → 仅显示其 `starters` 列表中的 starter。
 
-### 2.3 starters（坐标映射）
+**框架父 POM（`frameworkParent`，可选）**：写入生成项目 `pom.xml` 的 `<parent>`。
+声明位置为每个 `bootVersions[]` 条目内（不同 Boot 版本可挂不同父 POM）；也可在 metadata.yml 顶层声明一次作为全局默认，条目内未声明时继承。
+三项（groupId/artifactId/version）任缺其一即装载失败；整节省略时回退官方 `org.springframework.boot:spring-boot-starter-parent:<bootVersion>`。
+
+### 2.3 starters 节已移除（必选/联动迁至 starter 清单）
+
+`metadata.yml` **不再维护 `starters` 节**。starter 的展示名、依赖坐标、**是否必选（`required`）**
+与**依赖联动（`requires`）**全部在 `catalog/starters/*.yml` 里声明（见第 3 节）：
+平台在装载/发布时通过 `MetadataCatalog.merge(StarterCatalog)` 自动联动合并，
+`bootVersions[].starters` 省略或为空时该版本对**全部清单条目**可选。
 
 ```yaml
-starters:
-  web:
-    label: "Spring Web"
-    dependency:
-      groupId: org.springframework.boot
-      artifactId: spring-boot-starter-web
+# catalog/starters/framework-core.yml
+id: framework-core
+category: tool
+maintainer: internal
+description: 框架核心（必选）
+required: true            # 必选：前端默认勾选且禁止取消，生成时后端兜底补齐
+requires: []              # 依赖联动：选中本项自动带上所列 starter（传递闭包）
+dependencies:
+  - groupId: com.company
+    artifactId: framework-core
+    version: "1.0.0"
+linkages: {}
 ```
 
-- 声明了 `version` 的依赖会显式输出到生成项目的 pom/gradle（适用于不在 Boot BOM 管理范围的内部 starter，版本来源优先取 starter yml，见第 3 节）。
+- `required` / `requires` 的悬空引用、自引用、成环由 **starter 清单装载期**校验（9002）。
+- `bootVersions[].starters` 保留，用于声明「该 Boot 版本可引用哪些 starter」；列出的 id 必须在清单中存在，否则不可见。
+- **Boot 版本关联（`bootVersions` 字段）**：清单条目可声明自己属于哪些 Boot 版本（值取 metadata 的 `bootVersions[].id`），
+  不声明即对全部版本可用。**同一 Boot 版本内 starter ID 不允许重复（重复即 9002），不同 Boot 版本之间允许重复**——
+  多 Boot 线（如 2.x / 3.x）共用同一个 id 时，写成多条文档各自声明 `bootVersions`，平台按用户选中的 Boot 版本取对应条目
+  （依赖坐标、version、联动规则一并生效）：
+
+```yaml
+# catalog/starters/xxx-redis-spring-boot-starter.yml（多文档）
+id: xxx-redis-spring-boot-starter
+bootVersions: ["2.7.18"]        # 本条只在 2.x 生效
+category: middleware
+maintainer: internal
+description: 内部 Redis 封装 starter（2.x 线）
+dependencies:
+  - groupId: com.company
+    artifactId: xxx-redis-spring-boot-starter
+    version: "1.1.0"
+linkages: {}
+---
+id: xxx-redis-spring-boot-starter
+bootVersions: ["3.2.5"]         # 同名 id 在 3.x 线另一份坐标
+category: middleware
+maintainer: internal
+description: 内部 Redis 封装 starter（3.x 线）
+dependencies:
+  - groupId: com.company
+    artifactId: xxx-redis-spring-boot-starter
+    version: "2.0.0"
+linkages: {}
+```
+- 声明了 `version` 的依赖会显式输出到生成项目的 pom/gradle（内部 starter 不在 Boot BOM 管理范围时必填）。
 - 官方 starter 无需 `version`（由 Boot parent BOM 管理）。
 
 **新增一个 Boot 版本只需**：在 `bootVersions` 追加一项，填好兼容矩阵与 starter 列表。

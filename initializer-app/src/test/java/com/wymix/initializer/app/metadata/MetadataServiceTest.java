@@ -2,17 +2,28 @@ package com.wymix.initializer.app.metadata;
 
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
+import com.wymix.initializer.core.metadata.MetadataCatalog;
+import com.wymix.initializer.core.starter.DependencyCoord;
+import com.wymix.initializer.core.starter.LinkageSpec;
+import com.wymix.initializer.core.starter.Maintainer;
+import com.wymix.initializer.core.starter.StarterCatalog;
+import com.wymix.initializer.core.starter.StarterCatalogEntry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * {@link MetadataService} 单元测试：基于 classpath 真实 metadata.yml。
+ * {@link MetadataService} 单元测试：基于 classpath 真实 metadata.yml + 测试 starter 清单。
+ *
+ * <p>starter 元信息（展示名/坐标/必选/联动）全部由 starter 清单提供，服务层读取的是
+ * 「metadata 与清单联动合并后」的目录。
  */
 class MetadataServiceTest {
 
@@ -21,11 +32,27 @@ class MetadataServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         try (InputStream in = getClass().getClassLoader().getResourceAsStream("catalog/metadata.yml")) {
+            StarterCatalog starterCatalog = testStarterCatalog();
+            MetadataCatalog catalog = MetadataCatalog.load(in).merge(starterCatalog);
             service = new MetadataService(
                     new com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder(),
-                    com.wymix.initializer.core.metadata.MetadataCatalog.load(in),
-                    com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
+                    catalog, starterCatalog);
         }
+    }
+
+    /** 测试用 starter 清单（与内置 metadata 的 boot starters 对齐）。 */
+    private static StarterCatalog testStarterCatalog() {
+        return StarterCatalog.of(List.of(
+                entry("web", "web", "Spring MVC + 内嵌 Tomcat"),
+                entry("data-jpa", "data", "Spring Data JPA 持久层"),
+                entry("data-redis", "data", "Spring Data Redis 缓存"),
+                entry("actuator", "tool", "Spring Boot Actuator 生产可观测端点")));
+    }
+
+    private static StarterCatalogEntry entry(String id, String category, String description) {
+        return new StarterCatalogEntry(id, category, Maintainer.OFFICIAL, description,
+                List.of(new DependencyCoord("org.springframework.boot", "spring-boot-starter-" + id, null)),
+                new LinkageSpec(null, List.of(), List.of(), List.of()));
     }
 
     @Test
@@ -86,9 +113,9 @@ class MetadataServiceTest {
                 """;
         MetadataService svc = new MetadataService(
                 new com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder(),
-                com.wymix.initializer.core.metadata.MetadataCatalog.load(
-                        new java.io.ByteArrayInputStream(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))),
-                com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
+                MetadataCatalog.load(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)))
+                        .merge(StarterCatalog.of(List.of())),
+                StarterCatalog.of(List.of()));
         assertThatThrownBy(() -> svc.listCompatibleBootVersions("25"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INCOMPATIBLE_VERSION));
@@ -96,16 +123,17 @@ class MetadataServiceTest {
 
     @Test
     void listStarters_withKeyword_filtersByIdOrLabel() {
-        // 测试 classpath 无 starter 清单 yml：data-redis 命中 ID，官方兜底
         assertThat(service.listStarters("3.2.5", "REDIS", null))
                 .extracting(MetadataService.StarterDto::id)
                 .containsExactly("data-redis");
     }
 
     @Test
-    void listStarters_withCategory_noRegisteredEntries_returnsEmpty() {
-        // 分类信息来自 starter 清单（本测试 classpath 未提供清单 yml）→ 无条目可命中
-        assertThat(service.listStarters("3.2.5", null, "web")).isEmpty();
+    void listStarters_withCategory_filtersByCatalogCategory() {
+        // 分类来自 starter 清单
+        assertThat(service.listStarters("3.2.5", null, "data"))
+                .extracting(MetadataService.StarterDto::id)
+                .containsExactlyInAnyOrder("data-jpa", "data-redis");
     }
 
     @Test
@@ -114,12 +142,12 @@ class MetadataServiceTest {
     }
 
     @Test
-    void listStarters_noFilters_unregisteredStarterDefaultsOfficial() {
+    void listStarters_noFilters_returnsAllCatalogStarters() {
         List<MetadataService.StarterDto> result = service.listStarters("3.2.5");
         assertThat(result).hasSize(4);
         assertThat(result).allSatisfy(s -> {
             assertThat(s.maintainer()).isEqualTo("official");
-            assertThat(s.category()).isNull();
+            assertThat(s.category()).isNotNull();
         });
         // 向后兼容入口（两参重载）行为一致
         assertThat(service.listStarters("3.2.5")).usingRecursiveFieldByFieldElementComparator()
@@ -133,8 +161,7 @@ class MetadataServiceTest {
                 new com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder();
         holder.seed(new com.wymix.initializer.app.admin.refresh.CatalogSnapshot(
                 snapshotMetadata(), snapshotStarters()));
-        MetadataService svc = new MetadataService(holder, snapshotMetadata(),
-                com.wymix.initializer.core.starter.StarterCatalog.of(List.of()));
+        MetadataService svc = new MetadataService(holder, snapshotMetadata(), snapshotStarters());
         assertThat(svc.listStarters("3.2.5", null, "middleware"))
                 .extracting(MetadataService.StarterDto::id)
                 .containsExactly("xxx-redis-spring-boot-starter");
@@ -145,65 +172,54 @@ class MetadataServiceTest {
         assertThat(svc.listStarters("3.2.5", "内部 Redis 封装", null)).hasSize(1);
         // 基线版本透出（验收一般项①）：清单声明了 version 的 starter 透出，未声明的为 null
         assertThat(svc.listStarters("3.2.5", "xxx-redis", null).get(0).version()).isEqualTo("1.2.0");
-        assertThat(svc.listStarters("3.2.5", "spring web", null).get(0).version()).isNull();
+        assertThat(svc.listStarters("3.2.5", "spring mvc", null).get(0).version()).isNull();
     }
 
-    /** 快照用元数据目录（含 xxx-redis 展示名）。 */
+    /** 快照用元数据目录：starter 元信息来自清单，经 merge 联动。 */
     private com.wymix.initializer.core.metadata.MetadataCatalog snapshotMetadata() {
-        StringBuilder yaml = new StringBuilder()
-                .append("javaVersions:\n")
-                .append("  - id: \"17\"\n")
-                .append("    label: \"Java 17\"\n")
-                .append("    deprecated: false\n")
-                .append("    recommendedBootVersion: \"3.2.5\"\n")
-                .append("bootVersions:\n")
-                .append("  - id: \"3.2.5\"\n")
-                .append("    label: \"Spring Boot 3.2.5\"\n")
-                .append("    official: true\n")
-                .append("    supportedJavaVersions: [\"17\"]\n")
-                .append("    starters: [\"web\", \"xxx-redis-spring-boot-starter\"]\n")
-                .append("starters:\n")
-                .append("  web:\n")
-                .append("    label: \"Spring Web\"\n")
-                .append("    dependency:\n")
-                .append("      groupId: org.springframework.boot\n")
-                .append("      artifactId: spring-boot-starter-web\n")
-                .append("  xxx-redis-spring-boot-starter:\n")
-                .append("    label: \"内部 Redis 封装 starter\"\n")
-                .append("    dependency:\n")
-                .append("      groupId: com.company\n")
-                .append("      artifactId: xxx-redis-spring-boot-starter\n");
-        return com.wymix.initializer.core.metadata.MetadataCatalog.load(
-                new java.io.ByteArrayInputStream(yaml.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        String yaml = """
+                javaVersions:
+                  - id: "17"
+                    label: "Java 17"
+                    deprecated: false
+                    recommendedBootVersion: "3.2.5"
+                bootVersions:
+                  - id: "3.2.5"
+                    label: "Spring Boot 3.2.5"
+                    official: true
+                    supportedJavaVersions: ["17"]
+                """;
+        return MetadataCatalog.load(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)))
+                .merge(snapshotStarters());
     }
 
     /** 快照用 starter 清单（web/middleware 分类 + internal 维护方）。 */
-    private com.wymix.initializer.core.starter.StarterCatalog snapshotStarters() {
-        return com.wymix.initializer.core.starter.StarterCatalog.of(List.of(
-                new com.wymix.initializer.core.starter.StarterCatalogEntry("web", "web",
-                        com.wymix.initializer.core.starter.Maintainer.OFFICIAL, "Spring MVC + 内嵌 Tomcat",
-                        List.of(new com.wymix.initializer.core.starter.DependencyCoord(
+    private StarterCatalog snapshotStarters() {
+        return StarterCatalog.of(List.of(
+                new StarterCatalogEntry("web", "web",
+                        Maintainer.OFFICIAL, "Spring MVC + 内嵌 Tomcat",
+                        List.of(new DependencyCoord(
                                 "org.springframework.boot", "spring-boot-starter-web", null)),
-                        new com.wymix.initializer.core.starter.LinkageSpec(null, List.of(), List.of(), List.of())),
-                new com.wymix.initializer.core.starter.StarterCatalogEntry("xxx-redis-spring-boot-starter",
+                        new LinkageSpec(null, List.of(), List.of(), List.of())),
+                new StarterCatalogEntry("xxx-redis-spring-boot-starter",
                         "middleware",
-                        com.wymix.initializer.core.starter.Maintainer.INTERNAL, "内部 Redis 封装 starter",
-                        List.of(new com.wymix.initializer.core.starter.DependencyCoord(
+                        Maintainer.INTERNAL, "内部 Redis 封装 starter",
+                        List.of(new DependencyCoord(
                                 "com.company", "xxx-redis-spring-boot-starter", "1.2.0")),
-                        new com.wymix.initializer.core.starter.LinkageSpec(null, List.of(), List.of(), List.of()))));
+                        new LinkageSpec(null, List.of(), List.of(), List.of()))));
     }
 
     @Test
-    void starterLabel_comesFromConfiguredStartersSection() {
-        // 展示名来自 metadata.yml starters 节（配置驱动），而非代码硬编码
+    void starterLabel_comesFromStarterCatalogDescription() {
+        // 展示名来自 starter 清单的 description（metadata 不再维护 starters 节）
         assertThat(service.listStarters("3.2.5"))
                 .extracting(MetadataService.StarterDto::label)
-                .contains("Spring Web", "Spring Data JPA");
+                .contains("Spring MVC + 内嵌 Tomcat", "Spring Data JPA 持久层");
     }
 
     @Test
-    void starterLabel_danglingStarterReferenceFailsAtLoad() {
-        // bootVersions.starters 引用未登记的 starter → 装载即失败
+    void starterWithoutCatalogDefinition_isNotListed() {
+        // bootVersions.starters 列出清单未登记的 id：装载不报错，但清单接口不返回
         String yaml = """
                 javaVersions:
                   - id: "8"
@@ -212,8 +228,11 @@ class MetadataServiceTest {
                     supportedJavaVersions: ["8"]
                     starters: ["custom-starter"]
                 """;
-        assertThatThrownBy(() -> com.wymix.initializer.core.metadata.MetadataCatalog.load(
-                        new java.io.ByteArrayInputStream(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))))
-                .isInstanceOf(BusinessException.class);
+        MetadataService svc = new MetadataService(
+                new com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder(),
+                MetadataCatalog.load(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)))
+                        .merge(StarterCatalog.of(List.of())),
+                StarterCatalog.of(List.of()));
+        assertThat(svc.listStarters("2.7.18")).isEmpty();
     }
 }

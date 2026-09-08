@@ -18,6 +18,16 @@ public final class InitializationProperties {
     /** 内置清单开关的默认值（未配置且未经 main 下发时）。 */
     public static final boolean DEMO_ENABLED_DEFAULT = true;
 
+    /**
+     * 外部清单目录 property 键（运维在 jar 外维护配置文件）：
+     * {@code metadata.yml} / {@code starters/*.yml} / {@code conflict-rules.yml} /
+     * {@code templates/**} / {@code validation.yml}，格式正确即可用，不与内置清单做一致性校验。
+     */
+    public static final String CATALOG_DIR_PROPERTY = "initializer.catalog.dir";
+
+    /** 外部清单目录默认值：留空表示「未指定」，此时回退到 jar 所在目录下的 {@code catalog} 目录。 */
+    public static final String CATALOG_DIR_DEFAULT = "";
+
     private InitializationProperties() {
         throw new AssertionError("常量类不可实例化");
     }

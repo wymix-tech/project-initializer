@@ -37,6 +37,9 @@ public class AdminAuthFilter extends OncePerRequestFilter {
     /** 管理端 token 请求头。 */
     public static final String TOKEN_HEADER = "X-Admin-Token";
 
+    /** 受保护的 URL 前缀（不含 context-path）。 */
+    private static final String ADMIN_PATH_PREFIX = "/api/admin";
+
     private final byte[] expectedToken;
     private final ObjectMapper objectMapper;
 
@@ -52,8 +55,20 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        // 仅拦截管理端路径；业务接口零感知
-        return !request.getRequestURI().startsWith("/api/admin");
+        // 仅拦截管理端路径；业务接口零感知。
+        // 必须先剥离 context-path：部署到非根路径（如 /initializer）时 getRequestURI()
+        // 返回 /initializer/api/admin/...，直接 startsWith 会失配导致鉴权被绕过。
+        return !pathWithoutContext(request).startsWith(ADMIN_PATH_PREFIX);
+    }
+
+    /** 剥离 context-path 后的请求路径。 */
+    private static String pathWithoutContext(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        if (contextPath != null && !contextPath.isEmpty() && uri.startsWith(contextPath)) {
+            return uri.substring(contextPath.length());
+        }
+        return uri;
     }
 
     @Override

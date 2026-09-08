@@ -3,6 +3,7 @@ package com.wymix.initializer.core.conflict;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * 依赖冲突规则（M3.5）：配置化的 starter 互斥约束，随清单发布进快照。
@@ -107,7 +108,7 @@ public final class ConflictRule {
      * @param selectedStarterIds 已选 starter ID 集合（禁 null）
      * @return 触发返回 true
      */
-    public boolean isTriggeredBy(java.util.Set<String> selectedStarterIds) {
+    public boolean isTriggeredBy(Set<String> selectedStarterIds) {
         Objects.requireNonNull(selectedStarterIds, "selectedStarterIds");
         long hits = starters.stream().filter(selectedStarterIds::contains).count();
         return type == Type.PAIR ? hits == 2 : hits >= 2;

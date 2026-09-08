@@ -3,7 +3,9 @@ package com.wymix.initializer.app.metadata;
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.app.InitializationProperties;
+import com.wymix.initializer.app.starter.StarterCatalogConfig;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
+import com.wymix.initializer.core.starter.StarterCatalog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,14 +27,15 @@ public class MetadataCatalogConfig {
     private static final Logger log = LoggerFactory.getLogger(MetadataCatalogConfig.class);
 
     /**
-     * 装载元数据目录（启用内置清单的便捷重载）。
+     * 装载元数据目录（启用内置清单 + classpath 内置 starter 清单的便捷重载）。
      *
-     * <p>供直接实例化本配置类的场景（如单元测试）调用，等价 {@code metadataCatalog(true)}。
+     * <p>供直接实例化本配置类的场景（如单元测试）调用，等价
+     * {@code metadataCatalog(starterCatalog, true)}。
      *
      * @return 元数据目录
      */
     public MetadataCatalog metadataCatalog() {
-        return metadataCatalog(true);
+        return metadataCatalog(new StarterCatalogConfig().starterCatalog(), true);
     }
 
     /**
@@ -47,6 +50,7 @@ public class MetadataCatalogConfig {
      */
     @Bean
     public MetadataCatalog metadataCatalog(
+            StarterCatalog starterCatalog,
             @Value("${" + InitializationProperties.DEMO_ENABLED_PROPERTY + ":"
                     + InitializationProperties.DEMO_ENABLED_DEFAULT + "}") boolean demoEnabled) {
         if (!demoEnabled) {
@@ -54,9 +58,11 @@ public class MetadataCatalogConfig {
             return MetadataCatalog.empty();
         }
         try (InputStream in = new ClassPathResource("catalog/metadata.yml").getInputStream()) {
-            MetadataCatalog catalog = MetadataCatalog.load(in);
-            log.info("元数据目录装载完成: {} 个 Java 版本, {} 个 Boot 版本",
-                    catalog.javaVersions().size(), catalog.bootVersions().size());
+            // starter 元信息（展示名/坐标/必选/联动）以 starter 清单为准，装载即联动合并
+            MetadataCatalog catalog = MetadataCatalog.load(in).merge(starterCatalog);
+            log.info("元数据目录装载完成: {} 个 Java 版本, {} 个 Boot 版本, {} 个 starter",
+                    catalog.javaVersions().size(), catalog.bootVersions().size(),
+                    catalog.starterDefinitionIds().size());
             return catalog;
         } catch (IOException e) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "catalog/metadata.yml 读取失败", e);

@@ -85,7 +85,46 @@ public final class YamlStarterParser {
         String description = stringOrDefault(map, "description", "");
         List<DependencyCoord> dependencies = parseDependencies(map.get("dependencies"), id);
         LinkageSpec linkages = parseLinkages(map.get("linkages"), id);
-        return new StarterCatalogEntry(id, category, maintainer, description, dependencies, linkages);
+        boolean required = Boolean.TRUE.equals(map.get("required"));
+        List<String> requires = parseRequires(map.get("requires"), id);
+        List<String> bootVersions = parseBootVersions(map, id);
+        return new StarterCatalogEntry(id, category, maintainer, description, dependencies, linkages,
+                required, requires, bootVersions);
+    }
+
+    /**
+     * 解析 Boot 版本关联（可选）：{@code bootVersions: ["3.2.5"]} 或 {@code bootVersion: "3.2.5"}；
+     * 未声明表示对全部 Boot 版本可用。
+     */
+    private static List<String> parseBootVersions(Map<String, Object> map, String starterId) {
+        Object node = map.get("bootVersions");
+        if (node == null) {
+            node = map.get("bootVersion");
+        }
+        if (node == null) {
+            return List.of();
+        }
+        if (node instanceof String single) {
+            return single.isBlank() ? List.of() : List.of(single.trim());
+        }
+        if (!(node instanceof List<?> list)) {
+            throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
+                    "starter " + starterId + " 字段类型非法: bootVersions（必须为列表或字符串）");
+        }
+        return list.stream().map(String::valueOf).map(String::trim).filter(s -> !s.isEmpty()).toList();
+    }
+
+    /** 解析 {@code requires}（可选）：依赖联动，选中本 starter 自动带上所列 starter。 */
+    @SuppressWarnings("unchecked")
+    private static List<String> parseRequires(Object node, String starterId) {
+        if (node == null) {
+            return List.of();
+        }
+        if (!(node instanceof List<?> list)) {
+            throw new BusinessException(ErrorCode.STARTER_CATALOG_INVALID,
+                    "starter " + starterId + " 字段类型非法: requires（必须为列表）");
+        }
+        return list.stream().map(String::valueOf).map(String::trim).toList();
     }
 
     private static Maintainer parseMaintainer(String value, String starterId) {
