@@ -275,6 +275,70 @@ class ConfigServiceTest {
     }
 
     @Test
+    void publish_structuredPath_doesNotRoundTripThroughYaml() {
+        // T2 回归锚点：发布链路改由 StructuredCatalogAssembler 直装表行。
+        // hidden 是 PR #40 引入、只在 cfg_starter 行里落库的字段——若发布仍经 YAML 反编译，
+        // 装配出的清单条目 hidden 会恒为 false；此处断言发布后快照的 hidden 为 true，
+        // 即证明「表行 → 核心模型」直装生效（YAML 往返已被移除）。
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
+                METADATA_YAML, null, "tester");
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.STARTER,
+                """
+                id: web
+                category: web
+                maintainer: official
+                description: Spring Web
+                hidden: true
+                dependencies:
+                  - groupId: "org.springframework.boot"
+                    artifactId: "spring-boot-starter-web"
+                linkages: {}
+                """, null, "tester");
+
+        configService.publish("tester", "结构化直装验证");
+
+        assertThat(snapshotHolder.current().starterCatalog().entry("web").hidden()).isTrue();
+    }
+
+    @Test
+    void rollback_structuredHistory_rebuildsFromRowsNotYaml() {
+        // T2 回归锚点：回滚改为读历史 release 的结构行直装。
+        saveValidDrafts();
+        long v1 = configService.publish("tester", "v1").releaseId();
+
+        // 在 v1 结构行里补一个模板（模拟「快照行即历史真相」，YAML 全文已不存于 config_release）
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE,
+                "name: README.md.ftl\ncontent: |\n  # v2\n", null, "tester");
+        configService.publish("tester", "v2");
+        assertThat(snapshotHolder.current().templateOverrides()).isNotEmpty();
+
+        // 回滚到 v1：模板集合回到空（从 v1 的 cfg_template 行装配，而非任何 YAML）
+        PublishResult rolled = configService.rollback(v1, "tester");
+        assertThat(rolled.templateOverrideCount()).isZero();
+        assertThat(snapshotHolder.current().templateOverrides()).isEmpty();
+        assertThat(snapshotHolder.current().starterCatalog().entry("web")).isNotNull();
+    }
+
+    @Test
+    void publish_assemblyFailure_reportsPreciseDetail_andKeepsOldSnapshot() {
+        saveValidDrafts();
+        configService.publish("tester", "基准");
+        CatalogSnapshot old = snapshotHolder.current();
+
+        // metadata 声明 Boot 引用未定义 Java 版本 → 装配期 4002，明细含具体版本 ID
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA,
+                METADATA_YAML.replace("supportedJavaVersions: [\"17\"]",
+                        "supportedJavaVersions: [\"21\"]"), null, "tester");
+
+        assertThatThrownBy(() -> configService.publish("tester", "装配失败发布"))
+                .isInstanceOfSatisfying(BusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED);
+                    assertThat(e.getMessage()).contains("未定义的 Java 版本").contains("21");
+                });
+        assertThat(snapshotHolder.current()).isSameAs(old);
+    }
+
+    @Test
     void publish_withConflictRuleDraft_resultReportsRuleCount() {
         // starter 草稿登记 web（基准）+ web2；冲突规则引用二者
         saveValidDrafts();

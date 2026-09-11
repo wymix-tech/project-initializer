@@ -1,9 +1,13 @@
 # 配置结构化入库与表单化维护（规划稿）
 
-> 状态：**T1（db-schema）已实施**；T2 起待开发
+> 状态：**T1（db-schema）、T2（snapshot-assembler）已实施**；T3/T4/T5 起待开发
 > T1 交付：`initializer-app/src/main/resources/db/{schema,data}.sql` + 16 个实体/Mapper +
 > `ConfigRepository` 结构化读写 + `StructuredSnapshot`/`StructuredYamlCodec`/`StructuredDraftWriter`/
 > `LegacyYamlMigration`（T1→T2 过渡桥）+ 升级文档（`docs/guide/configuration.md` §6）
+> T2 交付：`initializer-core` 的 `MetadataCatalog.of(...)` 公共工厂 +
+> `StructuredCatalogAssembler`（表行直装快照）+ `ConfigService` 发布/回滚改结构化装配 +
+> `CatalogSnapshotBootstrap` 启动直装 + `CatalogSnapshot` 模板语义改「DB 全量模板集」
+> + 装配文档（`docs/guide/configuration.md` §7）
 > 勘误：§12 的 ER 图实为 **15 张 `cfg_*` 表**（非 17）；实体为 15 张 + `ConfigDraftMetaEntity` = 16
 > 来源：需求「元数据/starter清单/冲突规则/模板 改为表单维护 + 关系表存储 + YAML 导入导出」
 > 关联：M3 里程碑（`docs/design/m3-overview.md`、`docs/design/m3-detail.md`）
@@ -172,7 +176,7 @@ docs/
 | # | id | 任务 | 依赖 |
 |---|---|---|---|
 | 1 | `db-schema` | ✅ 建元数据/starter/冲突规则/模板关系表 DDL（15 张）及实体、Mapper、按 `release_id` 作用域的 Repository | — |
-| 2 | `snapshot-assembler` | 用 LSP 定位发布/回滚/启动调用点，新增表行装配器并改造快照构建链路 | 1 |
+| 2 | `snapshot-assembler` | ✅ 新增 `StructuredCatalogAssembler`（表行直装），发布/回滚/启动三条链路改结构化装配，`MetadataCatalog.of` 公共工厂 | 1 |
 | 3 | `admin-structured-api` | 改造管理端为分模块结构化读写 API，制品库同步改写结构化 starter 草稿（source 标记） | 2 |
 | 4 | `yaml-import-export` | 实现 ZIP 导入解析入库与导出下载，复用 core 解析器并补充导入导出错误码 | 2 |
 | 5 | `template-db-source` | 模板渲染改为只读数据库全量模板集，仅 demo 模式以 classpath 内置作初始种子 | 2 |

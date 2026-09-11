@@ -44,15 +44,16 @@ class AdminApiControllerTest {
     /**
      * 构造被测 ConfigService（全部协作者 mock）。
      *
-     * <p>T1 结构化改造后 ConfigService 新增「结构行码编器 / 结构行写入器」两个协作者，
-     * 本方法集中构造，避免各用例重复列表导致新增依赖时多处遗漏。
+     * <p>T2 结构化改造后 ConfigService 的「清单校验器」协作者换成了
+     * 「结构化目录装配器」（发布/回滚改为表行直装），本方法集中构造，
+     * 避免各用例重复列表导致新增依赖时多处遗漏。
      *
      * @return 全部协作者均为 mock 的 ConfigService
      */
     private static ConfigService newConfigService() {
         return new ConfigService(
                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.ConfigRepository.class),
-                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogRefresher.class),
+                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.StructuredCatalogAssembler.class),
                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder.class),
                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.StructuredYamlCodec.class),
                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.StructuredDraftWriter.class));

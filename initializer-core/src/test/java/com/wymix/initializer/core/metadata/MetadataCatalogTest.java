@@ -489,6 +489,54 @@ class MetadataCatalogTest {
         }
     }
 
+    /**
+     * 结构性装配公共工厂（T2）：结构化存储通道复用私有构造的图校验。
+     */
+    @Nested
+    class PublicFactory {
+
+        @Test
+        void of_mapsVersionsAndCompatibilityGraph() {
+            List<JavaVersion> javas = List.of(new JavaVersion("17", "Java 17", false, "3.2.5"));
+            List<BootVersion> boots = List.of(new BootVersion("3.2.5", "Boot 3.2.5", true,
+                    List.of("17"), List.of("web")));
+
+            MetadataCatalog catalog = MetadataCatalog.of(javas, boots);
+
+            assertThat(catalog.javaVersions()).hasSize(1);
+            assertThat(catalog.javaVersion("17").label()).isEqualTo("Java 17");
+            assertThat(catalog.compatibleBootVersions("17")).hasSize(1);
+            assertThat(catalog.starters("3.2.5")).containsExactly("web");
+        }
+
+        @Test
+        void of_duplicateJavaId_throwsInternalError() {
+            List<JavaVersion> javas = List.of(new JavaVersion("17", "A", false, null),
+                    new JavaVersion("17", "B", false, null));
+            assertThatThrownBy(() -> MetadataCatalog.of(javas, List.of()))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INTERNAL_ERROR))
+                    .hasMessageContaining("重复");
+        }
+
+        @Test
+        void of_danglingJavaReference_throwsInternalError() {
+            List<BootVersion> boots = List.of(new BootVersion("3.2.5", "Boot", true,
+                    List.of("99"), List.of()));
+            assertThatThrownBy(() -> MetadataCatalog.of(List.of(), boots))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.INTERNAL_ERROR))
+                    .hasMessageContaining("未定义的 Java 版本");
+        }
+
+        @Test
+        void of_nullLists_treatedAsEmpty() {
+            MetadataCatalog catalog = MetadataCatalog.of(null, null);
+            assertThat(catalog.javaVersions()).isEmpty();
+            assertThat(catalog.bootVersions()).isEmpty();
+        }
+    }
+
     @Nested
     class ClasspathCatalog {
 

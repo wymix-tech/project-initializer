@@ -491,7 +491,41 @@ if (migration.legacyDraftTableExists()) {   // 旧表存在才需要迁
 | `starter-sync` | `ConfigKind.STARTER_SYNC` **保留**；正文改为 `cfg_starter.source = 'SYNC'` 的行，同名手工（`MANUAL`）优先语义不变 |
 | starter `hidden` / `required` | 落 `cfg_starter` 列并在 `GET` 渲染回 YAML 时按需写回（`hidden` / `required` 仅 true 时输出，false 省略）；`hidden=false` 与未声明等价 |
 
-## 7. 验证清单
+## 7. 装配链路：表行直装快照（T2）
+
+> 本节对应「配置结构化入库」改造的第二阶段（T2，快照装配）。
+
+T2 起，**发布 / 回滚 / 启动装表**三条链路不再把表行渲染成 YAML 再解析，而是由
+`StructuredCatalogAssembler` 直接「表行 → 核心模型 → 快照」装配：
+
+```
+发布：草稿(release_id=0) 结构行 ──readScope(1 次批量查 15 表)──▶ Assembler ──▶ CatalogSnapshot ──swap──▶ 生效
+回滚：历史(release_id=N) 结构行 ──readScope──▶ Assembler（复校验）──▶ 复制为 release_id=N+1 + 头 + swap
+启动：最新 release 结构行 ────────readScope──▶ Assembler ──▶ seed 快照
+```
+
+要点：
+
+- **口径与 YAML 通道一致**：装配器复用 core 的装载期校验
+  （`MetadataCatalog.of` / `StarterCatalog.of` / `ConflictRule` 构造 + 模板语法预校验），
+  装配失败一律收敛为 **4002** 并给出精确明细（如 `Boot 版本 X 引用了未定义的 Java 版本 Y`）。
+- **禁 N+1**：`ConfigRepository.readScope(releaseId)` 每表只发一条 `selectByReleaseId`，
+  装配全程数据库交互恰为 1 次 `readScope`（15 条查询），其余在内存按父键分组。
+  已有断言测试锁定「查询条数 ≤ 表数量」。
+- **`hidden` 直取**：`cfg_starter.hidden` 由装配器直接读取，不经 YAML 反编译（PR #40 语义端到端）。
+- **草稿态仍宽松**：草稿读写仍走 `StructuredYamlCodec` / `StructuredDraftWriter`（YAML 文本契约），
+  允许悬空引用与重复 ID、可边补边存；严格校验只在发布/回滚/启动装表发生。
+  这两个组件将在 T3（表单化 API）与 T4（ZIP 导入导出）后收缩为导入导出专用。
+- **启动兜底**：非 `--demo` 且 DB 无发布记录（或最新作用域为空）时播种**空快照**，
+  读路径始终可用；启动装配失败只告警不阻塞启动，管理端可重新发布修复。
+
+模板映射（`CatalogSnapshot.templateOverrides`）语义在 T2 收敛为
+**「数据库全量模板集」**；过渡期映射为空时 `TemplateRenderer` 仍保留 classpath 兜底，
+该兜底在 T5（模板改为 DB 唯一数据源）一并摘除。
+
+---
+
+## 8. 验证清单
 
 配置变更后建议按序验证：
 
@@ -506,3 +540,5 @@ mvn verify        # 单测 + JaCoCo 覆盖率门禁（配置合法性由加载�
 5. 校验失败场景：提交不合法 group/artifact，确认返回 422 + 错误明细
 6. `hidden` 往返冒烟：`PUT /api/admin/config/starter` 提交带 `hidden: true` 的条目 →
    `GET /api/admin/config/starter` 读回，确认 `hidden: true` 仍在（不被静默丢弃）
+7. 结构化装配冒烟：发布一版 → 重启（非 `--demo`）→ `GET /api/metadata/*` 应还原发布内容；
+   构造含非法引用的草稿发布应被 4002 拒绝且旧快照继续服务

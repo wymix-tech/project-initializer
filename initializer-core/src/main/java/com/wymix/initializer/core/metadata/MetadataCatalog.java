@@ -64,6 +64,26 @@ public class MetadataCatalog {
     private static final MetadataCatalog EMPTY =
             new MetadataCatalog(List.of(), List.of(), List.of());
 
+    /**
+     * 公共工厂（T2 结构化装配）：由已解析的 Java / Boot 版本清单构建目录。
+     *
+     * <p>结构化存储（{@code cfg_java_version} / {@code cfg_boot_version} /
+     * {@code cfg_boot_java}）的表行在应用层装配为 record 清单后经本工厂入目录，
+     * 与 {@link #load(InputStream)} 共用私有构造的**图合法性校验**
+     * （Java 版本 ID 重复、Boot 版本 ID 重复、Boot 引用了未定义的 Java 版本），
+     * 因此结构化通道与 YAML 通道的装载口径完全一致——校验失败一律
+     * {@link ErrorCode#INTERNAL_ERROR}，由调用方收敛为发布校验失败（4002）。
+     *
+     * @param javaVersions 全量 Java 版本清单（禁 null）
+     * @param bootVersions 全量 Boot 版本清单（禁 null）
+     * @return 元数据目录实例
+     * @throws BusinessException 重复 ID / 悬空 Java 引用（错误码 {@link ErrorCode#INTERNAL_ERROR}）
+     */
+    public static MetadataCatalog of(List<JavaVersion> javaVersions, List<BootVersion> bootVersions) {
+        return new MetadataCatalog(javaVersions == null ? List.of() : javaVersions,
+                bootVersions == null ? List.of() : bootVersions, List.of());
+    }
+
     private MetadataCatalog(List<JavaVersion> javaList, List<BootVersion> bootList, List<StarterDefinition> starterList) {
         for (JavaVersion jv : javaList) {
             if (javaVersions.putIfAbsent(jv.id(), jv) != null) {

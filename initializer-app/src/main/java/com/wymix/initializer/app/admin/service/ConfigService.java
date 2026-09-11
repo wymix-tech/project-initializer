@@ -5,9 +5,9 @@ import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.app.admin.entity.ConfigAuditEntity;
 import com.wymix.initializer.app.admin.entity.ConfigKind;
 import com.wymix.initializer.app.admin.entity.ConfigReleaseEntity;
-import com.wymix.initializer.app.admin.refresh.CatalogRefresher;
 import com.wymix.initializer.app.admin.refresh.CatalogSnapshot;
 import com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder;
+import com.wymix.initializer.app.admin.refresh.StructuredCatalogAssembler;
 import com.wymix.initializer.app.admin.repository.ConfigRepository;
 import com.wymix.initializer.app.admin.entity.ConfigDraftMetaEntity;
 import com.wymix.initializer.app.admin.repository.StructuredDraftWriter;
@@ -23,11 +23,13 @@ import java.util.List;
 /**
  * 管理端配置应用服务（M3.1/M3.2 → 结构化改造 T1）：草稿 CRUD、发布、回滚、发布历史与审计。
  *
- * <p><b>结构化改造（T1）后的草稿载体</b>：草稿正文已从 {@code config_draft.content_yaml}
- * 迁到 {@code cfg_*} 关系表的 {@code release_id = 0} 行；kind 级乐观锁迁到
- * {@code config_draft_meta.version}。本类对外仍以 YAML 文本为契约（HTTP 层与既有测试不变），
- * 内部经 {@link StructuredYamlCodec} 在「结构行 ↔ 语义视图」之间转换——
- * T2 交付装配器后本类的转换职责将被装配器取代，对外的 YAML 契约同时收敛为结构化 DTO。
+ * <p><b>结构化改造（T1/T2）后的草稿载体与快照链路</b>：草稿正文已从
+ * {@code config_draft.content_yaml} 迁到 {@code cfg_*} 关系表的 {@code release_id = 0} 行；
+ * kind 级乐观锁迁到 {@code config_draft_meta.version}。
+ * <b>T2 起发布/回滚的快照构建改由 {@link StructuredCatalogAssembler} 直装表行</b>
+ * （不再经 YAML 往返）；本类对**草稿读写**仍以 YAML 文本为契约
+ * （HTTP 层与既有测试不变），经 {@link StructuredYamlCodec} 在「结构行 ↔ 语义视图」之间转换，
+ * 该契约将在 T3 表单化 API 落地后收敛为结构化 DTO。
  *
  * <p>核心原则（概要设计 §6）：
  * <ul>
@@ -59,7 +61,7 @@ public class ConfigService {
     public static final String ACTION_ROLLBACK_FAILED = "ROLLBACK_FAILED";
 
     private final ConfigRepository repository;
-    private final CatalogRefresher refresher;
+    private final StructuredCatalogAssembler assembler;
     private final CatalogSnapshotHolder snapshotHolder;
     /** 结构行 ↔ 语义视图码编器（T1 过渡；T2 装配器落地后由装配器取代）。 */
     private final StructuredYamlCodec codec;
@@ -71,16 +73,16 @@ public class ConfigService {
 
     /**
      * @param repository     配置存储仓库（结构化 cfg_* 表读写）
-     * @param refresher      清单校验/快照构建器
+     * @param assembler      结构化目录装配器（T2：表行 → 核心模型 → 快照，替代 YAML 校验通道）
      * @param snapshotHolder 当前快照持有器
-     * @param codec          结构行 ↔ 语义视图码编器（T1 过渡桥）
-     * @param draftWriter    YAML 语义文本 → 结构行写入器（T1 过渡桥）
+     * @param codec          结构行 ↔ 语义视图码编器（草稿读取过渡桥；T3/T4 收缩为导入导出旁路）
+     * @param draftWriter    YAML 语义文本 → 结构行写入器（草稿保存过渡桥；T3/T4 收缩为导入通道）
      */
-    public ConfigService(ConfigRepository repository, CatalogRefresher refresher,
+    public ConfigService(ConfigRepository repository, StructuredCatalogAssembler assembler,
                          CatalogSnapshotHolder snapshotHolder, StructuredYamlCodec codec,
                          StructuredDraftWriter draftWriter) {
         this.repository = repository;
-        this.refresher = refresher;
+        this.assembler = assembler;
         this.snapshotHolder = snapshotHolder;
         this.codec = codec;
         this.draftWriter = draftWriter;
@@ -94,6 +96,11 @@ public class ConfigService {
      * 因此同步层草稿在写入期已剔除与手工同名条目（CatalogMerger 合并语义），
      * 此处拼接是「先过滤后合并」链路的终点；若两通道出现同名（如同步后手工又新增），
      * 发布期整体拒绝并在错误明细中提示，绝不静默覆盖手工配置。
+     *
+     * <p><b>T2 起发布链路不再调用本方法</b>：{@code STARTER} 与 {@code STARTER_SYNC}
+     * 的行同处草稿作用域，由 {@link StructuredCatalogAssembler} 一次性读取装配，
+     * 「同名优先」由写入期 {@code CatalogMerger} 保证（装配期 ID 重复即 4002）。
+     * 本方法保留给**导入导出（T4）与三通道拼接参照**，避免删除公共 API 造成二次改动。
      *
      * @param manual 手工 starter 多文档 yml（可空）
      * @param synced 制品库同步层多文档 yml（可空）
@@ -226,28 +233,25 @@ public class ConfigService {
     }
 
     /**
-     * 发布主流程（T1 过渡实现）。
+     * 发布主流程（结构化装配，T2）。
      *
-     * <p>T1 阶段快照仍按「草稿 YAML → 既有校验通道」构建（结构化装配器是 T2 的交付物），
-     * 但发布记录不再存 YAML：改为写 {@code config_release} 头 + 把草稿结构行
-     * {@link ConfigRepository#copyAsRelease(long, long) 复制为带新 release_id 的不可变快照行}。
-     * 因此 T1 已达成「配置正文结构化落库、版本快照按行隔离」的目标，
-     * T2 只需把快照构建从 YAML 换成表行装配即可，
-     * 持久层与版本语义无需二次改动。
+     * <p>快照由 {@link StructuredCatalogAssembler} 从草稿作用域（{@code release_id = 0}）的
+     * **结构行**直接装配——不再把草稿渲染成 YAML 再解析（省去一次往返，且口径与落库一致）。
+     * 装配失败即发布校验失败（4002 + 明细），草稿保留、旧快照继续服务。
+     *
+     * <p>装配成功后写 {@code config_release} 头 + 把草稿结构行整体
+     * {@link ConfigRepository#copyAsRelease(long, long) 复制为带新 release_id 的不可变快照行}；
+     * 快照切换置于事务末尾，切换失败触发回滚，不留「已发布但未生效」的中间态。
      *
      * @param operator 发布人
      * @param remark   发布备注
      * @return 发布结果
      */
     private PublishResult doPublish(String operator, String remark) {
-        String metadataYaml = renderDraft(ConfigKind.METADATA);
-        String starterYaml = mergedStarterYaml(renderDraft(ConfigKind.STARTER), renderDraft(ConfigKind.STARTER_SYNC));
-        String templateYaml = renderDraft(ConfigKind.TEMPLATE);
-        String conflictYaml = renderDraft(ConfigKind.CONFLICT_RULE);
-
         CatalogSnapshot snapshot;
         try {
-            snapshot = refresher.validateAndBuild(metadataYaml, starterYaml, templateYaml, conflictYaml);
+            // 草稿作用域一次性读全量结构行（1 次 readScope = 15 条批量查询，无 N+1）后内存装配
+            snapshot = assembler.assemble(ConfigRepository.DRAFT_RELEASE_ID);
         } catch (BusinessException e) {
             // 发布失败不写发布历史；审计留痕（含失败明细），供管理端展示
             repository.insertAudit("PUBLISH_FAILED", null, operator, e.getMessage());
@@ -292,15 +296,15 @@ public class ConfigService {
     }
 
     /**
-     * 回滚主流程（结构化）：读目标 release 的**结构行快照**重新走完整校验，通过后
+     * 回滚主流程（结构化装配，T2）：读目标 release 的**结构行快照**直接装配，通过后
      * 把该快照复制为新的 release（不在原地改写历史行）。
      *
-     * <p>结构化改造后回滚不再依赖发布记录里的 YAML 全文：
-     * 历史快照本身就是 {@code cfg_*} 表里 {@code release_id = N} 的一组行，
-     * 因此回滚 = 「读 N 作用域行 → 校验 → 复制为 N+1 作用域」，历史版本零改写。
+     * <p>历史快照本身就是 {@code cfg_*} 表里 {@code release_id = N} 的一组行，
+     * 因此回滚 = 「读 N 作用域行 → 装配校验 → 复制为 N+1 作用域」，历史版本零改写，
+     * 且不再依赖发布记录里的 YAML 全文（YAML 反编译路径已从发布/回滚链路移除）。
      *
-     * <p>不绕过校验通道：历史快照仍要重新渲染语义视图并过一遍装载期校验，
-     * 因规则演进而失效的历史版本会被拒（4002），旧快照继续服务。
+     * <p>不绕过校验通道：历史快照仍要过一遍装载期校验，因规则演进而失效的历史版本
+     * 会被拒（4002），旧快照继续服务。
      *
      * @param releaseId 目标发布记录 ID
      * @param operator  操作人
@@ -314,17 +318,14 @@ public class ConfigService {
                     "回滚失败: 发布记录不存在: #" + releaseId);
         }
         StructuredSnapshot historical = repository.readScope(releaseId);
-        if (historical.javaVersions().isEmpty()) {
+        if (historical.isEmpty()) {
             throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
                     "回滚失败: 发布记录 #" + releaseId + " 缺失结构行，无法重建快照");
         }
         CatalogSnapshot snapshot;
         try {
-            snapshot = refresher.validateAndBuild(
-                    codec.renderMetadata(historical),
-                    codec.renderStarters(historical),
-                    codec.renderTemplates(historical),
-                    codec.renderConflictRules(historical));
+            // 复用已读出的结构行装配（不再二次 readScope），装配失败即回滚失败（4002）
+            snapshot = assembler.assemble(historical);
         } catch (BusinessException e) {
             repository.insertAudit(ACTION_ROLLBACK_FAILED, null, operator,
                     "回滚 #" + releaseId + " 失败: " + e.getMessage());
