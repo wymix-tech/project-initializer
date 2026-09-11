@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { api, ApiError } from '@/api/client'
 import { STEP_JAVA, STEP_META, STEP_STARTERS, TOTAL_STEPS, useWizardStore } from '@/stores/wizard'
-import type { BootVersion, JavaVersion, Starter, ValidationResult } from '@/types/api'
+import type { BootVersion, ConflictRule, JavaVersion, Starter, ValidationResult } from '@/types/api'
 
 vi.mock('@/api/client', () => ({
   ApiError: class ApiError extends Error {
@@ -35,8 +35,8 @@ const bootVersions: BootVersion[] = [
   { id: '3.2.5', label: '3.2.5', official: true },
 ]
 const starters: Starter[] = [
-  { id: 'web', label: 'Spring Web', maintainer: 'official' as const, category: 'web', description: 'Spring MVC', version: null, required: false, requires: [] },
-  { id: 'data-jpa', label: 'Spring Data JPA', maintainer: 'official' as const, category: 'data', description: 'JPA', version: null, required: false, requires: [] },
+  { id: 'web', label: 'Spring Web', maintainer: 'official' as const, category: 'web', description: 'Spring MVC', version: null, required: false, requires: [], hidden: false },
+  { id: 'data-jpa', label: 'Spring Data JPA', maintainer: 'official' as const, category: 'data', description: 'JPA', version: null, required: false, requires: [], hidden: false },
 ]
 
 beforeEach(() => {
@@ -316,47 +316,62 @@ describe('生成提交', () => {
   })
 })
 
-describe('依赖联动与必选（M3.7）', () => {
+describe('依赖联动与必选（M3.8）', () => {
+  function st(id: string, requires: string[][] = [], extra: Partial<Starter> = {}): Starter {
+    return {
+      id, label: id, maintainer: 'internal', category: 'data', description: null,
+      version: null, required: false, requires, hidden: false, ...extra,
+    }
+  }
+
   const linkStarters: Starter[] = [
-    { id: 'web', label: 'Web', maintainer: 'official', category: 'web', description: null, version: null, required: false, requires: [] },
-    { id: 'core', label: '框架核心', maintainer: 'internal', category: 'middleware', description: null, version: null, required: false, requires: [] },
-    // AND：dal 需要 core 和 log
-    { id: 'dal', label: '数据访问', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: [['core'], ['log']] },
-    // OR：repo 需要 jpa 或 mybatis，二者互斥时只选其一即可
-    { id: 'repo', label: '仓储抽象', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: [['jpa', 'mybatis']] },
-    { id: 'log', label: '日志', maintainer: 'internal', category: 'tool', description: null, version: null, required: false, requires: [] },
-    { id: 'jpa', label: 'JPA 仓储', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: [] },
-    { id: 'mybatis', label: 'MyBatis 仓储', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: [] },
-    { id: 'base', label: '启动基座', maintainer: 'internal', category: 'middleware', description: null, version: null, required: true, requires: [] },
+    st('web'),
+    st('core'),
+    // 单元素分组（无 OR）→ 强制依赖：dal 需要 core 和 log
+    st('dal', [['core'], ['log']]),
+    // OR 分组：repo 需要 jpa 或 mybatis
+    st('repo', [['jpa', 'mybatis']]),
+    st('log'),
+    st('jpa'),
+    st('mybatis'),
+    st('base', [], { required: true }),
   ]
 
-  function linkWizard() {
+  function linkWizard(rules: ConflictRule[] = []) {
     const wizard = useWizardStore()
     wizard.starters = linkStarters
     wizard.registerStarters(linkStarters)
+    wizard.conflictRules = rules
     return wizard
   }
 
-  it('选中带依赖的 starter 不再自动勾选依赖项', () => {
+  it('选中带强制依赖的 starter 自动勾选依赖', () => {
     const wizard = linkWizard()
     wizard.toggleStarter('dal')
-    expect([...wizard.selectedStarters]).toEqual(['dal'])
+    expect([...wizard.selectedStarters].sort()).toEqual(['base', 'core', 'dal', 'log'])
   })
 
-  it('依赖引入项允许单独取消（不再锁定）', () => {
+  it('强制依赖被锁定，取消父组件后自动释放（随父组件联动）', () => {
     const wizard = linkWizard()
     wizard.toggleStarter('dal')
+    expect(wizard.lockedStarters.has('core')).toBe(true)
+    expect(wizard.lockedStarters.has('log')).toBe(true)
+    // 锁定项不可取消
     wizard.toggleStarter('core')
-    wizard.toggleStarter('log')
-    expect([...wizard.selectedStarters].sort()).toEqual(['core', 'dal', 'log'])
-    wizard.toggleStarter('core')
+    expect(wizard.selectedStarters.has('core')).toBe(true)
+    // 取消父组件后依赖随之释放，必选项保留
+    wizard.toggleStarter('dal')
+    expect(wizard.selectedStarters.has('dal')).toBe(false)
     expect(wizard.selectedStarters.has('core')).toBe(false)
-    expect(wizard.selectedStarters.has('dal')).toBe(true)
+    expect(wizard.selectedStarters.has('log')).toBe(false)
+    expect(wizard.selectedStarters.has('base')).toBe(true)
   })
 
-  it('OR 分组：选中任一选项即满足', () => {
+  it('OR 分组：不自动勾选，选中任一选项即满足', () => {
     const wizard = linkWizard()
     wizard.toggleStarter('repo')
+    expect(wizard.selectedStarters.has('jpa')).toBe(false)
+    expect(wizard.selectedStarters.has('mybatis')).toBe(false)
     expect(wizard.unsatisfiedRequires.length).toBe(1)
     wizard.toggleStarter('jpa')
     expect(wizard.unsatisfiedRequires.length).toBe(0)
@@ -370,15 +385,6 @@ describe('依赖联动与必选（M3.7）', () => {
     expect(wizard.unsatisfiedRequires.length).toBe(0)
   })
 
-  it('AND 分组：必须全部选中才满足', () => {
-    const wizard = linkWizard()
-    wizard.toggleStarter('dal')
-    wizard.toggleStarter('core')
-    expect(wizard.unsatisfiedRequires.length).toBe(1)
-    wizard.toggleStarter('log')
-    expect(wizard.unsatisfiedRequires.length).toBe(0)
-  })
-
   it('必选项默认勾选且不可取消', () => {
     const wizard = linkWizard()
     wizard.selectRequiredStarters()
@@ -387,12 +393,65 @@ describe('依赖联动与必选（M3.7）', () => {
     expect(wizard.selectedStarters.has('base')).toBe(true)
   })
 
-  it('lockedStarters 仅覆盖必选项，依赖引入项不锁定', () => {
-    const wizard = linkWizard()
-    wizard.selectRequiredStarters()
+  it('强制依赖与已选组件互斥时双方不锁定，可二选一切换', () => {
+    const rules: ConflictRule[] = [
+      { id: 'core-vs-jpa', type: 'group', starters: ['core', 'jpa'], message: 'core 与 jpa 互斥' },
+    ]
+    const wizard = linkWizard(rules)
+    wizard.toggleStarter('jpa')
     wizard.toggleStarter('dal')
-    expect(wizard.lockedStarters.has('base')).toBe(true)
+    // 强制依赖 core 与已选 jpa 互斥 → 跳过自动勾选 core
+    expect(wizard.selectedStarters.has('jpa')).toBe(true)
+    expect(wizard.selectedStarters.has('core')).toBe(false)
+    // 互斥双方都不锁定并标记互斥
     expect(wizard.lockedStarters.has('core')).toBe(false)
-    expect(wizard.lockedStarters.has('dal')).toBe(false)
+    expect(wizard.mutexIds.has('core')).toBe(true)
+    expect(wizard.mutexIds.has('jpa')).toBe(true)
+    expect(wizard.mutexInfo.core[0].partners).toEqual(['jpa'])
+    // 二选一切换：选中 core 自动取消 jpa
+    wizard.toggleStarter('core')
+    expect(wizard.selectedStarters.has('core')).toBe(true)
+    expect(wizard.selectedStarters.has('jpa')).toBe(false)
+  })
+
+  it('一对互斥的强制依赖默认只自动选中其一，可二选一切换', () => {
+    const mutexStarters: Starter[] = [st('app', [['b'], ['c']]), st('b'), st('c')]
+    const rules: ConflictRule[] = [
+      { id: 'b-vs-c', type: 'pair', starters: ['b', 'c'], message: 'b 与 c 互斥' },
+    ]
+    const wizard = useWizardStore()
+    wizard.starters = mutexStarters
+    wizard.registerStarters(mutexStarters)
+    wizard.conflictRules = rules
+    wizard.toggleStarter('app')
+    // 默认只选中其一（列表顺序中的 b）
+    expect(wizard.selectedStarters.has('b')).toBe(true)
+    expect(wizard.selectedStarters.has('c')).toBe(false)
+    // 互斥双方都不锁定
+    expect(wizard.lockedStarters.has('b')).toBe(false)
+    expect(wizard.lockedStarters.has('c')).toBe(false)
+    // 切换到 c
+    wizard.toggleStarter('c')
+    expect(wizard.selectedStarters.has('c')).toBe(true)
+    expect(wizard.selectedStarters.has('b')).toBe(false)
+  })
+
+  it('隐藏条目默认不展示，被已选组件依赖时强制展示', () => {
+    const hiddenStarters: Starter[] = [st('app', [['ghost']]), st('ghost', [], { hidden: true })]
+    const wizard = useWizardStore()
+    wizard.starters = hiddenStarters
+    wizard.registerStarters(hiddenStarters)
+    expect(wizard.displayStarters.map((s) => s.id)).toEqual(['app'])
+    wizard.toggleStarter('app')
+    expect(wizard.selectedStarters.has('ghost')).toBe(true)
+    expect(wizard.displayStarters.map((s) => s.id).sort()).toEqual(['app', 'ghost'])
+  })
+
+  it('被揭示的隐藏条目不在当前检索结果时从注册表补入', () => {
+    const wizard = useWizardStore()
+    wizard.starters = [st('app', [['ghost']])]
+    wizard.registerStarters([st('app', [['ghost']]), st('ghost', [], { hidden: true })])
+    wizard.toggleStarter('app')
+    expect(wizard.displayStarters.map((s) => s.id).sort()).toEqual(['app', 'ghost'])
   })
 })

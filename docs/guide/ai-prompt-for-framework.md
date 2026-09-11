@@ -90,7 +90,7 @@ requires: [[acme-jpa-repository, acme-mybatis-repository]]   # 需要 jpa 或 my
 requires: [[acme-jpa-repository, acme-mybatis-repository], acme-framework-core]  # 需要 (jpa 或 mybatis) 且 core
 ```
 
-前端**不再自动勾选、也不锁定**这些依赖项，只在卡片上提示「需要 b 或 c」；未满足时在依赖区给出告警，生成期后端以 `2004 缺少必需的依赖 starter` 兜底拒绝。这样 A 依赖 B 或 C 时用户只勾一个即可，B 与 C 互斥也不会被强制同选。
+前端联动规则：**单元素分组（无 OR）= 强制依赖**——选中 A 时其依赖自动选中并锁定（不可取消），取消 A 后若不再被其他已选组件需要则自动释放；**多元素分组（OR）**不自动勾选，仅在卡片上提示「需要 b 或 c」。若强制依赖与已选组件命中互斥规则（`conflict-rule.starters`），则互斥双方都不锁定、前端标记互斥并可随时二选一切换。未满足时在依赖区给出告警，生成期后端以 `2004 缺少必需的依赖 starter` 兜底拒绝。
 
 判定标准（须有代码依据，满足任一）：
 
@@ -168,6 +168,7 @@ category: middleware               # web / middleware / tool ...
 maintainer: internal               # official / internal
 description: 一句话描述功能（即前端展示名）
 required: true                     # 可选：true = 必选依赖（默认 false）
+hidden: false                      # 可选：true = 前端依赖选择列表默认隐藏（被已选组件依赖时强制展示）
 # 可选：依赖联动（AND-of-OR-groups），默认 []
 # 下方 = 需要 jpa 或 mybatis（二者互斥时只选其一即可），不是"两个都要"
 requires: [[acme-jpa-repository, acme-mybatis-repository]]
@@ -183,7 +184,8 @@ linkages: {}                       # 无联动时写 {}
 
 - `id`（**必填**）：取承载本能力的子模块 `<artifactId>` 原文，**不缩写、不翻译、不自造**（理由与例外见第〇步「starter id 取值规则」）。同一 id 必须在 `metadata.bootVersions[].starters`、`requires`、`conflict-rule.starters`、模板 `name` 的 `starters/{id}/` 路径中**字面一致**
 - `required`（可选，默认 false）：设为 `true` 即**必选依赖**——前端默认勾选且禁止取消，后端生成时兜底自动补齐（绕过前端直调 API 也会加上）。框架中"不选就跑不起来"的能力（如核心包、统一配置/鉴权基础模块）应标为必选；其余能力保持可选
-- `requires`（可选，默认 `[]`）：**依赖联动（AND-of-OR-groups）**——分组内任一被选即满足该分组，全部分组满足才算依赖满足。前端**不自动勾选、不锁定**这些项，只提示「需要 X 或 Y」并在未满足时告警；后端生成期兜底拒绝（`2004 缺少必需的依赖 starter`）。校验规则：引用的 id 必须在**本清单**中登记（悬空即拒绝）、不得引用自身、不得成环（多选项分组可换分支打破环，不判环；单选项成环发布期报`循环依赖`并拒绝）。方向为「上层能力 → 基础能力」，如 `acme-dal.requires: [acme-framework-core]`
+- `hidden`（可选，默认 false）：设为 `true` 时该 starter 在**前端依赖选择列表**默认隐藏；后端检索接口仍返回并正常参与依赖/互斥/生成校验。若被已选组件通过 `requires` 引用，前端强制展示。适用于"不直接对外开放、只作为其他能力内部依赖"的 starter
+- `requires`（可选，默认 `[]`）：**依赖联动（AND-of-OR-groups）**——分组内任一被选即满足该分组，全部分组满足才算依赖满足。前端联动：单元素分组为**强制依赖**（选中父组件时自动选中并锁定、取消后自动释放），多元素分组为 **OR**（不自动勾选，只提示「需要 X 或 Y」）；若强制依赖与已选组件互斥则双方都不锁定、标记互斥并可二选一切换。未满足时告警，后端生成期兜底拒绝（`2004 缺少必需的依赖 starter`）。校验规则：引用的 id 必须在**本清单**中登记（悬空即拒绝）、不得引用自身、不得成环（多选项分组可换分支打破环，不判环；单选项成环发布期报`循环依赖`并拒绝）。方向为「上层能力 → 基础能力」，如 `acme-dal.requires: [acme-framework-core]`
 - `bootVersions`（**Boot 版本关联**）：声明本条目属于哪些 Boot 版本（值取 metadata 的 `bootVersions[].id`）。**不写即对全部 Boot 版本可用**。
   框架对多个 Boot 线（如 2.x / 3.x）提供不同坐标或版本的能力模块时，**用同一个 id 写多条文档、各自声明 `bootVersions`**——
   **同一 Boot 版本内 id 不允许重复（重复发布即拒绝），不同 Boot 版本之间允许重复**，平台按当前选中的 Boot 版本取对应条目（坐标、version、联动规则一并生效）

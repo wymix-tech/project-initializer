@@ -381,4 +381,45 @@ class YamlStarterParserTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.STARTER_CATALOG_INVALID));
     }
+
+    @Test
+    void parse_hiddenTrue_mapsHidden() {
+        StarterCatalogEntry entry = YamlStarterParser.parse(yaml("""
+                id: ghost
+                category: tool
+                maintainer: internal
+                hidden: true
+                dependencies:
+                  - groupId: g
+                    artifactId: ghost
+                linkages: {}
+                """));
+        assertThat(entry.hidden()).isTrue();
+    }
+
+    @Test
+    void parse_hiddenAbsentOrFalse_defaultsFalse() {
+        StarterCatalogEntry absent = YamlStarterParser.parse(yaml("""
+                id: s
+                category: web
+                maintainer: official
+                dependencies:
+                  - groupId: g
+                    artifactId: a
+                linkages: {}
+                """));
+        assertThat(absent.hidden()).isFalse();
+
+        StarterCatalogEntry explicitFalse = YamlStarterParser.parse(yaml("""
+                id: s
+                category: web
+                maintainer: official
+                hidden: false
+                dependencies:
+                  - groupId: g
+                    artifactId: a
+                linkages: {}
+                """));
+        assertThat(explicitFalse.hidden()).isFalse();
+    }
 }

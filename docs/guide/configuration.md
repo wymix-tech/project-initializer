@@ -107,7 +107,9 @@ category: tool
 maintainer: internal
 description: 框架核心（必选）
 required: true            # 必选：前端默认勾选且禁止取消，生成时后端兜底补齐
-requires: []              # 依赖联动：选中本项自动带上所列 starter（传递闭包）
+hidden: false             # 可选。true = 前端依赖选择列表默认隐藏，被已选组件依赖时强制展示
+requires: []              # 依赖联动（AND-of-OR-groups）：单元素分组为强制依赖（自动选中并锁定），
+                          #   多元素分组为 OR（仅提示不自动勾选）；详见 3.5
 dependencies:
   - groupId: com.company
     artifactId: framework-core
@@ -239,11 +241,53 @@ spring:
 
 1. 新建 `catalog/starters/{starter-id}.yml`，按 3.2 编写
 2. （如有联动）在 `templates/` 下创建对应模板/片段文件
-3. 在 `metadata.yml` 的 `starters:` 节补充坐标映射（前端展示 label + 坐标）
-4. 在目标 `bootVersions[].starters` 列表中加入该 starter id
-5. 发布（文件方式直接重启生效；管理后台方式见第 5 节，无需重启）
+3. 在目标 `bootVersions[].starters` 列表中加入该 starter id（省略即该版本对全部清单条目可选）
+4. 发布（文件方式直接重启生效；管理后台方式见第 5 节，无需重启）
 
 **生成器代码零改动。**
+
+### 3.5 starter 清单字段与依赖联动语义
+
+**顶层字段一览**：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `id` | 是 | starter 唯一标识，与 `metadata.yml` 的 `bootVersions[].starters` 引用对齐 |
+| `category` | 是 | 分类：`web` / `data` / `middleware` / `tool` |
+| `maintainer` | 是 | 维护方：`official` / `internal` |
+| `description` | 否 | 展示名与检索关键字，缺省取 `id` |
+| `hidden` | 否 | `true` 时前端依赖选择列表默认隐藏（默认 `false`） |
+| `required` | 否 | `true` 时前端默认勾选且禁止取消，生成时后端兜底补齐 |
+| `requires` | 否 | 依赖联动分组（AND-of-OR-groups，见下） |
+| `bootVersions` | 否 | 关联的 Boot 版本 id 清单，缺省对所有版本可用 |
+| `dependencies` | 是 | 写入构建脚本的依赖坐标清单 |
+| `linkages` | 是 | 联动规则，无规则写 `{}` |
+
+**`hidden`：前端依赖列表隐藏**
+
+- `hidden: true` 的条目在**前端依赖选择列表**中默认不展示。
+- 后端检索接口 `GET /api/metadata/starters` **仍正常返回**该条目，且照常参与依赖、互斥与生成校验——
+  隐藏仅影响前端展示，不会因隐藏而漏校验。
+- 若隐藏条目被**已选中组件**的 `requires` 引用，前端会**强制展示**它并可见其选中状态。
+
+**`requires`：依赖联动与前端行为**
+
+`requires` 为 **AND-of-OR-groups**：数组元素是分组，分组之间取 AND，分组内取 OR。
+
+```yaml
+requires: []              # 无依赖
+requires: [b, c]          # 扁平写法（历史语义）：需要 b 和 c，等价于 [[b], [c]]
+requires: [[b, c]]        # 需要 b 或 c（OR 分组）
+requires: [[b, c], d]     # 需要（b 或 c）且 d
+```
+
+- **单元素分组（无 OR）= 强制依赖**：选中该组件时，其依赖**默认选中且不可取消**（前端标记「依赖锁定」）；
+  取消父组件后，若该依赖不再被其他已选组件需要，则**自动取消并解锁**（随父组件联动）。
+- **多元素分组（OR）**：前端**不自动勾选**，仅提示「需要 B 或 C」；命中分组内任一项即满足该分组。
+- **互斥例外**：当强制依赖与已选组件（同组依赖或用户已选项）命中冲突规则（`conflict-rules.yml`）时，
+  互斥双方都**不锁定**，前端高亮标记互斥关系（「互斥：X」标签），并默认只自动选中其中一方；
+  用户可随时在二者间**二选一切换**（选中一方自动取消另一方）。
+- 生成期仍由后端按 `requires` 与冲突规则做最终校验，前端联动仅为即时引导。
 
 ---
 

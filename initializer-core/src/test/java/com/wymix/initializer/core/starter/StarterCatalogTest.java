@@ -34,6 +34,18 @@ class StarterCatalogTest {
     }
 
     @Test
+    void of_preservesHiddenFlagAndCompatConstructorDefaultsFalse() {
+        StarterCatalogEntry hidden = new StarterCatalogEntry("ghost", "tool", Maintainer.INTERNAL, "隐藏条目",
+                List.of(new DependencyCoord("g", "ghost", null)),
+                new LinkageSpec(null, List.of(), List.of(), List.of()),
+                false, List.of(), List.of(), true);
+        StarterCatalog catalog = StarterCatalog.of(List.of(hidden, entry("web")));
+        assertThat(catalog.entry("ghost").hidden()).isTrue();
+        // 旧签名兼容构造默认不隐藏
+        assertThat(catalog.entry("web").hidden()).isFalse();
+    }
+
+    @Test
     void of_duplicateId_throws9002() {
         assertThatThrownBy(() -> StarterCatalog.of(List.of(entry("web"), entry("web"))))
                 .isInstanceOfSatisfying(BusinessException.class, e -> {

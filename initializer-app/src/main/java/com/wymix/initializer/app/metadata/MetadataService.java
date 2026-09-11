@@ -158,7 +158,7 @@ public class MetadataService {
      */
     public record StarterDto(String id, String label, String maintainer, String category,
                              String description, String version, boolean required,
-                             List<List<String>> requires) {
+                             List<List<String>> requires, boolean hidden) {
 
         static StarterDto from(StarterQueryEngine.StarterSearchItem item) {
             return new StarterDto(item.id(), item.label(),
@@ -167,11 +167,12 @@ public class MetadataService {
                     item.description(),
                     item.version(),
                     item.required(),
-                    item.requires());
+                    item.requires(),
+                    item.hidden());
         }
 
         static StarterDto of(String id, String label, Maintainer maintainer) {
-            return new StarterDto(id, label, maintainer.name().toLowerCase(), null, null, null, false, List.of());
+            return new StarterDto(id, label, maintainer.name().toLowerCase(), null, null, null, false, List.of(), false);
         }
     }
 

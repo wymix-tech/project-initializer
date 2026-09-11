@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useWizardStore } from '@/stores/wizard'
+import { useWizardStore, type MutexInfo } from '@/stores/wizard'
 
 const wizard = useWizardStore()
 
@@ -66,6 +66,23 @@ function requiresHint(starter: { requires: string[][] }): string {
 function requiresSatisfied(starter: { id: string; requires: string[][] }): boolean {
   return starter.requires.every((group) => group.some((dep) => wizard.selectedStarters.has(dep)))
 }
+
+/** M3.8：该 starter 当前生效的互斥提示（取首条，无则 undefined）。 */
+function mutexOf(starter: { id: string }): MutexInfo | undefined {
+  return wizard.mutexInfo[starter.id]?.[0]
+}
+
+/** M3.8：互斥对象展示名（逗号分隔，供行内标签）。 */
+function mutexPartnersLabel(starter: { id: string }): string {
+  return (mutexOf(starter)?.partners ?? []).map(labelOf).join(' / ')
+}
+
+/** M3.8：互斥提示 tooltip（互斥对象 + 规则文案 + 切换指引）。 */
+function mutexTitle(starter: { id: string }): string {
+  const info = mutexOf(starter)
+  if (!info) return ''
+  return `与 ${(info.partners ?? []).map(labelOf).join('、')} 互斥（只能选一个），点击可随时切换。${info.message}`
+}
 </script>
 
 <template>
@@ -86,14 +103,15 @@ function requiresSatisfied(starter: { id: string; requires: string[][] }): boole
         <option v-for="c in categories" :key="c.value" :value="c.value">{{ c.label }}</option>
       </select>
     </div>
-    <ul v-if="wizard.starters.length > 0" class="starter-list">
-      <li v-for="st in wizard.starters" :key="st.id">
+    <ul v-if="wizard.displayStarters.length > 0" class="starter-list">
+      <li v-for="st in wizard.displayStarters" :key="st.id">
         <label
           class="starter"
           :class="{
             checked: wizard.selectedStarters.has(st.id),
             required: st.required,
             locked: wizard.lockedStarters.has(st.id),
+            mutex: wizard.mutexIds.has(st.id),
           }"
         >
           <input
@@ -104,6 +122,14 @@ function requiresSatisfied(starter: { id: string; requires: string[][] }): boole
           />
           <span class="starter-label">{{ st.id }}</span>
           <span v-if="st.required" class="required-tag" title="框架必选依赖，不可取消">必选</span>
+          <span v-else-if="wizard.lockedStarters.has(st.id)" class="dep-locked-tag" title="由已选组件的强制依赖自动选中，取消父组件后自动释放">依赖锁定</span>
+          <span
+            v-if="wizard.mutexIds.has(st.id)"
+            class="mutex-tag"
+            :title="mutexTitle(st)"
+          >
+            互斥：{{ mutexPartnersLabel(st) }}
+          </span>
           <span
             v-if="st.requires.length > 0"
             class="depends-tag"
@@ -236,6 +262,19 @@ function requiresSatisfied(starter: { id: string; requires: string[][] }): boole
   border-radius: 10px; padding: 0 6px; line-height: 16px; background: #dafbe1;
   flex-shrink: 0;
 }
+/* M3.8：强制依赖自动锁定（区别于必选） */
+.dep-locked-tag {
+  font-size: 11px; color: #07457d; border: 1px solid #54aeff;
+  border-radius: 10px; padding: 0 6px; line-height: 16px; background: #ddf4ff;
+  flex-shrink: 0;
+}
+/* M3.8：互斥标记（成对高亮，可二选一切换） */
+.mutex-tag {
+  font-size: 11px; color: #9a3412; border: 1px solid #fd8c73;
+  border-radius: 10px; padding: 0 6px; line-height: 16px; background: #fff1e5;
+  flex-shrink: 0;
+}
+.starter.mutex { border-right: 3px solid #fd8c73; }
 .category-tag {
   font-size: 11px; color: #0550ae; border: 1px solid #54aeff;
   border-radius: 10px; padding: 0 6px; line-height: 16px;
