@@ -7,29 +7,21 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.Instant;
 
 /**
- * 配置发布历史表实体（M3.1）：每次发布存一版发布时点的草稿全文，
- * 支持发布历史查询与回滚（M3.2 消费）。
+ * 配置发布历史头表实体（结构化改造 T1，{@code config_release}）：
+ * 只保留发布元信息，配置正文全部落在 {@code cfg_*} 关系表（按 {@code release_id} 关联）。
+ *
+ * <p>结构化改造前本表持有 metadata/starter/template/conflict 四段 YAML 全文；
+ * 改造后逐行为快照，{@code id} 即各 {@code cfg_*} 表的 {@code release_id}
+ * （{@code 0} 保留给草稿工作区，故自增主键从 1 起天然避开冲突）。
  *
  * <p>线程安全性：POJO 数据载体，不共享，无并发问题。
  */
 @TableName("config_release")
 public class ConfigReleaseEntity {
 
-    /** 主键 */
+    /** 主键（同时作为 {@code cfg_*} 关系表的 {@code release_id} 快照作用域值） */
     @TableId(type = IdType.AUTO)
     private Long id;
-
-    /** 发布时的 metadata 配置全文（YAML） */
-    private String metadataYaml;
-
-    /** 发布时的 starter 配置全文（YAML） */
-    private String starterYaml;
-
-    /** 发布时的 template 配置全文（YAML 多文档，M3.2；可空 = 无模板覆盖） */
-    private String templateYaml;
-
-    /** 发布时的 conflict-rule 配置全文（M3.5，conflict-rules.yml 同构；可空 = 无冲突规则） */
-    private String conflictYaml;
 
     /** 发布人 */
     private String releasedBy;
@@ -37,7 +29,7 @@ public class ConfigReleaseEntity {
     /** 发布时间 */
     private Instant releasedAt;
 
-    /** 发布备注 */
+    /** 发布备注（如「回滚自 #N」） */
     private String remark;
 
     public Long getId() {
@@ -46,38 +38,6 @@ public class ConfigReleaseEntity {
 
     public void setId(Long id) {
         this.id = id;
-    }
-
-    public String getMetadataYaml() {
-        return metadataYaml;
-    }
-
-    public void setMetadataYaml(String metadataYaml) {
-        this.metadataYaml = metadataYaml;
-    }
-
-    public String getStarterYaml() {
-        return starterYaml;
-    }
-
-    public String getTemplateYaml() {
-        return templateYaml;
-    }
-
-    public void setTemplateYaml(String templateYaml) {
-        this.templateYaml = templateYaml;
-    }
-
-    public String getConflictYaml() {
-        return conflictYaml;
-    }
-
-    public void setConflictYaml(String conflictYaml) {
-        this.conflictYaml = conflictYaml;
-    }
-
-    public void setStarterYaml(String starterYaml) {
-        this.starterYaml = starterYaml;
     }
 
     public String getReleasedBy() {

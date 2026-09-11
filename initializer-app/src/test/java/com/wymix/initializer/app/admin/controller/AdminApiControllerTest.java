@@ -41,13 +41,27 @@ class AdminApiControllerTest {
 
     private MockMvc mockMvc;
 
+    /**
+     * 构造被测 ConfigService（全部协作者 mock）。
+     *
+     * <p>T1 结构化改造后 ConfigService 新增「结构行码编器 / 结构行写入器」两个协作者，
+     * 本方法集中构造，避免各用例重复列表导致新增依赖时多处遗漏。
+     *
+     * @return 全部协作者均为 mock 的 ConfigService
+     */
+    private static ConfigService newConfigService() {
+        return new ConfigService(
+                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.ConfigRepository.class),
+                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogRefresher.class),
+                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder.class),
+                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.StructuredYamlCodec.class),
+                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.StructuredDraftWriter.class));
+    }
+
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new AdminApiController(new ConfigService(
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.ConfigRepository.class),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogRefresher.class),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder.class)),
+                        new AdminApiController(newConfigService(),
                                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class)))
                 .build();
     }
@@ -101,10 +115,7 @@ class AdminApiControllerTest {
     void getDraft_invalidKind_returns404MappedFrom4001() throws Exception {
         // kind 非法 → 4001（CONFIG_DRAFT_NOT_FOUND）→ GlobalExceptionHandler 422 语义测试在集成层覆盖
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new AdminApiController(new ConfigService(
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.ConfigRepository.class),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogRefresher.class),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder.class)),
+                        new AdminApiController(newConfigService(),
                                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class)))
                 .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
                 .build();

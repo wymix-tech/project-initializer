@@ -156,13 +156,15 @@ class CatalogSyncServiceTest {
         assertThat(outcome.channels().get(0).overridden()).isZero();
         assertThat(outcome.summary()).contains("test-repo 采纳 2 / 覆盖 0");
 
-        // 同步层草稿已重建（多文档 yml，制品库为权威源），手工草稿零改动
-        String syncYaml = repository.findDraft(ConfigKind.STARTER_SYNC).getContentYaml();
-        assertThat(syncYaml).contains("xxx-oss-spring-boot-starter", "xxx-sms-spring-boot-starter");
-        // 多文档必须以 --- 分隔：粘连成单文档会导致重复键覆盖、除首个外条目全部丢失
-        assertThat(syncYaml).contains("\n---\n");
-        assertThat(configService.getDraft(ConfigKind.STARTER).contentYaml()).isEqualTo(STARTER_YAML);
-        assertThat(configService.getDraft(ConfigKind.METADATA).contentYaml()).isEqualTo(METADATA_YAML);
+        // 同步层草稿已重建（结构化行，制品库为权威源），手工草稿零改动
+        var syncRows = repository.readDraftScope(ConfigKind.STARTER_SYNC);
+        assertThat(syncRows.starters()).extracting("starterId")
+                .containsExactlyInAnyOrder("xxx-oss-spring-boot-starter", "xxx-sms-spring-boot-starter");
+        assertThat(syncRows.starters()).allSatisfy(row ->
+                assertThat(row.getSource()).isEqualTo(com.wymix.initializer.app.admin.repository
+                        .ConfigRepository.SOURCE_SYNC));
+        assertThat(repository.readDraftScope(ConfigKind.STARTER).starters()).hasSize(1);
+        assertThat(repository.readDraftScope(ConfigKind.METADATA).javaVersions()).hasSize(1);
 
         // 审计留痕
         assertThat(repository.listAudits().stream()
@@ -207,9 +209,9 @@ class CatalogSyncServiceTest {
         assertThat(outcome.channels().get(0).adopted()).isZero();
         assertThat(outcome.channels().get(0).overridden()).isEqualTo(1);
 
-        // 同步层草稿不含被覆盖条目
-        assertThat(repository.findDraft(ConfigKind.STARTER_SYNC).getContentYaml())
-                .doesNotContain("repo-xxx-oss");
+        // 同步层草稿不含被覆盖条目（结构化行按 starterId 断言）
+        assertThat(repository.readDraftScope(ConfigKind.STARTER_SYNC).starters())
+                .extracting("starterId").doesNotContain("xxx-oss-spring-boot-starter");
 
         // 发布后快照保留手工配置
         configService.publish("tester", "after-conflict-sync");
@@ -256,7 +258,7 @@ class CatalogSyncServiceTest {
                     .anyMatch(a -> "SYNC_FAILED".equals(a.getAction()))).isTrue();
             // 草稿保持不变（上次同步结果保留）
             assertThat(configService.getDraft(ConfigKind.STARTER).contentYaml())
-                    .isEqualTo(STARTER_YAML);
+                    .contains("id: web");
         } finally {
             SHARED_PROVIDER.setFailing(false);
         }
@@ -278,9 +280,18 @@ class CatalogSyncServiceTest {
 
     @Test
     void mergedStarterYaml_syncOnlyChannel_passesThrough() {
-        var draft = new com.wymix.initializer.app.admin.entity.ConfigDraftEntity();
-        draft.setContentYaml("id: x\n");
-        assertThat(ConfigService.mergedStarterYaml(null, draft)).isEqualTo("id: x\n");
+        assertThat(ConfigService.mergedStarterYaml(null, "id: x\n")).isEqualTo("id: x\n");
+    }
+
+    @Test
+    void mergedStarterYaml_blankManual_fallsBackToSync() {
+        assertThat(ConfigService.mergedStarterYaml("  ", "id: x\n")).isEqualTo("id: x\n");
+    }
+
+    @Test
+    void mergedStarterYaml_bothChannels_joinedWithDocumentSeparator() {
+        assertThat(ConfigService.mergedStarterYaml("id: a\n", "id: b\n"))
+                .isEqualTo("id: a\n\n---\nid: b\n");
     }
 
     private void setProgrammable(SyncedStarter... starters) {

@@ -66,6 +66,16 @@ class ConfigServiceTest {
     @Autowired
     private ConfigService configService;
 
+    /** 清空所有 kind 的草稿结构行，保证用例之间互不干扰（共享 H2 库）。 */
+    @org.junit.jupiter.api.BeforeEach
+    void resetDrafts() {
+        repository.clearDraftKind(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA);
+        repository.clearDraftKind(com.wymix.initializer.app.admin.entity.ConfigKind.STARTER);
+        repository.clearDraftKind(com.wymix.initializer.app.admin.entity.ConfigKind.STARTER_SYNC);
+        repository.clearDraftKind(com.wymix.initializer.app.admin.entity.ConfigKind.CONFLICT_RULE);
+        repository.clearDraftKind(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE);
+    }
+
     @Autowired
     private CatalogSnapshotHolder snapshotHolder;
 
@@ -73,11 +83,12 @@ class ConfigServiceTest {
     private ConfigRepository repository;
 
     @Test
-    void getDraft_unsavedKind_returnsEmptyView() {
+    void getDraft_kindWithoutRows_returnsEmptyContent() {
+        // 结构行为空 → contentYaml 为 null；config_draft_meta 行由 data.sql 预置（version ≥ 0）
         DraftView view = configService.getDraft(
                 com.wymix.initializer.app.admin.entity.ConfigKind.CONFLICT_RULE);
         assertThat(view.contentYaml()).isNull();
-        assertThat(view.version()).isNull();
+        assertThat(view.version()).isNotNull().isGreaterThanOrEqualTo(0);
     }
 
     @Test
@@ -92,7 +103,11 @@ class ConfigServiceTest {
     void saveDraft_thenGet_returnsContentWithBumpedVersion() {
         saveValidDrafts();
         DraftView view = configService.getDraft(com.wymix.initializer.app.admin.entity.ConfigKind.METADATA);
-        assertThat(view.contentYaml()).isEqualTo(METADATA_YAML);
+        // 草稿正文经「YAML → 结构行 → YAML」往返，文本格式可能与原始输入不同，
+        // 断言语义等价（结构化改造 T1 的合法契约变化）
+        assertThat(view.contentYaml())
+                .contains("javaVersions").contains("bootVersions")
+                .contains("17").contains("3.2.5");
         assertThat(view.version()).isNotNull();
     }
 
@@ -209,23 +224,24 @@ class ConfigServiceTest {
     }
 
     @Test
-    void rollback_invalidHistory_throws4002_andKeepsCurrentSnapshot(@Autowired org.springframework.context.ApplicationContext ctx) {
-        // v1 合法发布 → 直接篡改历史记录全文（模拟历史版本因装载规则演进失效）
+    void rollback_invalidHistory_throws4002_andKeepsCurrentSnapshot(
+            @Autowired org.springframework.context.ApplicationContext ctx) {
+        // v1 合法发布 → 直接篡改历史快照的结构行（模拟历史版本因装载规则演进失效）
         saveValidDrafts();
         long v1 = configService.publish("tester", "v1").releaseId();
         CatalogSnapshot current = snapshotHolder.current();
 
-        // 注入非法全文到历史记录（绕过草稿通道，模拟历史损坏）：Boot 引用未定义的 Java 版本
-        var mapper = ctx.getBean(com.wymix.initializer.app.admin.mapper.ConfigReleaseMapper.class);
-        var release = mapper.selectById(v1);
-        release.setMetadataYaml(METADATA_YAML.replace("supportedJavaVersions: [\"17\"]",
-                "supportedJavaVersions: [\"ghost\"]"));
-        mapper.updateById(release);
+        // 注入非法结构行（绕过草稿通道）：把快照里的 Java 版本 ID 改成未定义的 "ghost"，
+        // 而兼容矩阵仍引用原 Java 行 → 渲染出的 metadata 触发装载期悬空引用校验
+        var mapper = ctx.getBean(com.wymix.initializer.app.admin.mapper.CfgJavaVersionMapper.class);
+        var javaRows = mapper.selectByReleaseId(v1);
+        assertThat(javaRows).isNotEmpty();
+        javaRows.get(0).setVersionId("ghost");
+        mapper.updateById(javaRows.get(0));
 
         assertThatThrownBy(() -> configService.rollback(v1, "tester"))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED))
-                .hasMessageContaining("ghost");
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_VALIDATION_FAILED));
         // 当前快照不受回滚失败影响
         assertThat(snapshotHolder.current()).isSameAs(current);
         assertThat(configService.listAudits())

@@ -328,7 +328,113 @@ curl -X POST -H "X-Admin-Token: $TOKEN" -H "Content-Type: application/json" \
 
 **后端零改动**：向导复用 `PUT /api/admin/config/starter` + `POST /api/admin/config/publish`，生成的 yml 与 `catalog/starters/*.yml` 同构，直接追加进 starter 草稿。高级用户可随时切回「YAML 直编」模式。
 
-## 6. 验证清单
+## 6. 升级说明：YAML 文本 → 结构化关系表（T1）
+
+> 本节对应「配置结构化入库」改造的第一阶段（T1，持久层）。**上线前必读**，尤其是已在生产
+> 发布过配置的环境。
+
+### 6.1 存储模型变化
+
+`config_draft.content_yaml` / `config_release.*_yaml` 的「YAML 文本一列存到底」模型已替换为
+**关系表 + 版本作用域**模型：
+
+| 旧模型 | 新模型 |
+|---|---|
+| `config_draft(id, kind, content_yaml, version, …)` | `config_draft_meta(id, kind, version, …)` 只存 kind 级乐观锁；正文按 kind 拆到 15 张 `cfg_*` 表 |
+| `config_release(id, metadata_yaml, starter_yaml, template_yaml, conflict_yaml, …)` | `config_release(id, released_by, released_at, remark)` 只存发布头；正文在 `cfg_*` 表按 `release_id` 隔离 |
+| 草稿与快照靠「不同表」区分 | 草稿与快照**同表**，靠 `release_id` 区分 |
+
+**版本作用域约定**（理解这张表就理解了全部数据）：
+
+| `release_id` | 含义 | 可写 |
+|---|---|---|
+| `0` | 当前草稿工作区（管理端编辑的就是它） | 是 |
+| `> 0` | 某次发布的不可变快照（值等于 `config_release.id`） | 否（发布时整体复制生成） |
+
+**所有 `cfg_*` 表的唯一约束都带 `release_id`**。这是硬约束：漏一处，发布复制行为新
+`release_id` 时就会撞上草稿行，出现「发布静默改写草稿」——这也是 T1 全部 DDL 都要过一遍
+`UNIQUE (release_id, …)` 复核的原因。
+
+### 6.2 关系表清单（15 张）
+
+| 分组 | 表 | 说明 |
+|---|---|---|
+| 元数据 | `cfg_java_version` | Java 版本 |
+| | `cfg_boot_version` | Boot 版本（含 `fp_group`/`fp_artifact`/`fp_version` 框架父 POM） |
+| | `cfg_boot_java` | Boot ↔ Java 兼容矩阵（存 **Java 版本业务 ID**，非主键） |
+| | `cfg_boot_starter_ref` | Boot 版本可选 starter 白名单 |
+| starter | `cfg_starter` | starter 主行（`source` = `MANUAL` / `SYNC`） |
+| | `cfg_starter_dependency` | 依赖坐标 GAV |
+| | `cfg_starter_require_group` | 依赖联动 OR 分组（AND-of-OR 第一层） |
+| | `cfg_starter_require_item` | 联动组内项（AND-of-OR 第二层） |
+| | `cfg_starter_boot_version` | starter ↔ Boot 版本关联 |
+| | `cfg_starter_linkage_template` | `linkages.templates` |
+| | `cfg_starter_linkage_yml` | `linkages.application-yml-fragments` |
+| | `cfg_starter_linkage_abstract` | `linkages.abstract-classes` |
+| 冲突规则 | `cfg_conflict_rule` | 规则主行（`rule_type` = `PAIR` / `GROUP`） |
+| | `cfg_conflict_rule_starter` | 规则涉及的 starter 多选 |
+| 模板 | `cfg_template` | 模板名 + 全文（`content` 为 CLOB，列表查询不取） |
+
+另有 `config_draft_meta`（草稿种类乐观锁）、`config_release`（发布头）、`config_audit`（审计）。
+
+> `cfg_boot_java` 存 Java **业务 ID** 而非主键是刻意设计：草稿态必须能把「引用了拼错/尚未
+> 添加的 Java 版本」原样存下来，发布期才能给出 `Boot 版本 X 引用了未定义的 Java 版本 Y`
+> 的精确 4002 明细。若强绑主键，非法输入在保存阶段就会被丢弃，用户看不到问题所在。
+
+### 6.3 存量数据迁移
+
+两条路径，按能否停机选择：
+
+**路径 A｜导出 → 导入（推荐，有现网数据时）**
+
+1. 用**旧版** jar 启动一次，逐个导出四类草稿全文：
+
+   ```bash
+   for k in metadata starter conflict-rule template; do
+     curl -H "X-Admin-Token: $TOKEN" http://localhost:8080/api/admin/config/$k \
+       | jq -r .contentYaml > legacy-$k.yml
+   done
+   ```
+
+2. 升级到新版本，重启（首次启动会自动建表）。
+3. 逐个回填：`PUT /api/admin/config/{kind}`，body 用上一步导出的 YAML。
+4. 在管理端**发布一版**作为回滚基线。
+
+**路径 B｜库内直迁（可停机窗口，旧 `config_draft` 表仍在时）**
+
+用 `LegacyYamlMigration` 直接把旧表 YAML 转成结构行，无需人工导出导入：
+
+```java
+if (migration.legacyDraftTableExists()) {   // 旧表存在才需要迁
+    migration.migrateFromLegacyDraftTable();
+}
+```
+
+> **执行前务必备份数据库**。整体在单事务内执行，任一 kind 失败则全部回滚，
+> 重复执行结果一致（按 kind 先清后写）。
+
+**⚠️ 发布历史的回滚边界（重要）**
+
+旧 `config_release` 的正文列在新 schema 中已移除；旧发布数据**没有行级作用域信息**，
+无法逐行还原为「当时的历史快照」。因此：
+
+- 历史发布记录**只保留头信息**（发布人 / 时间 / 备注）
+- **可回滚的基线是「迁移后发布的版本」**，不是升级前的历史版本
+- 若确需保留旧版本内容作为回滚点，请在升级前用旧版 jar 导出四类 YAML 并留档，
+  需要时走「路径 A」回填后再发布
+
+### 6.4 行为差异（升级后需知）
+
+| 场景 | 差异 |
+|---|---|
+| `GET /api/admin/config/{kind}` 返回的 `contentYaml` | 语义等价，但**文本格式可能不同**（统一块风格、缩进 2 格、字符串引号按需添加）。按 YAML 语义比较，不要做文本 diff |
+| 保存草稿 | 正文落结构行；**结构非法的 YAML 在保存阶段即被拒绝**（4002），不再等到发布期。图合法性（悬空引用、ID 重复）仍留到发布期校验，草稿可逐步补全 |
+| 并发编辑 | 乐观锁版本仍在 `GET` 响应的 `version` 字段，`If-Match` 语义不变 |
+| 发布 | 同一事务内：写发布头 → 复制草稿行为新 `release_id` → 切换快照；失败整体回滚，旧快照继续服务 |
+| 回滚 | 读目标 `release_id` 的结构行重新校验后复制为新 release；历史快照零改写 |
+| `starter-sync` | `ConfigKind.STARTER_SYNC` **保留**；正文改为 `cfg_starter.source = 'SYNC'` 的行，同名手工（`MANUAL`）优先语义不变 |
+
+## 7. 验证清单
 
 配置变更后建议按序验证：
 

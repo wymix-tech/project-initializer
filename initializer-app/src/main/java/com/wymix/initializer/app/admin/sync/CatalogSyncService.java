@@ -2,10 +2,11 @@ package com.wymix.initializer.app.admin.sync;
 
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
-import com.wymix.initializer.app.admin.entity.ConfigDraftEntity;
 import com.wymix.initializer.app.admin.entity.ConfigKind;
-import com.wymix.initializer.app.admin.refresh.CatalogRefresher;
+import com.wymix.initializer.app.admin.entity.ConfigDraftMetaEntity;
 import com.wymix.initializer.app.admin.repository.ConfigRepository;
+import com.wymix.initializer.app.admin.repository.StructuredDraftWriter;
+import com.wymix.initializer.app.admin.repository.StructuredYamlCodec;
 import com.wymix.initializer.core.sync.CatalogMerger;
 import com.wymix.initializer.core.sync.CatalogSyncProvider;
 import com.wymix.initializer.core.sync.SyncedStarter;
@@ -53,18 +54,23 @@ public class CatalogSyncService {
 
     private final List<CatalogSyncProvider> providers;
     private final ConfigRepository repository;
-    private final CatalogRefresher refresher;
+    /** 结构行 ↔ 语义视图码编器（T1 过渡；与发布链路同源，保证保留集口径一致）。 */
+    private final StructuredYamlCodec codec;
+    /** YAML 语义文本 → 结构行写入器（T1 过渡；同步层行带 {@code source = SYNC} 标记落库）。 */
+    private final StructuredDraftWriter draftWriter;
 
     /**
-     * @param providers  同步通道清单（Bean 注入，按装配顺序；空清单时同步禁用）
-     * @param repository 配置存储仓库
-     * @param refresher  清单校验器（宽松 ID 解析与发布链路同源，保证保留集口径一致）
+     * @param providers   同步通道清单（Bean 注入，按装配顺序；空清单时同步禁用）
+     * @param repository  配置存储仓库（结构化 cfg_* 表读写）
+     * @param codec       结构行 ↔ 语义视图码编器（手工草稿条目 ID 提取用）
+     * @param draftWriter YAML 语义文本 → 结构行写入器（同步层行写入用）
      */
     public CatalogSyncService(List<CatalogSyncProvider> providers, ConfigRepository repository,
-                              CatalogRefresher refresher) {
+                              StructuredYamlCodec codec, StructuredDraftWriter draftWriter) {
         this.providers = providers.stream().filter(CatalogSyncProvider::enabled).toList();
         this.repository = repository;
-        this.refresher = refresher;
+        this.codec = codec;
+        this.draftWriter = draftWriter;
     }
 
     /**
@@ -121,11 +127,9 @@ public class CatalogSyncService {
     private ChannelOutcome syncChannel(CatalogSyncProvider provider) {
         SyncResult fetched = provider.fetch();
 
-        Set<String> reservedIds = new LinkedHashSet<>();
-        ConfigDraftEntity starterDraft = repository.findDraft(ConfigKind.STARTER);
-        if (starterDraft != null && starterDraft.getContentYaml() != null) {
-            reservedIds.addAll(refresher.parseStarterIds(starterDraft.getContentYaml()));
-        }
+        // 保留集 = 手工 starter 草稿条目的结构行 ID + 当前同步层草稿条目 ID
+        Set<String> reservedIds = new LinkedHashSet<>(
+                codec.starterIds(repository.readDraftScope(ConfigKind.STARTER)));
 
         CatalogMerger.MergeOutcome merged = CatalogMerger.merge(reservedIds, fetched.starters());
 
@@ -140,17 +144,25 @@ public class CatalogSyncService {
     }
 
     /**
-     * 同步层草稿写入：存在则覆盖，不存在则插入。
+     * 同步层草稿写入（结构化）：清空旧 {@code source = SYNC} 结构行后整体重写入，并推进
+     * {@code config_draft_meta} 的 kind 级乐观锁与修改人。
      *
-     * @param yaml     同步层草稿全文（多文档，空串表示清空）
+     * <p>草稿载体从 YAML 文本换成结构行，{@link ConfigKind#STARTER_SYNC} 取值与审计语义不变；
+     * 同名手工优先由上游 {@code CatalogMerger} 的保留集过滤保证，本方法不做二次去重。
+     *
+     * @param yaml     同步层草稿语义文本（多文档，空串表示清空）
      * @param operator 操作人（provider 标识）
      */
     private void upsertSyncDraft(String yaml, String operator) {
-        ConfigDraftEntity entity = repository.findDraft(ConfigKind.STARTER_SYNC);
-        if (entity == null) {
-            repository.insertDraft(ConfigKind.STARTER_SYNC, yaml, operator);
+        repository.clearDraftKind(ConfigKind.STARTER_SYNC);
+        if (yaml != null && !yaml.isBlank()) {
+            draftWriter.write(ConfigKind.STARTER_SYNC, yaml);
+        }
+        ConfigDraftMetaEntity meta = repository.findDraftMeta(ConfigKind.STARTER_SYNC);
+        if (meta == null) {
+            repository.insertDraftMeta(ConfigKind.STARTER_SYNC, operator);
         } else {
-            repository.updateDraft(entity, yaml);
+            repository.updateDraftMeta(meta, operator);
         }
     }
 

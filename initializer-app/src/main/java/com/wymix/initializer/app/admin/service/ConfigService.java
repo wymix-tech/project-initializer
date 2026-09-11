@@ -3,13 +3,16 @@ package com.wymix.initializer.app.admin.service;
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.app.admin.entity.ConfigAuditEntity;
-import com.wymix.initializer.app.admin.entity.ConfigDraftEntity;
 import com.wymix.initializer.app.admin.entity.ConfigKind;
 import com.wymix.initializer.app.admin.entity.ConfigReleaseEntity;
 import com.wymix.initializer.app.admin.refresh.CatalogRefresher;
 import com.wymix.initializer.app.admin.refresh.CatalogSnapshot;
 import com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder;
 import com.wymix.initializer.app.admin.repository.ConfigRepository;
+import com.wymix.initializer.app.admin.entity.ConfigDraftMetaEntity;
+import com.wymix.initializer.app.admin.repository.StructuredDraftWriter;
+import com.wymix.initializer.app.admin.repository.StructuredSnapshot;
+import com.wymix.initializer.app.admin.repository.StructuredYamlCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -18,7 +21,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * 管理端配置应用服务（M3.1/M3.2）：草稿 CRUD、发布、回滚、发布历史与审计。
+ * 管理端配置应用服务（M3.1/M3.2 → 结构化改造 T1）：草稿 CRUD、发布、回滚、发布历史与审计。
+ *
+ * <p><b>结构化改造（T1）后的草稿载体</b>：草稿正文已从 {@code config_draft.content_yaml}
+ * 迁到 {@code cfg_*} 关系表的 {@code release_id = 0} 行；kind 级乐观锁迁到
+ * {@code config_draft_meta.version}。本类对外仍以 YAML 文本为契约（HTTP 层与既有测试不变），
+ * 内部经 {@link StructuredYamlCodec} 在「结构行 ↔ 语义视图」之间转换——
+ * T2 交付装配器后本类的转换职责将被装配器取代，对外的 YAML 契约同时收敛为结构化 DTO。
  *
  * <p>核心原则（概要设计 §6）：
  * <ul>
@@ -52,20 +61,29 @@ public class ConfigService {
     private final ConfigRepository repository;
     private final CatalogRefresher refresher;
     private final CatalogSnapshotHolder snapshotHolder;
+    /** 结构行 ↔ 语义视图码编器（T1 过渡；T2 装配器落地后由装配器取代）。 */
+    private final StructuredYamlCodec codec;
+    /** YAML 语义文本 → 结构行写入器（T1 过渡；T3 表单化 API 落地后收缩为导入通道专用）。 */
+    private final StructuredDraftWriter draftWriter;
 
     /** 发布/回滚进程内互斥锁：避免并发发布同时通过校验后互相覆盖快照与发布记录。 */
     private final Object publishLock = new Object();
 
     /**
-     * @param repository      配置存储仓库
-     * @param refresher       清单校验/快照构建器
-     * @param snapshotHolder  当前快照持有器
+     * @param repository     配置存储仓库（结构化 cfg_* 表读写）
+     * @param refresher      清单校验/快照构建器
+     * @param snapshotHolder 当前快照持有器
+     * @param codec          结构行 ↔ 语义视图码编器（T1 过渡桥）
+     * @param draftWriter    YAML 语义文本 → 结构行写入器（T1 过渡桥）
      */
     public ConfigService(ConfigRepository repository, CatalogRefresher refresher,
-                         CatalogSnapshotHolder snapshotHolder) {
+                         CatalogSnapshotHolder snapshotHolder, StructuredYamlCodec codec,
+                         StructuredDraftWriter draftWriter) {
         this.repository = repository;
         this.refresher = refresher;
         this.snapshotHolder = snapshotHolder;
+        this.codec = codec;
+        this.draftWriter = draftWriter;
     }
 
     /**
@@ -77,13 +95,11 @@ public class ConfigService {
      * 此处拼接是「先过滤后合并」链路的终点；若两通道出现同名（如同步后手工又新增），
      * 发布期整体拒绝并在错误明细中提示，绝不静默覆盖手工配置。
      *
-     * @param starterDraft 手工 starter 草稿（可空）
-     * @param syncDraft    制品库同步层草稿（可空）
+     * @param manual 手工 starter 多文档 yml（可空）
+     * @param synced 制品库同步层多文档 yml（可空）
      * @return 合并后的 starter 多文档 yml（两通道均空返回 null）
      */
-    public static String mergedStarterYaml(ConfigDraftEntity starterDraft, ConfigDraftEntity syncDraft) {
-        String manual = starterDraft == null ? null : starterDraft.getContentYaml();
-        String synced = syncDraft == null ? null : syncDraft.getContentYaml();
+    public static String mergedStarterYaml(String manual, String synced) {
         if (manual == null || manual.isBlank()) {
             return synced == null || synced.isBlank() ? null : synced;
         }
@@ -94,50 +110,97 @@ public class ConfigService {
     }
 
     /**
-     * 读取指定种类当前草稿。
+     * 读取指定种类当前草稿（结构化）：读 {@code cfg_*} 草稿行 → 渲染为 YAML 同构文本。
+     *
+     * <p>对外契约保持 YAML 文本不变（HTTP 层与既有测试零改动），
+     * 结构化 DTO 契约由 T3 交付；版本取 {@code config_draft_meta.version}（kind 级乐观锁）。
      *
      * @param kind 配置种类
-     * @return 草稿视图（未保存过时 contentYaml 为 null）
+     * @return 草稿视图（该 kind 尚无结构行时 contentYaml / version 为 null）
      * @throws BusinessException kind 非法（4001，由 ConfigKind.parse 抛出）
      */
     public DraftView getDraft(ConfigKind kind) {
-        ConfigDraftEntity entity = repository.findDraft(kind);
-        return entity == null
-                ? new DraftView(kind.lowerName(), null, null, null)
-                : new DraftView(kind.lowerName(), entity.getContentYaml(), entity.getVersion(), entity.getUpdatedAt());
+        ConfigDraftMetaEntity meta = repository.findDraftMeta(kind);
+        String yaml = renderDraft(kind);
+        return new DraftView(kind.lowerName(), yaml,
+                meta == null ? null : meta.getVersion(),
+                meta == null ? null : meta.getUpdatedAt());
     }
 
     /**
-     * 保存草稿（存在则乐观锁更新，不存在则首次插入）。
+     * 渲染指定 kind 的草稿结构行（T1 过渡；T2 装配器接管后本方法删除）。
      *
-     * @param kind   配置种类
-     * @param yaml   配置原文
-     * @param ifMatch 乐观锁期望版本（GET 草稿返回的 version；首次保存传 null）
-     * @param operator 操作人
-     * @throws BusinessException 乐观锁冲突（4003）/ 版本不匹配（4003 语义：If-Match 与当前不符）
+     * @param kind 配置种类
+     * @return YAML 同构文本；该 kind 无结构行时返回 {@code null}
      */
+    private String renderDraft(ConfigKind kind) {
+        StructuredSnapshot snapshot = repository.readDraftScope(kind);
+        return switch (kind) {
+            case METADATA -> codec.renderMetadata(snapshot);
+            case STARTER, STARTER_SYNC -> codec.renderStarters(snapshot);
+            case CONFLICT_RULE -> codec.renderConflictRules(snapshot);
+            case TEMPLATE -> codec.renderTemplates(snapshot);
+        };
+    }
+
+    /**
+     * 保存草稿（结构化）：kind 级乐观锁判定通过后，整体替换该 kind 的结构行。
+     *
+     * <p>写入顺序：先按 {@code config_draft_meta.version} 抢占 kind 级乐观锁（4003 语义），
+     * 再把 YAML 语义文本解析为结构行并整体替换（先清后写，天然无孤儿子行）。
+     *
+     * <p>本方法对外仍收 YAML 文本（T1 过渡契约）；T3 表单化 API 落地后改收结构化 DTO，
+     * 届时本方法收缩为「导入通道（T4）」专用。
+     *
+     * @param kind     配置种类
+     * @param yaml     配置原文（与 kind 语义同构的 YAML）
+     * @param ifMatch  乐观锁期望版本（GET 草稿返回的 version；首次保存传 null）
+     * @param operator 操作人
+     * @throws BusinessException 乐观锁冲突 / 版本不匹配（4003）；YAML 结构非法（4002）
+     */
+    @Transactional
     public void saveDraft(ConfigKind kind, String yaml, Integer ifMatch, String operator) {
-        ConfigDraftEntity entity = repository.findDraft(kind);
-        if (entity == null) {
+        ConfigDraftMetaEntity meta = repository.findDraftMeta(kind);
+        if (meta == null) {
             if (ifMatch != null) {
                 throw new BusinessException(ErrorCode.CONFIG_CONCURRENT_MODIFY,
                         "草稿尚不存在，无法按版本 " + ifMatch + " 更新（请先 GET 获取最新版本）");
             }
-            repository.insertDraft(kind, yaml, operator);
+            meta = repository.insertDraftMeta(kind, operator);
         } else {
-            if (ifMatch != null && !ifMatch.equals(entity.getVersion())) {
+            if (ifMatch != null && !ifMatch.equals(meta.getVersion())) {
                 throw new BusinessException(ErrorCode.CONFIG_CONCURRENT_MODIFY,
-                        "草稿已被他人修改（当前版本 " + entity.getVersion() + "，请求基于版本 " + ifMatch + "）");
+                        "草稿已被他人修改（当前版本 " + meta.getVersion() + "，请求基于版本 " + ifMatch + "）");
             }
             if (ifMatch == null) {
-                // 未携带 If-Match 的更新：按当前版本走乐观锁（等价 last-write-wins 但保留 MyBatis-Plus 乐观锁路径）
-                ifMatch = entity.getVersion();
+                // 未携带 If-Match 的更新：按当前版本走乐观锁（等价 last-write-wins 但保留乐观锁路径）
+                ifMatch = meta.getVersion();
             }
-            entity.setVersion(ifMatch);
-            repository.updateDraft(entity, yaml);
+            meta.setVersion(ifMatch);
+            repository.updateDraftMeta(meta, operator);
         }
+        writeDraft(kind, yaml);
         repository.insertAudit(ACTION_UPDATE_DRAFT, kind, operator, "草稿已更新");
         log.info("草稿已更新: kind={}, operator={}", kind.lowerName(), operator);
+    }
+
+    /**
+     * 把 YAML 语义文本写入对应 kind 的结构行（T1 过渡；T3/T4 接管后收缩为导入通道专用）。
+     *
+     * <p>T1 阶段只交付持久层，结构行与 YAML 之间的转换由
+     * {@link StructuredDraftWriter} 承担；T3 表单化 API 交付后本方法不再被管理端调用。
+     *
+     * @param kind 配置种类
+     * @param yaml 与 kind 语义同构的 YAML 文本（可空 = 清空该 kind）
+     * @throws BusinessException YAML 结构非法（4002）
+     */
+    private void writeDraft(ConfigKind kind, String yaml) {
+        repository.clearDraftKind(kind);
+        if (yaml == null || yaml.isBlank()) {
+            return;
+        }
+        int rows = draftWriter.write(kind, yaml);
+        log.debug("结构化草稿已写入: kind={}, rows={}", kind.lowerName(), rows);
     }
 
     /**
@@ -162,38 +225,44 @@ public class ConfigService {
         }
     }
 
+    /**
+     * 发布主流程（T1 过渡实现）。
+     *
+     * <p>T1 阶段快照仍按「草稿 YAML → 既有校验通道」构建（结构化装配器是 T2 的交付物），
+     * 但发布记录不再存 YAML：改为写 {@code config_release} 头 + 把草稿结构行
+     * {@link ConfigRepository#copyAsRelease(long, long) 复制为带新 release_id 的不可变快照行}。
+     * 因此 T1 已达成「配置正文结构化落库、版本快照按行隔离」的目标，
+     * T2 只需把快照构建从 YAML 换成表行装配即可，
+     * 持久层与版本语义无需二次改动。
+     *
+     * @param operator 发布人
+     * @param remark   发布备注
+     * @return 发布结果
+     */
     private PublishResult doPublish(String operator, String remark) {
-        ConfigDraftEntity metadataDraft = repository.findDraft(ConfigKind.METADATA);
-        ConfigDraftEntity starterDraft = repository.findDraft(ConfigKind.STARTER);
-        ConfigDraftEntity templateDraft = repository.findDraft(ConfigKind.TEMPLATE);
-        ConfigDraftEntity conflictDraft = repository.findDraft(ConfigKind.CONFLICT_RULE);
-        ConfigDraftEntity syncDraft = repository.findDraft(ConfigKind.STARTER_SYNC);
+        String metadataYaml = renderDraft(ConfigKind.METADATA);
+        String starterYaml = mergedStarterYaml(renderDraft(ConfigKind.STARTER), renderDraft(ConfigKind.STARTER_SYNC));
+        String templateYaml = renderDraft(ConfigKind.TEMPLATE);
+        String conflictYaml = renderDraft(ConfigKind.CONFLICT_RULE);
 
         CatalogSnapshot snapshot;
         try {
-            snapshot = refresher.validateAndBuild(
-                    metadataDraft == null ? null : metadataDraft.getContentYaml(),
-                    mergedStarterYaml(starterDraft, syncDraft),
-                    templateDraft == null ? null : templateDraft.getContentYaml(),
-                    conflictDraft == null ? null : conflictDraft.getContentYaml());
+            snapshot = refresher.validateAndBuild(metadataYaml, starterYaml, templateYaml, conflictYaml);
         } catch (BusinessException e) {
             // 发布失败不写发布历史；审计留痕（含失败明细），供管理端展示
             repository.insertAudit("PUBLISH_FAILED", null, operator, e.getMessage());
             throw e;
         }
 
-        ConfigReleaseEntity release = repository.insertRelease(
-                metadataDraft.getContentYaml(),
-                starterDraft == null ? null : starterDraft.getContentYaml(),
-                templateDraft == null ? null : templateDraft.getContentYaml(),
-                conflictDraft == null ? null : conflictDraft.getContentYaml(),
-                operator, remark);
+        ConfigReleaseEntity release = repository.insertRelease(operator, remark);
+        int rows = repository.copyAsRelease(ConfigRepository.DRAFT_RELEASE_ID, release.getId());
         repository.insertAudit(ACTION_PUBLISH, null, operator,
-                "发布 #" + release.getId() + "：Java " + snapshot.metadataCatalog().javaVersions().size()
+                "发布 #" + release.getId() + "：结构行 " + rows
+                        + " 行 / Java " + snapshot.metadataCatalog().javaVersions().size()
                         + " 个版本 / starter 清单 " + snapshot.starterCatalog().size()
-                        + " 项 / 模板覆盖 " + snapshot.templateOverrides().size()
+                        + " 项 / 模板 " + snapshot.templateOverrides().size()
                         + " 个 / 冲突规则 " + snapshot.conflictCatalog().size() + " 条");
-        log.info("配置已发布: releaseId={}, operator={}", release.getId(), operator);
+        log.info("配置已发布: releaseId={}, rows={}, operator={}", release.getId(), rows, operator);
         PublishResult result = new PublishResult(release.getId(),
                 snapshot.metadataCatalog().javaVersions().size(),
                 snapshot.starterCatalog().size(),
@@ -222,34 +291,52 @@ public class ConfigService {
         }
     }
 
+    /**
+     * 回滚主流程（结构化）：读目标 release 的**结构行快照**重新走完整校验，通过后
+     * 把该快照复制为新的 release（不在原地改写历史行）。
+     *
+     * <p>结构化改造后回滚不再依赖发布记录里的 YAML 全文：
+     * 历史快照本身就是 {@code cfg_*} 表里 {@code release_id = N} 的一组行，
+     * 因此回滚 = 「读 N 作用域行 → 校验 → 复制为 N+1 作用域」，历史版本零改写。
+     *
+     * <p>不绕过校验通道：历史快照仍要重新渲染语义视图并过一遍装载期校验，
+     * 因规则演进而失效的历史版本会被拒（4002），旧快照继续服务。
+     *
+     * @param releaseId 目标发布记录 ID
+     * @param operator  操作人
+     * @return 回滚结果（新发布记录 ID + 快照概况）
+     * @throws BusinessException 发布记录不存在（4002）或目标版本校验失败（4002）
+     */
     private PublishResult doRollback(long releaseId, String operator) {
         ConfigReleaseEntity release = repository.findRelease(releaseId);
         if (release == null) {
             throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
                     "回滚失败: 发布记录不存在: #" + releaseId);
         }
-        if (release.getMetadataYaml() == null) {
+        StructuredSnapshot historical = repository.readScope(releaseId);
+        if (historical.javaVersions().isEmpty()) {
             throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
-                    "回滚失败: 发布记录 #" + releaseId + " 缺失 metadata 配置全文，无法重建快照");
+                    "回滚失败: 发布记录 #" + releaseId + " 缺失结构行，无法重建快照");
         }
         CatalogSnapshot snapshot;
         try {
             snapshot = refresher.validateAndBuild(
-                    release.getMetadataYaml(), release.getStarterYaml(), release.getTemplateYaml(),
-                    release.getConflictYaml());
+                    codec.renderMetadata(historical),
+                    codec.renderStarters(historical),
+                    codec.renderTemplates(historical),
+                    codec.renderConflictRules(historical));
         } catch (BusinessException e) {
             repository.insertAudit(ACTION_ROLLBACK_FAILED, null, operator,
                     "回滚 #" + releaseId + " 失败: " + e.getMessage());
             throw e;
         }
 
-        ConfigReleaseEntity newRelease = repository.insertRelease(
-                release.getMetadataYaml(), release.getStarterYaml(), release.getTemplateYaml(),
-                release.getConflictYaml(),
-                operator, "回滚自 #" + releaseId);
+        ConfigReleaseEntity newRelease = repository.insertRelease(operator, "回滚自 #" + releaseId);
+        int rows = repository.copyAsRelease(releaseId, newRelease.getId());
         repository.insertAudit(ACTION_ROLLBACK, null, operator,
-                "回滚 #" + releaseId + " → 新发布 #" + newRelease.getId());
-        log.info("配置已回滚: from={}, to={}, operator={}", releaseId, newRelease.getId(), operator);
+                "回滚 #" + releaseId + " → 新发布 #" + newRelease.getId() + "（结构行 " + rows + " 行）");
+        log.info("配置已回滚: from={}, to={}, rows={}, operator={}",
+                releaseId, newRelease.getId(), rows, operator);
         PublishResult result = new PublishResult(newRelease.getId(),
                 snapshot.metadataCatalog().javaVersions().size(),
                 snapshot.starterCatalog().size(),

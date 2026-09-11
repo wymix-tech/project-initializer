@@ -1,9 +1,10 @@
 package com.wymix.initializer.app.admin.refresh;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wymix.initializer.app.InitializationProperties;
 import com.wymix.initializer.app.admin.entity.ConfigReleaseEntity;
-import com.wymix.initializer.app.admin.mapper.ConfigReleaseMapper;
+import com.wymix.initializer.app.admin.repository.ConfigRepository;
+import com.wymix.initializer.app.admin.repository.StructuredSnapshot;
+import com.wymix.initializer.app.admin.repository.StructuredYamlCodec;
 import com.wymix.initializer.app.catalog.ExternalCatalogLoader;
 import com.wymix.initializer.core.metadata.MetadataCatalog;
 import com.wymix.initializer.core.starter.StarterCatalog;
@@ -25,7 +26,7 @@ import java.util.Map;
  *   <li>外部清单目录（{@code initializer.catalog.dir}，默认 jar 同级 {@code catalog/}）：
  *       目录下有 {@code metadata.yml} / {@code starters/*.yml} 即以其播种，格式正确即可用</li>
  *   <li>{@code --demo} 启动：以 classpath 内置清单构建初始快照</li>
- *   <li>非 {@code --demo} 启动：从 DB 加载最新已发布 release 还原快照，
+ *   <li>非 {@code --demo} 启动：从 DB 最新已发布 release 的**结构行**还原快照，
  *       保证管理后台发布过的配置重启后依然生效（避免快照在内存中丢失）</li>
  * </ul>
  * 两者都未命中时快照保持未初始化，元数据/生成读路径回退到空清单。
@@ -48,9 +49,10 @@ public class CatalogSnapshotBootstrap {
      * @param externalCatalogLoader 外部清单目录装载器（jar 外配置，未提供时为空结果）
      * @param metadataCatalog classpath 内置元数据目录
      * @param starterCatalog  classpath 内置 starter 清单
-     * @param catalogRefresher 快照构建器（M3.5：从发布 YAML 重建快照）
-     * @param releaseMapper   发布历史 Mapper（M3.5：启动还原使用）
-     * @param demoEnabled     是否启用内置清单（由 {@code --demo} 决定）
+     * @param catalogRefresher 快照构建器（结构化改造后仍负责装载期校验，输入改由结构行渲染）
+     * @param repository       配置存储仓库（结构化改造 T1：从最新 release 的 cfg_* 行装表）
+     * @param codec            结构行 ↔ 语义视图码编器（结构行渲染为校验通道可消费的语义文本）
+     * @param demoEnabled      是否启用内置清单（由 {@code --demo} 决定）
      * @return 播种 Runner
      */
     @Bean
@@ -59,7 +61,8 @@ public class CatalogSnapshotBootstrap {
                                                    MetadataCatalog metadataCatalog,
                                                    StarterCatalog starterCatalog,
                                                    CatalogRefresher catalogRefresher,
-                                                   ConfigReleaseMapper releaseMapper,
+                                                   ConfigRepository repository,
+                                                   StructuredYamlCodec codec,
                                                    @Value("${" + InitializationProperties.DEMO_ENABLED_PROPERTY + ":"
                                                            + InitializationProperties.DEMO_ENABLED_DEFAULT + "}")
                                                    boolean demoEnabled) {
@@ -88,25 +91,28 @@ public class CatalogSnapshotBootstrap {
                         metadataCatalog.javaVersions().size(), starterCatalog.size());
                 return;
             }
-            // 非 --demo：从 DB 加载最新已发布 release 还原快照，保证管理端发布后重启不丢
-            ConfigReleaseEntity latest = releaseMapper.selectList(
-                    new LambdaQueryWrapper<ConfigReleaseEntity>()
-                            .orderByDesc(ConfigReleaseEntity::getReleasedAt)
-                            .last("LIMIT 1"))
-                    .stream().findFirst().orElse(null);
+            // 非 --demo：从最新已发布 release 的「结构化行」还原快照。
+            // T1 阶段仍经「结构行 → 语义文本 → 装载期校验」复用既有校验通道；
+            // T2 的 StructuredCatalogAssembler 落地后这一步改为「结构行 → 核心模型 → 快照」直装。
+            ConfigReleaseEntity latest = repository.findLatestRelease();
             if (latest == null) {
                 log.info("无 --demo 且 DB 无已发布快照：等待管理端发布配置");
                 return;
             }
             try {
+                StructuredSnapshot rows = repository.readScope(latest.getId());
+                if (rows.isEmpty()) {
+                    log.info("最新发布 #{} 结构行为空：等待管理端发布配置", latest.getId());
+                    return;
+                }
                 CatalogSnapshot snapshot = catalogRefresher.validateAndBuild(
-                        latest.getMetadataYaml(),
-                        latest.getStarterYaml(),
-                        latest.getTemplateYaml(),
-                        latest.getConflictYaml());
+                        codec.renderMetadata(rows),
+                        codec.renderStarters(rows),
+                        codec.renderTemplates(rows),
+                        codec.renderConflictRules(rows));
                 snapshotHolder.seed(snapshot);
-                log.info("已从 DB 还原最新发布快照: releaseId={}, releasedAt={}",
-                        latest.getId(), latest.getReleasedAt());
+                log.info("已从 DB 结构化行还原最新发布快照: releaseId={}, rows={}, releasedAt={}",
+                        latest.getId(), rows.rowCount(), latest.getReleasedAt());
             } catch (RuntimeException e) {
                 // 启动期还原失败：不要阻塞启动（生成/读路径保持空清单兜底）
                 // 管理后台可重新发布修复，刷新会走正常的发布校验流程
