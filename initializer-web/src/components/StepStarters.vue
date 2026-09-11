@@ -32,49 +32,9 @@ function labelOf(id: string): string {
   return wizard.starterRegistry[id]?.label ?? id
 }
 
-/**
- * M3.7：把 requires（AND-of-OR-groups）渲染为自然语言提示（**仅展示 id，长描述走 tooltip**）。
- *
- * 行内用 id 而非完整描述，因为几乎所有内部 starter 都 require core，把 core 的长描述
- * 在每行重复显示会把列表塞得过满；id + tooltip 兼顾信息密度与可追溯。
- *
- * - 单分组多选项：`需 (B 或 C)`
- * - 多分组（各分组单选项）：`需 B 和 C`
- * - 混合：`需 (B 或 C) 和 D`
- */
-function requiresLabel(starter: { requires: string[][] }): string {
-  const parts = starter.requires.map((group) =>
-    group.length > 1 ? `(${group.map(idOnly).join(' 或 ')})` : group.map(idOnly).join(''),
-  )
-  return `需 ${parts.join(' 和 ')}`
-}
-
-/** 仅返回 id（不做展示名映射），用于行内紧凑显示。 */
-function idOnly(id: string): string {
-  return id
-}
-
-/** 长版提示：用于 tooltip 与未满足告警明细（含依赖项的完整 description）。 */
-function requiresHint(starter: { requires: string[][] }): string {
-  const parts = starter.requires.map((group) =>
-    group.length > 1 ? `(${group.map(labelOf).join(' 或 ')})` : group.map(labelOf).join(''),
-  )
-  return `需要 ${parts.join(' 和 ')}`
-}
-
-/** 该 starter 的依赖是否已被满足（全部分组均有一项被选中）。 */
-function requiresSatisfied(starter: { id: string; requires: string[][] }): boolean {
-  return starter.requires.every((group) => group.some((dep) => wizard.selectedStarters.has(dep)))
-}
-
 /** M3.8：该 starter 当前生效的互斥提示（取首条，无则 undefined）。 */
 function mutexOf(starter: { id: string }): MutexInfo | undefined {
   return wizard.mutexInfo[starter.id]?.[0]
-}
-
-/** M3.8：互斥对象展示名（逗号分隔，供行内标签）。 */
-function mutexPartnersLabel(starter: { id: string }): string {
-  return (mutexOf(starter)?.partners ?? []).map(labelOf).join(' / ')
 }
 
 /** M3.8：互斥提示 tooltip（互斥对象 + 规则文案 + 切换指引）。 */
@@ -112,7 +72,9 @@ function mutexTitle(starter: { id: string }): string {
             required: st.required,
             locked: wizard.lockedStarters.has(st.id),
             mutex: wizard.mutexIds.has(st.id),
+            pending: wizard.pendingOrOptions.has(st.id),
           }"
+          :title="wizard.mutexIds.has(st.id) ? mutexTitle(st) : undefined"
         >
           <input
             type="checkbox"
@@ -120,28 +82,14 @@ function mutexTitle(starter: { id: string }): string {
             :disabled="wizard.lockedStarters.has(st.id)"
             @change="wizard.toggleStarter(st.id)"
           />
+          <span
+            v-if="wizard.pendingOrOptions.has(st.id)"
+            class="pending-mark"
+            title="已选组件需要你在可选项中最少勾选一项"
+          >*</span>
           <span class="starter-label">{{ st.id }}</span>
           <span v-if="st.required" class="required-tag" title="框架必选依赖，不可取消">必选</span>
           <span v-else-if="wizard.lockedStarters.has(st.id)" class="dep-locked-tag" title="由已选组件的强制依赖自动选中，取消父组件后自动释放">依赖锁定</span>
-          <span
-            v-if="wizard.mutexIds.has(st.id)"
-            class="mutex-tag"
-            :title="mutexTitle(st)"
-          >
-            互斥：{{ mutexPartnersLabel(st) }}
-          </span>
-          <span
-            v-if="st.requires.length > 0"
-            class="depends-tag"
-            :class="{ 'depends-tag--unmet': wizard.selectedStarters.has(st.id) && !requiresSatisfied(st) }"
-            :title="
-              wizard.selectedStarters.has(st.id)
-                ? `已选中，需同时选择：${requiresHint(st)}`
-                : `选中后需同时选择：${requiresHint(st)}`
-            "
-          >
-            {{ requiresLabel(st) }}
-          </span>
           <span v-if="st.category" class="category-tag">{{ st.category }}</span>
           <span v-if="st.maintainer === 'internal'" class="maintainer-tag">内部</span>
           <span class="starter-desc" :title="st.description ?? undefined">{{ st.description }}</span>
@@ -230,6 +178,10 @@ function mutexTitle(starter: { id: string }): string {
   border-left-color: #6db33f;
   background: #f4faee;
 }
+/* M3.9：已选组件「二选一」的候选项——淡黄底标识待选，配合 id 前的红色 * */
+.starter.pending:not(.checked) { background: #fff8c5; border-color: #e6d48a; }
+.starter.pending:not(.checked):hover { background: #fff2ac; }
+.pending-mark { color: #cf222e; font-weight: 700; line-height: 1; flex-shrink: 0; }
 .starter input[type='checkbox'] { accent-color: #6db33f; flex-shrink: 0; }
 .starter.required { cursor: default; border-left-color: #6db33f; }
 .starter.required input { cursor: not-allowed; }
@@ -247,15 +199,6 @@ function mutexTitle(starter: { id: string }): string {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.depends-tag {
-  font-size: 11px; color: #6a737d; border: 1px dashed #afb8c1;
-  border-radius: 10px; padding: 0 6px; line-height: 16px;
-  flex-shrink: 0;
-}
-/* 已选中但依赖分组未被满足：转为醒目告警色 */
-.depends-tag--unmet {
-  color: #9a6700; border-style: solid; border-color: #d4a72c; background: #fff8c5;
-}
 .requires-warnings .conflict-warning { border-color: #d4a72c; background: #fff8c5; }
 .required-tag {
   font-size: 11px; color: #0a3622; border: 1px solid #1a7f37;
@@ -268,12 +211,7 @@ function mutexTitle(starter: { id: string }): string {
   border-radius: 10px; padding: 0 6px; line-height: 16px; background: #ddf4ff;
   flex-shrink: 0;
 }
-/* M3.8：互斥标记（成对高亮，可二选一切换） */
-.mutex-tag {
-  font-size: 11px; color: #9a3412; border: 1px solid #fd8c73;
-  border-radius: 10px; padding: 0 6px; line-height: 16px; background: #fff1e5;
-  flex-shrink: 0;
-}
+/* M3.8：互斥标记（成对高亮，可二选一切换；文案走整行 hover 提示） */
 .starter.mutex { border-right: 3px solid #fd8c73; }
 .category-tag {
   font-size: 11px; color: #0550ae; border: 1px solid #54aeff;

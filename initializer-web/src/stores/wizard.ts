@@ -239,6 +239,28 @@ export const useWizardStore = defineStore('wizard', {
       return out
     },
 
+    /**
+     * M3.9：当前待用户「二选一」的 OR 候选依赖。
+     *
+     * <p>已选组件的多元素 requires 分组若尚未被满足，其全部已登记成员即候选项——
+     * 列表内以淡黄底 + 红色 * 提示，替代行内依赖文案（M3.9 起列表不再渲染 `需 xxx`）。
+     * 单元素分组（强制依赖）由 {@link syncSelection} 自动选中，不在此列。
+     */
+    pendingOrOptions(state): Set<string> {
+      const selected = state.selectedStarters
+      const out = new Set<string>()
+      for (const id of selected) {
+        for (const group of state.starterRegistry[id]?.requires ?? []) {
+          if (group.length < 2) continue
+          if (group.some((dep) => selected.has(dep))) continue
+          for (const dep of group) {
+            if (state.starterRegistry[dep]) out.add(dep)
+          }
+        }
+      }
+      return out
+    },
+
     /** 生成请求体。 */
     generateRequest(state) {
       return {

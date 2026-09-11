@@ -385,6 +385,21 @@ describe('依赖联动与必选（M3.8）', () => {
     expect(wizard.unsatisfiedRequires.length).toBe(0)
   })
 
+  it('OR 分组未满足时把候选项标记为待二选一，选中其一后撤销（M3.9）', () => {
+    const wizard = linkWizard()
+    expect(wizard.pendingOrOptions.size).toBe(0)
+    wizard.toggleStarter('repo')
+    expect([...wizard.pendingOrOptions].sort()).toEqual(['jpa', 'mybatis'])
+    wizard.toggleStarter('jpa')
+    expect(wizard.pendingOrOptions.size).toBe(0)
+  })
+
+  it('单元素分组（强制依赖）不进入待选候选项标记（M3.9）', () => {
+    const wizard = linkWizard()
+    wizard.toggleStarter('dal')
+    expect(wizard.pendingOrOptions.size).toBe(0)
+  })
+
   it('必选项默认勾选且不可取消', () => {
     const wizard = linkWizard()
     wizard.selectRequiredStarters()
