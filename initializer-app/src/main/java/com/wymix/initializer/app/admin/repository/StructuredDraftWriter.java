@@ -398,6 +398,7 @@ public class StructuredDraftWriter {
             row.setMaintainer(entry.maintainer() == null ? null : entry.maintainer().name());
             row.setDescription(entry.description());
             row.setRequired(entry.required());
+            row.setHidden(entry.hidden());
             row.setConfigPackage(entry.linkages() == null ? null : entry.linkages().configPackage());
             row.setSource(source);
             row.setSort(sort++);

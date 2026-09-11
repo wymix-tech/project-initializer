@@ -61,6 +61,7 @@ class StructuredYamlCodecTest {
             maintainer: official
             description: Spring Web
             required: true
+            hidden: true
             dependencies:
               - groupId: org.springframework.boot
                 artifactId: spring-boot-starter-web
@@ -127,6 +128,7 @@ class StructuredYamlCodecTest {
                 .contains("id: web")
                 .contains("maintainer: official")
                 .contains("required: true")
+                .contains("hidden: true")
                 .contains("spring-boot-starter-web")
                 .contains("requires")
                 .contains("- a")
@@ -268,7 +270,40 @@ class StructuredYamlCodecTest {
         snapshot.starters().add(starter);
 
         String rendered = codec.renderStarters(snapshot);
-        assertThat(rendered).doesNotContain("requires").doesNotContain("bootVersions").doesNotContain("required");
+        assertThat(rendered).doesNotContain("requires").doesNotContain("bootVersions")
+                .doesNotContain("required").doesNotContain("hidden");
+    }
+
+    @Test
+    void starterRendering_hiddenOnlyWhenTrue() {
+        StructuredSnapshot snapshot = StructuredSnapshot.empty(0L);
+        CfgStarterEntity hidden = new CfgStarterEntity();
+        hidden.setId(1L);
+        hidden.setStarterId("web");
+        hidden.setCategory("web");
+        hidden.setMaintainer("OFFICIAL");
+        hidden.setHidden(true);
+        CfgStarterEntity visible = new CfgStarterEntity();
+        visible.setId(2L);
+        visible.setStarterId("web2");
+        visible.setCategory("web");
+        visible.setMaintainer("OFFICIAL");
+        visible.setHidden(false);
+        snapshot.starters().add(hidden);
+        snapshot.starters().add(visible);
+
+        String rendered = codec.renderStarters(snapshot);
+        // hidden=true 必须写出；hidden=false 省略（与 required 同口径，保持 YAML 精简）
+        assertThat(rendered).contains("hidden: true");
+        assertThat(rendered).contains("id: web2");
+    }
+
+    @Test
+    void starterRoundTrip_hiddenFalseIsNotResurrected() {
+        writer.write(ConfigKind.STARTER, STARTER_YAML.replace("hidden: true", "hidden: false"));
+
+        String rendered = codec.renderStarters(repository.readDraftScope(ConfigKind.STARTER));
+        assertThat(rendered).doesNotContain("hidden");
     }
 
     @Test

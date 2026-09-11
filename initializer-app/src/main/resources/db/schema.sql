@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS cfg_starter (
     maintainer     VARCHAR(32)  NOT NULL,
     description    VARCHAR(512),
     required       BOOLEAN      NOT NULL DEFAULT FALSE,
+    hidden         BOOLEAN      NOT NULL DEFAULT FALSE,
     config_package VARCHAR(512),
     source         VARCHAR(16)  NOT NULL DEFAULT 'MANUAL',
     sort           INT          NOT NULL DEFAULT 0,
@@ -241,3 +242,10 @@ CREATE TABLE IF NOT EXISTS cfg_template (
     CONSTRAINT uk_cfg_template UNIQUE (release_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_cfg_template_release ON cfg_template (release_id);
+
+-- ============ 增量升级（幂等） ============
+-- schema.sql 以 CREATE TABLE IF NOT EXISTS 建表，已存在的库不会因改列而重建，
+-- 因此新增列必须在此处补幂等 ALTER，保证旧库重启后自动补齐（可重复执行）。
+
+-- T1 补丁：starter 主表补 hidden 列（对应 StarterCatalogEntry.hidden，前端依赖选择列表默认隐藏）
+ALTER TABLE cfg_starter ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;

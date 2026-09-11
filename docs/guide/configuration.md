@@ -409,7 +409,7 @@ curl -X POST -H "X-Admin-Token: $TOKEN" -H "Content-Type: application/json" \
 | | `cfg_boot_version` | Boot 版本（含 `fp_group`/`fp_artifact`/`fp_version` 框架父 POM） |
 | | `cfg_boot_java` | Boot ↔ Java 兼容矩阵（存 **Java 版本业务 ID**，非主键） |
 | | `cfg_boot_starter_ref` | Boot 版本可选 starter 白名单 |
-| starter | `cfg_starter` | starter 主行（`source` = `MANUAL` / `SYNC`） |
+| starter | `cfg_starter` | starter 主行（`required` 必选、`hidden` 前端默认隐藏；`source` = `MANUAL` / `SYNC`） |
 | | `cfg_starter_dependency` | 依赖坐标 GAV |
 | | `cfg_starter_require_group` | 依赖联动 OR 分组（AND-of-OR 第一层） |
 | | `cfg_starter_require_item` | 联动组内项（AND-of-OR 第二层） |
@@ -426,6 +426,16 @@ curl -X POST -H "X-Admin-Token: $TOKEN" -H "Content-Type: application/json" \
 > `cfg_boot_java` 存 Java **业务 ID** 而非主键是刻意设计：草稿态必须能把「引用了拼错/尚未
 > 添加的 Java 版本」原样存下来，发布期才能给出 `Boot 版本 X 引用了未定义的 Java 版本 Y`
 > 的精确 4002 明细。若强绑主键，非法输入在保存阶段就会被丢弃，用户看不到问题所在。
+
+**增量列升级（重要）**：`schema.sql` 建表用 `CREATE TABLE IF NOT EXISTS`，**已存在的库不会
+因改列而重建**。因此新增列统一在 `schema.sql` 末尾的「增量升级（幂等）」段补
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...`，配置 `spring.sql.init.mode: always` 下
+每次启动自动执行、可重复执行。目前该段含：
+
+- `cfg_starter.hidden BOOLEAN NOT NULL DEFAULT FALSE`（T1 补丁：starter 清单 `hidden` 字段落库）
+
+> 若你的数据源方言不支持 `ADD COLUMN IF NOT EXISTS`（如部分 MySQL 版本），请按
+> 「先判断 information_schema 再 ALTER」的方式改写这一句；生产替换数据源时一并复核。
 
 ### 6.3 存量数据迁移
 
@@ -479,6 +489,7 @@ if (migration.legacyDraftTableExists()) {   // 旧表存在才需要迁
 | 发布 | 同一事务内：写发布头 → 复制草稿行为新 `release_id` → 切换快照；失败整体回滚，旧快照继续服务 |
 | 回滚 | 读目标 `release_id` 的结构行重新校验后复制为新 release；历史快照零改写 |
 | `starter-sync` | `ConfigKind.STARTER_SYNC` **保留**；正文改为 `cfg_starter.source = 'SYNC'` 的行，同名手工（`MANUAL`）优先语义不变 |
+| starter `hidden` / `required` | 落 `cfg_starter` 列并在 `GET` 渲染回 YAML 时按需写回（`hidden` / `required` 仅 true 时输出，false 省略）；`hidden=false` 与未声明等价 |
 
 ## 7. 验证清单
 
@@ -493,3 +504,5 @@ mvn verify        # 单测 + JaCoCo 覆盖率门禁（配置合法性由加载�
 3. `curl "http://localhost:8080/api/metadata/starters?boot=3.2.5"` 确认 starter 清单
 4. `POST /api/generate` 生成一次，检查 zip 内依赖坐标、联动文件与 yml 片段
 5. 校验失败场景：提交不合法 group/artifact，确认返回 422 + 错误明细
+6. `hidden` 往返冒烟：`PUT /api/admin/config/starter` 提交带 `hidden: true` 的条目 →
+   `GET /api/admin/config/starter` 读回，确认 `hidden: true` 仍在（不被静默丢弃）
