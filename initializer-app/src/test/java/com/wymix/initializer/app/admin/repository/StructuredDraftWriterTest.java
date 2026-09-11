@@ -147,6 +147,25 @@ class StructuredDraftWriterTest {
     }
 
     @Test
+    void writeStarters_persistsHiddenFlag() {
+        writer.write(ConfigKind.STARTER, STARTER_YAML.replace(
+                "description: Spring Web", "description: Spring Web\nhidden: true"));
+
+        StructuredSnapshot loaded = repository.readDraftScope(ConfigKind.STARTER);
+        assertThat(loaded.starters()).hasSize(1);
+        assertThat(loaded.starters().get(0).getHidden()).isTrue();
+    }
+
+    @Test
+    void writeStarters_defaultsHiddenToFalseWhenAbsent() {
+        writer.write(ConfigKind.STARTER, STARTER_YAML);
+
+        StructuredSnapshot loaded = repository.readDraftScope(ConfigKind.STARTER);
+        // YAML 未声明 hidden → 落库为 false（不给 null，避免 DB NOT NULL 约束与前端三态判断）
+        assertThat(loaded.starters().get(0).getHidden()).isFalse();
+    }
+
+    @Test
     void writeStartersWithSyncSource_marksSyncChannel() {
         writer.write(ConfigKind.STARTER_SYNC, STARTER_YAML);
 

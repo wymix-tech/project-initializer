@@ -104,6 +104,9 @@ public class StructuredYamlCodec {
             if (Boolean.TRUE.equals(starter.getRequired())) {
                 doc.put("required", true);
             }
+            if (Boolean.TRUE.equals(starter.getHidden())) {
+                doc.put("hidden", true);
+            }
             doc.put("dependencies", renderDependencies(deps.getOrDefault(starter.getId(), List.of())));
             List<List<String>> requires = renderRequires(groups.getOrDefault(starter.getId(), List.of()), items);
             if (!requires.isEmpty()) {

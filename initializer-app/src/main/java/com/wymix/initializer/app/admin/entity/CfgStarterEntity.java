@@ -39,6 +39,9 @@ public class CfgStarterEntity {
     /** 是否必选（前端默认勾选且禁止取消，生成期兜底补齐） */
     private Boolean required;
 
+    /** 是否在前端依赖选择列表中默认隐藏（被已选组件的 requires 引用时强制展示） */
+    private Boolean hidden;
+
     /** 配置类目标包名（支持统一占位符，可空） */
     private String configPackage;
 
@@ -102,6 +105,14 @@ public class CfgStarterEntity {
 
     public void setRequired(Boolean required) {
         this.required = required;
+    }
+
+    public Boolean getHidden() {
+        return hidden;
+    }
+
+    public void setHidden(Boolean hidden) {
+        this.hidden = hidden;
     }
 
     public String getConfigPackage() {
