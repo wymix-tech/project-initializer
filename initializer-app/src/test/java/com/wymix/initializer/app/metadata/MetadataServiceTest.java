@@ -148,10 +148,38 @@ class MetadataServiceTest {
         assertThat(result).allSatisfy(s -> {
             assertThat(s.maintainer()).isEqualTo("official");
             assertThat(s.category()).isNotNull();
+            // 未声明 hidden 的条目默认 false
+            assertThat(s.hidden()).isFalse();
         });
         // 向后兼容入口（两参重载）行为一致
         assertThat(service.listStarters("3.2.5")).usingRecursiveFieldByFieldElementComparator()
                 .isEqualTo(result);
+    }
+
+    @Test
+    void listStarters_passesThroughHiddenFlag() {
+        StarterCatalog withHidden = StarterCatalog.of(List.of(
+                new StarterCatalogEntry("ghost", "tool", Maintainer.INTERNAL, "隐藏条目",
+                        List.of(new DependencyCoord("com.company", "ghost", "1.0.0")),
+                        new LinkageSpec(null, List.of(), List.of(), List.of()),
+                        false, List.of(), List.of(), true)));
+        MetadataCatalog cat = MetadataCatalog.load(new ByteArrayInputStream("""
+                javaVersions:
+                  - id: "17"
+                    label: "Java 17"
+                    deprecated: false
+                    recommendedBootVersion: "3.2.5"
+                bootVersions:
+                  - id: "3.2.5"
+                    label: "Spring Boot 3.2.5"
+                    official: true
+                    supportedJavaVersions: ["17"]
+                """.getBytes(StandardCharsets.UTF_8))).merge(withHidden);
+        MetadataService svc = new MetadataService(
+                new com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder(), cat, withHidden);
+        List<MetadataService.StarterDto> result = svc.listStarters("3.2.5");
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).hidden()).isTrue();
     }
 
     @Test

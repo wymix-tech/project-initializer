@@ -138,6 +138,22 @@ class StarterQueryEngineTest {
     }
 
     @Test
+    void itemCarriesHiddenFlagFromCatalog() {
+        StarterCatalog withHidden = StarterCatalog.of(List.of(
+                new StarterCatalogEntry("ghost", "tool", Maintainer.INTERNAL, "隐藏条目",
+                        List.of(new DependencyCoord("com.example", "ghost", null)),
+                        new LinkageSpec(null, List.of(), List.of(), List.of()),
+                        false, List.of(), List.of(), true),
+                entry("web", "web", Maintainer.OFFICIAL, "Spring MVC + 内嵌 Tomcat")));
+        MetadataCatalog cat = MetadataCatalog.load(
+                new java.io.ByteArrayInputStream(METADATA_YAML.getBytes(StandardCharsets.UTF_8)))
+                .merge(withHidden);
+        assertThat(engine.search(cat, withHidden, "3.2.5", "ghost", null).get(0).hidden()).isTrue();
+        // 未声明 hidden 的条目默认 false
+        assertThat(engine.search(cat, withHidden, "3.2.5", "web", null).get(0).hidden()).isFalse();
+    }
+
+    @Test
     void starterWithoutCatalogDefinition_notVisible() {
         // starter 元信息以清单为唯一来源：bootVersions.starters 列出但清单未登记的 id 查询时不可见
         MetadataCatalog minimal = MetadataCatalog.load(new java.io.ByteArrayInputStream(

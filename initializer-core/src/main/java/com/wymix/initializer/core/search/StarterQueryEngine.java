@@ -37,7 +37,8 @@ public class StarterQueryEngine {
      * @param version     基线版本：清单登记依赖坐标首个声明的 version；未登记或未声明版本时为 {@code null}
      *                    （官方 starter 走 Boot BOM 不声明版本，内部 starter 声明基线版本如 1.2.0）
      * @param requires    依赖分组（AND-of-OR-groups）：分组内任一被选即满足；
-     *                    前端据此展示「需要 B 或 C」提示，不自动勾选
+     *                    单元素分组视为强制依赖（前端自动选中并锁定），多元素分组仅提示不自动勾选
+     * @param hidden      是否在前端依赖选择列表中默认隐藏（被依赖引用时强制展示）；清单未登记时为 {@code false}
      */
     public record StarterSearchItem(
             String id,
@@ -47,22 +48,23 @@ public class StarterQueryEngine {
             String description,
             String version,
             boolean required,
-            List<List<String>> requires) {
+            List<List<String>> requires,
+            boolean hidden) {
 
         /**
-         * 兼容构造：未声明约束时视为可选、无依赖。
+         * 兼容构造：未声明约束时视为可选、无依赖、不隐藏。
          */
         public StarterSearchItem(String id, String label, Maintainer maintainer, String category,
                                  String description, String version) {
-            this(id, label, maintainer, category, description, version, false, List.of());
+            this(id, label, maintainer, category, description, version, false, List.of(), false);
         }
 
         /**
-         * 兼容构造：仅声明必选标记，无依赖联动。
+         * 兼容构造：仅声明必选标记，无依赖联动、不隐藏。
          */
         public StarterSearchItem(String id, String label, Maintainer maintainer, String category,
                                  String description, String version, boolean required) {
-            this(id, label, maintainer, category, description, version, required, List.of());
+            this(id, label, maintainer, category, description, version, required, List.of(), false);
         }
     }
 
@@ -113,8 +115,9 @@ public class StarterQueryEngine {
         String version = known
                 ? baselineVersion(starterCatalog.entry(bootVersionId, starterId).dependencies())
                 : null;
+        boolean hidden = known && starterCatalog.entry(bootVersionId, starterId).hidden();
         return new StarterSearchItem(starterId, sd.label(), maintainer, category, description, version,
-                sd.required(), List.copyOf(sd.requires()));
+                sd.required(), List.copyOf(sd.requires()), hidden);
     }
 
     /**

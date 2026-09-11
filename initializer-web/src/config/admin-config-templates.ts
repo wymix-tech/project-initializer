@@ -123,11 +123,14 @@ category: web                       # 必填。分类，用于前端分组浏览
 maintainer: official                # 必填。维护方：official（Spring 官方）/ internal（公司内部）
 description: Spring MVC + 内嵌 Tomcat # 可选。一句话说明；同时作为前端展示名（推荐填写）
 required: false                     # 可选。true = 必选：前端默认勾选且禁止取消，生成时后端兜底补齐
+hidden: false                       # 可选。true = 前端依赖选择列表默认隐藏；被已选组件通过 requires 引用时强制展示
 requires: []                        # 可选。依赖联动（AND-of-OR-groups）：
                                     #       requires: [b, c]      → 需要 b 和 c（扁平写法，历史语义）
-                                    #       requires: [[b, c]]    → 需要 b 或 c（b、c 互斥时只选其一即可）
+                                    #       requires: [[b, c]]    → 需要 b 或 c（OR 分组，仅提示，不自动勾选）
                                     #       requires: [[b, c], d] → 需要 (b 或 c) 且 d
-                                    #       前端不自动勾选也不锁定这些项，仅提示「需要 …」，未满足时生成期拒绝
+                                    #       单元素分组 = 强制依赖：选中本 starter 时自动勾选并锁定，取消本 starter
+                                    #       后自动释放；若与已选组件直接互斥则双方都不锁定，前端标记互斥供二选一切换
+                                    #       OR 分组仍不自动勾选，仅提示「需要 …」，未满足时生成期拒绝
 bootVersions: []                    # 可选。本条目关联的 Boot 版本（值取 metadata 的 bootVersions[].id）；
                                     #       不写/为空 = 对全部 Boot 版本可用；同一 Boot 版本内 ID 不允许重复，
                                     #       不同 Boot 版本允许重复（同一 id 可在不同版本声明不同坐标/版本）
@@ -165,7 +168,8 @@ linkages:                           # 联动规则：选中该 starter 后自动
     { path: 'maintainer', required: true, purpose: '维护方：official（Spring 官方）/ internal（公司内部）' },
     { path: 'description', required: false, purpose: '一句话说明；同时作为前端展示名与检索关键字' },
     { path: 'required', required: false, purpose: '是否必选（原 metadata starters 节能力，已迁移到清单）：true 时前端默认勾选且禁止取消，生成时后端兜底补齐' },
-    { path: 'requires', required: false, purpose: '依赖联动（AND-of-OR-groups）：分组内任一被选即满足该分组，全部分组满足才算依赖满足。扁平写法 [b, c] 表示需要 b 和 c；嵌套写法 [[b, c]] 表示需要 b 或 c（适合 b、c 互斥场景）。引用的 ID 必须在本清单登记，不得自引用；仅单选项分组参与成环判定（多选项分组可换分支打破环）' },
+    { path: 'hidden', required: false, purpose: '是否在前端依赖选择列表中默认隐藏：true 时列表不展示，但被已选组件通过 requires 引用时强制展示；仅影响前端展示，后端检索与生成逻辑不受影响' },
+    { path: 'requires', required: false, purpose: '依赖联动（AND-of-OR-groups）：分组内任一被选即满足该分组，全部分组满足才算依赖满足。扁平写法 [b, c] 表示需要 b 和 c；嵌套写法 [[b, c]] 表示需要 b 或 c。单元素分组为强制依赖，前端选中父组件时自动勾选并锁定、取消父组件后自动释放；若强制依赖与已选组件直接互斥，则互斥双方都不锁定并标记互斥供二选一切换。引用的 ID 必须在本清单登记，不得自引用；仅单选项分组参与成环判定（多选项分组可换分支打破环）' },
     { path: 'bootVersions', required: false, purpose: 'Boot 版本关联：值取 metadata 的 bootVersions[].id；不写即对全部版本可用。同一 Boot 版本内 ID 不允许重复（重复发布即拒），不同 Boot 版本允许重复（同一 id 可在不同版本声明不同坐标/版本/联动）' },
     { path: 'dependencies[].groupId', required: true, purpose: 'Maven groupId，选中后写入生成项目构建脚本' },
     { path: 'dependencies[].artifactId', required: true, purpose: 'Maven artifactId，选中后写入生成项目构建脚本' },
@@ -184,6 +188,7 @@ linkages:                           # 联动规则：选中该 starter 后自动
     '占位符仅允许 {basePackage} {packagePath} {artifact} {group} {bootVersion} {javaVersion}，越界占位符在装载期被拒绝。',
     '含占位符的值务必加引号（如 "{basePackage}.config"），否则会被 YAML 解析为流式映射。',
     'starter ID 重复即装载失败；制品库同步通道同名条目会被手工配置覆盖。',
+    'hidden 仅隐藏前端依赖选择列表：当被已选组件通过 requires 引用（单元素分组自动锁定或 OR 分组提示）时强制展示。',
   ],
 }
 
