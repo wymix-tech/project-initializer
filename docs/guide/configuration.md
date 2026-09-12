@@ -840,3 +840,56 @@ mvn verify        # 单测 + JaCoCo 覆盖率门禁（配置合法性由加载�
 17. **表单错误明细冒烟（T6）**：构造跨模块悬空引用（如 Boot 引用未定义 Java）保存草稿 →
     发布台发布 → 提示条展示 **4002 逐条明细**；导入含 `templates/../../x.ftl` 的 ZIP →
     提示条展示 **4008 路径穿越明细**且草稿未变更
+18. **装配器不查 N+1（T7）**：对 `StructuredCatalogAssembler.assemble` 断言「查询条数 ≤ 表数量」，
+    确保子表按 `release_id` 批量查后在内存分组
+19. **导入导出恶意 ZIP（T7）**：路径穿越 / 超条目数 / 超单文件大小三类归档均被拒（4008），
+    且**整体回滚**——导入失败后 `GET /api/admin/config/metadata` 与导入前一致
+20. **发布/回滚/乐观锁（T7）**：发布合法配置 → 生成产物与既有 fixture 一致；
+    并发保存（旧 `If-Match`）返回 4003；回滚到历史 release 后读回内容一致
+21. **前端突变门禁（T7）**：`cd initializer-web && npm run test:mutation` 应为 **PASS**
+    （突变分数 ≥ 70%）。该门禁依赖仓库内 `patch-package` 补丁，见 §13
+
+---
+
+## 13. 文档与测试收口（T7）
+
+> 本节对应「配置结构化入库」改造的第七阶段（T7，docs-tests）。
+
+### 13.1 文档更新点
+
+- 本文档§6~§11 覆盖 T1~T6 的存储模型、装配链路、管理端结构化 API、ZIP 导入导出、
+  模板唯一数据源、前端表单工作台；§12 追加 T7 验收冒烟项。
+- [`docs/design/m3-detail.md`](../design/m3-detail.md) 的 M3.1 数据模型已同步为
+  「15 张 `cfg_*` 关系表 + `config_draft_meta` + 发布头」；补录 M3.6~M3.9
+  （必选 starter、requires 校验、强制依赖/互斥、候选项标识）。
+
+### 13.2 测试适配与新增
+
+- **适配**：`ConfigServiceTest` / `ConfigRepositoryTest` / `CatalogRefresher*Test` /
+  `CatalogSyncServiceTest` / `AdminApiController*Test` 随结构化链路改造同步调整；
+  测试资源 `catalog/**` 与 `StructuredSnapshot` 夹具改由结构行构造。
+- **新增**：
+  - `StructuredCatalogAssemblerTest`：装配正确性 + **N+1 断言**（查询条数 ≤ 表数量）
+  - 导入导出：恶意 ZIP（路径穿越 / 超条目数 / 超单文件大小）+ `hidden` 往返幂等
+  - 发布 / 回滚 / 乐观锁：并发保存 4003、回滚后内容一致
+- **回归证明**：发布合法配置 → 生成的工程产物与既有 fixture 逐字节一致。
+
+### 13.3 前端突变门禁：`patch-package` 补丁
+
+`npm run test:mutation`（Stryker，门禁 ≥70%）此前**长期 FAIL**，表面现象是
+`starterConfigWizard.ts` 全程 0 命中（`Ran NaN tests per mutant`），看似「覆盖率归因失效」。
+**根因不是归因，而是 Vite 拒绝加载被变异的动态 `import()` 说明符**：
+
+- `@stryker-mutator/instrumenter` 的 `StringLiteral` 变异器会**跳过静态 `import` / `require`** 的
+  模块说明符，但**没有跳过动态 `import()`**；
+- 于是 `await import('@/api/client')` 被变异为
+  `await import(cond ? "" : (cov, "@/api/client"))`，Vite 的 `import-analysis` 无法静态解析，
+  **整份引用该模块的测试文件加载失败**；
+- 后果：这些文件的用例根本不注册，setup 里的 `afterAll` 不触发，覆盖率无法回传 →
+  表现为「0 命中 / NaN」。
+
+修复：仓库内补丁 `patches/@stryker-mutator+instrumenter+8.7.1.patch`
+（`patch-package`，`postinstall` 与 `npm run test:mutation` 前置自动应用），让 `isValidParent`
+额外排除 `import()` 实参——与既有 `require(...)` 排除同口径，改完门禁真跑达标、无豁免。
+
+> 补丁仅针对已发布的上游缺陷；日后升级 `@stryker-mutator/instrumenter` 修复该问题后可直接删除补丁文件。
