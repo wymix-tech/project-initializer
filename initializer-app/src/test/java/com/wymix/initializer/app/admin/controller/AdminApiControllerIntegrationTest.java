@@ -2,6 +2,7 @@ package com.wymix.initializer.app.admin.controller;
 
 import com.wymix.initializer.app.InitializerApplication;
 import com.wymix.initializer.app.admin.security.AdminAuthFilter;
+import com.wymix.initializer.app.generator.TestTemplates;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -52,6 +53,13 @@ class AdminApiControllerIntegrationTest {
             linkages: {}
             """;
 
+    /**
+     * 模板草稿（T5：模板集为 DB 唯一数据源，发布快照里没有的模板生成即 3001）。
+     *
+     * <p>只登记生成链路用到的 6 个基础模板；starter 联动模板本用例不涉及。
+     */
+    private static final String VALID_TEMPLATES = TestTemplates.templateYaml();
+
     /** 非法草稿：Boot 引用未定义的 Java 版本（验收标准：发布被拒 + 旧快照继续服务）。 */
     private static final String INVALID_METADATA = VALID_METADATA.replace(
             "supportedJavaVersions: [\"17\"]", "supportedJavaVersions: [\"ghost\"]");
@@ -78,9 +86,11 @@ class AdminApiControllerIntegrationTest {
 
     private ResponseEntity<String> publish(String yaml) {
         // 发布前确保草稿为指定内容；冲突规则草稿重置为空规则（M3.5 后发布链路会消费并校验该草稿）
+        // T5：模板草稿必须显式准备 —— 发布快照即生成期的唯一模板来源
         putDraft("conflict-rule", "rules: []", null);
         putDraft("metadata", yaml, null);
         putDraft("starter", VALID_STARTER, null);
+        putDraft("template", VALID_TEMPLATES, null);
         String body = "{\"operator\":\"tester\",\"remark\":\"M3.1 集成测试\"}";
         return rest.exchange("/api/admin/config/publish", HttpMethod.POST,
                 new HttpEntity<>(body, adminHeaders()), String.class);
@@ -152,20 +162,19 @@ class AdminApiControllerIntegrationTest {
         assertThat(putStructured("/api/admin/starters", starters, null).getStatusCode().value()).isEqualTo(200);
 
         // 3) 结构化写入模板（content 全文）
-        String templates = """
-                {"templates": [{"name": "pom.ftl", "content": "<project>${groupId}</project>"}],
-                 "operator": "tester"}
-                """;
+        //    T5：模板集是生成期唯一模板来源，故除本用例自建的探测模板外，
+        //    还需带上生成链路必需的 6 个基础模板，否则发布后生成即 3001
+        String templates = TestTemplates.structuredTemplatesJson(
+                "{\"name\": \"probe.ftl\", \"content\": \"<project>${'$'}{groupId}</project>\"}");
         ResponseEntity<String> savedTemplates = putStructured("/api/admin/templates", templates, null);
         assertThat(savedTemplates.getStatusCode().value()).isEqualTo(200);
-        assertThat(savedTemplates.getBody()).contains("模板 1 个");
 
         // 4) 模板列表不含 content CLOB，详情才返回全文
         ResponseEntity<String> list = rest.exchange("/api/admin/templates",
                 HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
         assertThat(list.getStatusCode().value()).isEqualTo(200);
-        assertThat(list.getBody()).contains("pom.ftl").doesNotContain("<project>");
-        ResponseEntity<String> detail = rest.exchange("/api/admin/templates/pom.ftl",
+        assertThat(list.getBody()).contains("probe.ftl").doesNotContain("<project>");
+        ResponseEntity<String> detail = rest.exchange("/api/admin/templates/probe.ftl",
                 HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
         assertThat(detail.getBody()).contains("<project>");
 

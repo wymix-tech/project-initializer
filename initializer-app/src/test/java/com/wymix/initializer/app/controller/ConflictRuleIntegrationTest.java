@@ -1,6 +1,7 @@
 package com.wymix.initializer.app.controller;
 
 import com.wymix.initializer.app.InitializerApplication;
+import com.wymix.initializer.app.generator.TestTemplates;
 import com.wymix.initializer.app.admin.refresh.CatalogSnapshot;
 import com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder;
 import com.wymix.initializer.core.conflict.ConflictCatalog;
@@ -49,7 +50,9 @@ class ConflictRuleIntegrationTest {
 
     /** 以带冲突规则的快照播种（替代发布链路，聚焦读路径与生成兜底语义）。 */
     private void seedWithRules(ConflictCatalog rules) {
-        snapshotHolder.seed(new CatalogSnapshot(fallbackCatalog, fallbackStarterCatalog, Map.of(), rules));
+        // T5：模板集只来自快照（DB 全量模板集），测试显式注入 classpath 种子模板集
+        snapshotHolder.seed(new CatalogSnapshot(fallbackCatalog, fallbackStarterCatalog,
+                TestTemplates.load(), rules));
     }
 
     @org.junit.jupiter.api.AfterEach

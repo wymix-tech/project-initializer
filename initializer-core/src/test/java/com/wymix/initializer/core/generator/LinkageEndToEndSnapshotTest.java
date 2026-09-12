@@ -87,7 +87,12 @@ class LinkageEndToEndSnapshotTest {
             StarterCatalog starterCatalog = StarterCatalog.of(entries);
             // starter 元信息来自清单：装载 metadata 后联动合并
             MetadataCatalog catalog = MetadataCatalog.load(metadataIn).merge(starterCatalog);
-            generator = new ProjectGenerator(catalog, new TemplateRenderer(), starterCatalog);
+            // T5：模板集为唯一数据源，无 classpath 兜底 —— e2e 专用模板
+            // （templates/starters/e2e-redis/**、e2e-redis-conflict/**）显式并入模板集
+            Map<String, String> templates = ClasspathTemplates.load();
+            templates.putAll(ClasspathTemplates.load("starters/e2e-redis"));
+            templates.putAll(ClasspathTemplates.load("starters/e2e-redis-conflict"));
+            generator = new ProjectGenerator(catalog, new TemplateRenderer(templates), starterCatalog);
         } catch (Exception e) {
             throw new IllegalStateException("联动端到端快照测试环境初始化失败", e);
         }

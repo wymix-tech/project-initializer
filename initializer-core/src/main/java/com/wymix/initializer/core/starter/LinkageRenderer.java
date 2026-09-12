@@ -26,6 +26,9 @@ import java.util.Map;
  *
  * <p>新增 starter 仅需新增 yml + 模板文件，本类代码零改动。
  *
+ * <p><b>T5 模板改为 DB 唯一数据源</b>：模板覆盖映射即**数据库全量模板集**，
+ * 未命中即失败（3001/3004），<b>不再回退 classpath</b>。类路径资源访问已全部摘除。
+ *
  * <p>线程安全性：无状态（依赖的 Renderer/Catalog 均不可变），线程安全。
  */
 public class LinkageRenderer {
@@ -39,27 +42,27 @@ public class LinkageRenderer {
     private final Map<String, String> overrides;
 
     /**
-     * 默认构造：覆盖为空，yml 片段仅从 classpath 读取。
+     * 默认构造：模板集为空（渲染必失败），仅服务于纯依赖坐标解析等不需要模板的场景。
      *
      * @param starterCatalog starter 清单（联动规则来源）
-     * @param renderer       模板渲染器（复用基础模板渲染器，模板目录一致）
+     * @param renderer       模板渲染器（空模板集）
      */
     public LinkageRenderer(StarterCatalog starterCatalog, TemplateRenderer renderer) {
         this(starterCatalog, renderer, Map.of());
     }
 
     /**
-     * M3.5 扩展：传入模板覆盖映射。
+     * 传入库级模板集映射（T5：DB 全量模板集，唯一数据源）。
      * <p>作用：
      * <ul>
-     *   <li>.ftl 渲染仍由 {@link TemplateRenderer} 的 MultiTemplateLoader 覆盖（覆盖优先、classpath 兜底）</li>
-     *   <li>application.yml 片段合并：键命中时直接用覆盖文本（处理 {@code \${} → ${} 还原），未命中时 classpath 兜底</li>
+     *   <li>.ftl 渲染由 {@link TemplateRenderer} 的内存模板加载器直接取用（未命中即 3001，无兜底）</li>
+     *   <li>application.yml 片段合并：键命中时直接用模板集文本（处理 {@code \${} → ${} 还原），未命中即 3004</li>
      * </ul>
-     * 这样管理端 TEMPLATE 草稿可对 starter 的 application-*.yml 片段即时维护，发布即生效。
+     * 管理端 TEMPLATE 草稿/模板集对 starter 的模板与 application-*.yml 片段即时维护，发布即生效。
      *
      * @param starterCatalog starter 清单
-     * @param renderer       模板渲染器
-     * @param overrides      模板覆盖映射（null 视为空映射）
+     * @param renderer       模板渲染器（装载同一份模板集）
+     * @param overrides      模板集映射（null 视为空映射 = 无模板可用）
      */
     public LinkageRenderer(StarterCatalog starterCatalog, TemplateRenderer renderer, Map<String, String> overrides) {
         this.starterCatalog = starterCatalog;
@@ -145,10 +148,17 @@ public class LinkageRenderer {
         }
     }
 
-    /** 逐 starter 渲染模板联动，并做 target 路径冲突检测。 */
+    /**
+     * 逐 starter 渲染模板联动，并做 target 路径冲突检测与「模板可达性」前置校验。
+     *
+     * <p>T5：模板集即 DB 全量模板集，无 classpath 兜底 —— 渲染前先把本轮需要的全部模板
+     * 与 yml 片段来源校验一遍（{@link #validateRequirements}），保证「缺模板」在渲染任何
+     * 文件之前就以明确明细失败，而不是产出一半后中途炸掉。
+     */
     private Map<String, byte[]> renderTemplates(String bootVersionId, List<String> starterIds,
                                                Map<String, Object> model) {
         validateAliasConflicts(bootVersionId, starterIds);
+        validateRequirements(bootVersionId, starterIds);
         Map<String, byte[]> files = new LinkedHashMap<>();
         Map<String, String> targetOwner = new LinkedHashMap<>();
         for (String starterId : starterIds) {
@@ -220,7 +230,7 @@ public class LinkageRenderer {
     }
 
     /**
-     * 读取 yml 片段字节：覆盖映射优先（含 URL 解码与 {@code \${} → ${}} 还原），classpath 兜底。
+     * 读取 yml 片段字节：**只**取自模板集映射（T5：DB 唯一数据源，无 classpath 兜底）。
      *
      * <p>合并前做两步归一化（兼容管理端维护现状）：
      * <ol>
@@ -228,43 +238,66 @@ public class LinkageRenderer {
      *   <li>FreeMarker 转义还原：发布期预校验要求 yml 中的 Spring 占位符写作 {@code \${...}}（转义为字面），
      *       合并时还原为 {@code ${...}} 以让生成项目运行时由 Spring 解析</li>
      * </ol>
-     * classpath 内置 yml 直读路径不变，行为兼容。
      *
      * @param source yml 片段相对 templates/ 的源名
      * @return yml 字节
-     * @throws BusinessException 覆盖与 classpath 均无该资源（3004）
+     * @throws BusinessException 模板集中无该资源（3004）
      */
     private byte[] readYmlFragmentBytes(String source) {
-        String override = overrides.get(source);
-        if (override != null) {
-            String restored = override;
-            if (restored.indexOf('%') >= 0) {
-                try {
-                    restored = URLDecoder.decode(restored, StandardCharsets.UTF_8);
-                } catch (IllegalArgumentException e) {
-                    // 非法 URL 编码片段（如不完整 %XY）：保留原文不阻断
+        String template = overrides.get(source);
+        if (template == null) {
+            throw new BusinessException(ErrorCode.YML_MERGE_CONFLICT,
+                    "yml 片段不存在: " + source + "（模板集无该条目）");
+        }
+        String restored = template;
+        if (restored.indexOf('%') >= 0) {
+            try {
+                restored = URLDecoder.decode(restored, StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException e) {
+                // 非法 URL 编码片段（如不完整 %XY）：保留原文不阻断
+            }
+        }
+        restored = restored.replace("\\${", "${");
+        return restored.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 模板可达性前置校验（T5「缺模板即渲染失败」的明确化）：把本轮生成需要的全部
+     * starter 模板（{@code linkages.templates[].source}）与 yml 片段来源
+     * （{@code linkages.application-yml-fragments[].source}）在**模板集映射**里查一遍，
+     * 缺失即汇总明细抛 3001，避免「渲染到一半才发现缺模板」。
+     *
+     * <p>管理端发布期「模板可达性」硬校验与实际生成共用本方法，保证不会出现
+     * 「发布通过但生成失败」。
+     *
+     * @param bootVersionId 当前 Boot 版本 ID（null 表示忽略版本关联）
+     * @param starterIds    选中的 starter ID 清单（可空）
+     * @throws BusinessException 任一模板/片段来源在模板集中缺失（3001）
+     */
+    public void validateRequirements(String bootVersionId, List<String> starterIds) {
+        if (starterIds == null || starterIds.isEmpty()) {
+            return;
+        }
+        List<String> missing = new ArrayList<>();
+        for (String starterId : starterIds) {
+            StarterCatalogEntry entry = entryFor(bootVersionId, starterId);
+            if (entry == null) {
+                continue;
+            }
+            for (TemplateLinkage linkage : entry.linkages().templates()) {
+                if (!overrides.containsKey(linkage.source())) {
+                    missing.add("starter " + starterId + " 模板缺失: " + linkage.source());
                 }
             }
-            restored = restored.replace("\\${", "${");
-            return restored.getBytes(StandardCharsets.UTF_8);
+            for (YmlFragmentLinkage linkage : entry.linkages().ymlFragments()) {
+                if (!overrides.containsKey(linkage.source())) {
+                    missing.add("starter " + starterId + " yml 片段缺失: " + linkage.source());
+                }
+            }
         }
-        try (InputStream in = getClass().getResourceAsStream(TemplateRenderer.TEMPLATE_BASE + source)) {
-            if (in == null) {
-                throw new BusinessException(ErrorCode.YML_MERGE_CONFLICT,
-                        "yml 片段不存在: " + source);
-            }
-            ByteArrayOutputStream buf = new ByteArrayOutputStream();
-            byte[] chunk = new byte[8192];
-            int n;
-            while ((n = in.read(chunk)) > 0) {
-                buf.write(chunk, 0, n);
-            }
-            return buf.toByteArray();
-        } catch (BusinessException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new BusinessException(ErrorCode.YML_MERGE_CONFLICT,
-                    "yml 片段读取失败: " + source, e);
+        if (!missing.isEmpty()) {
+            throw new BusinessException(ErrorCode.TEMPLATE_RENDER_FAILED,
+                    "模板集缺失必需模板（DB 模板集为唯一数据源）: " + String.join("; ", missing));
         }
     }
 

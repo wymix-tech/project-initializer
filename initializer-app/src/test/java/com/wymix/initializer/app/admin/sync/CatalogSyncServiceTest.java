@@ -2,6 +2,7 @@ package com.wymix.initializer.app.admin.sync;
 
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
+import com.wymix.initializer.app.generator.TestTemplates;
 import com.wymix.initializer.app.InitializerApplication;
 import com.wymix.initializer.app.admin.entity.ConfigKind;
 import com.wymix.initializer.app.admin.refresh.CatalogSnapshot;
@@ -134,6 +135,8 @@ class CatalogSyncServiceTest {
     private void publishBaseline() {
         configService.saveDraft(ConfigKind.METADATA, METADATA_YAML, null, "tester");
         configService.saveDraft(ConfigKind.STARTER, STARTER_YAML, null, "tester");
+        // T5：模板集为 DB 唯一数据源，发布快照必须显式带模板草稿（否则生成 3001）
+        configService.saveDraft(ConfigKind.TEMPLATE, TestTemplates.templateYaml(), null, "tester");
         configService.publish("tester", "baseline");
     }
 

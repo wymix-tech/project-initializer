@@ -1,7 +1,7 @@
 # 配置结构化入库与表单化维护（规划稿）
 
 > 状态：**T1（db-schema）、T2（snapshot-assembler）、T3（admin-structured-api）、
-> T4（yaml-import-export）已实施**；T5 起待开发
+> T4（yaml-import-export）、T5（template-db-source）已实施**；T6 起待开发
 > T1 交付：`initializer-app/src/main/resources/db/{schema,data}.sql` + 16 个实体/Mapper +
 > `ConfigRepository` 结构化读写 + `StructuredSnapshot`/`StructuredYamlCodec`/`StructuredDraftWriter`/
 > `LegacyYamlMigration`（T1→T2 过渡桥）+ 升级文档（`docs/guide/configuration.md` §6）
@@ -18,6 +18,12 @@
 > + 导入侧安全加固（路径穿越 / 条目数 / 单文件与总量 / 严格 UTF-8）
 > + `ErrorCode` 40xx 导入导出错误码 + `cfg_starter` 唯一约束补 `source` 通道维度
 > + 文档（`docs/guide/configuration.md` §9）
+> T5 交付：模板改为 DB 唯一数据源（`TemplateRenderer` 摘除 `ClassTemplateLoader` 兜底、
+> `LinkageRenderer` 摘除 yml 片段 classpath 兜底并暴露 `validateRequirements` 模板可达性校验、
+> `ProjectGenerator.validate(...)` 前置校验、`GeneratorService`/`GeneratorConfig` 适配「DB 全量模板集」、
+> `DemoCatalogSeeder` + `DemoCatalogWriter` 实现「内置清单与模板入库 → 自动发布一版」、
+> `CatalogSnapshotBootstrap` demo 分支改走 DB 发布装表
+> + 文档（`docs/guide/configuration.md` §10）
 > 勘误：§12 的 ER 图实为 **15 张 `cfg_*` 表**（非 17）；实体为 15 张 + `ConfigDraftMetaEntity` = 16
 > 来源：需求「元数据/starter清单/冲突规则/模板 改为表单维护 + 关系表存储 + YAML 导入导出」
 > 关联：M3 里程碑（`docs/design/m3-overview.md`、`docs/design/m3-detail.md`）
@@ -192,7 +198,7 @@ docs/
 | 2 | `snapshot-assembler` | ✅ 新增 `StructuredCatalogAssembler`（表行直装），发布/回滚/启动三条链路改结构化装配，`MetadataCatalog.of` 公共工厂 | 1 |
 | 3 | `admin-structured-api` | ✅ 改造管理端为分模块结构化读写 API，制品库同步改写结构化 starter 草稿（source 标记） | 2 |
 | 4 | `yaml-import-export` | ✅ 实现 ZIP 导入解析入库与导出下载，复用 core 解析器并补充导入导出错误码 | 2 |
-| 5 | `template-db-source` | 模板渲染改为只读数据库全量模板集，仅 demo 模式以 classpath 内置作初始种子 | 2 |
+| 5 | `template-db-source` | ✅ 模板渲染改为只读数据库全量模板集，仅 demo 模式以 classpath 内置作初始种子 | 2 |
 | 6 | `web-forms` | 梳理前端结构后，将管理后台改为 TDesign 表单化维护与导入导出页 | 3, 4, 5 |
 | 7 | `docs-tests` | 更新配置与关系表文档，适配并补充装配器、导入导出、发布回滚相关测试 | 6 |
 
@@ -210,6 +216,34 @@ docs/
   重复业务 ID 会在建映射时静默折叠而漏检；已改为保留 `List` 行清单做校验、映射只用于子行父键定位。
 - **schema 变更**：`cfg_starter` 唯一约束补 `source` 维度（`(release_id, source, starter_id)`），
   与「两通道并存、同名手工优先」语义对齐；`schema.sql` 末尾幂等 `ALTER`。
+
+
+## 12.2 T5 实施说明（模板 DB 唯一数据源）
+
+### 核心决策
+
+1. **渲染器只认模板集**：`TemplateRenderer(Map<String,String> templates)` 内部仅装配
+   `StringTemplateLoader`；`templates()` 访问器让 `ProjectGenerator`/`LinkageRenderer` 共用同一份模板集，
+   不再出现「渲染器有模板、联动器没有」的口径漂移。
+2. **`--demo` 种子 = classpath 快照**：`DemoCatalogSeeder.loadClasspathTemplates()`（生产）与
+   `ClasspathTemplates`/`TestTemplates`（测试）以同一 `classpath*:/templates/**` 扫描模式装载，
+   目录条目按「文件名末段含 `.`」排除（jar 与目录两种协议下目录 URL 都不带尾斜杠）。
+3. **`--demo` 入库是确定性全量替换**：模板 / starter（MANUAL）/ metadata 三块各自整体替换，
+   不读库内既有状态 —— 否则同进程残留草稿会让种子「看起来已存在」而被跳过。
+   **`SYNC` 通道与冲突规则草稿不在种子范围内**。
+4. **yml 片段不做 FreeMarker 语法校验**：模板集同时承载 `.ftl` 与 `application-*.yml` 片段；
+   片段内容含 Spring 占位符 `${VAR:default}`，若按 FreeMarker 解析会被误判语法错误。
+   `StructuredCatalogAssembler.assembleTemplates` 与
+   `StructuredSnapshotCodec.parseTemplates` 均只对 `*.ftl` 做语法校验。
+5. **「缺模板」前移**：`LinkageRenderer.validateRequirements` 在渲染前汇总全部缺失项并以 3001 失败，
+   取代「渲染到一半才炸」；生成与发布/导入共用这一口径。
+
+### 遗留与后续
+
+- `StructuredYamlCodec`/`StructuredDraftWriter`/`MetadataDoc` 仍服务 YAML 契约与导入通道，
+  T6 表单化后可评估摘除。
+- `initializer.catalog.dir` 外部清单目录通道保留（其 `templates/**` 即该次启动的模板集），
+  下线说明由 T8 收口。
 
 ## 13. 现状基线（改造前）
 

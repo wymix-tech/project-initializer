@@ -335,9 +335,17 @@ public class StructuredCatalogAssembler {
      * <p>语法非法的模板直接拒绝（4002），与 YAML 通道的发布期模板校验同源——
      * 坏模板绝不进入快照。
      *
+     * <p><b>只校验 {@code .ftl}</b>（T5）：模板集同时承载两类条目——
+     * ①{@code .ftl} FreeMarker 模板；②starter 的 {@code application-*.yml} 片段
+     * （按 {@code linkages.application-yml-fragments[].source} 引用，其内容含 Spring 占位符
+     * {@code ${VAR:default}}，既非 FreeMarker 模板也无需转义）。若对 .yml 片段做 FreeMarker
+     * 语法校验，合法的 Spring 占位符会被误判为「语法错误」。
+     * 片段的可达性与内容合法性由 {@link com.wymix.initializer.core.starter.LinkageRenderer#validateRequirements}
+     * 与实际合并时的 YAML 解析共同保障。
+     *
      * @param rows 单作用域结构行
      * @return 模板名 → 模板全文（无模板时为空映射）
-     * @throws BusinessException 模板名重复或语法非法（4002）
+     * @throws BusinessException 模板名重复或 .ftl 语法非法（4002）
      */
     private Map<String, String> assembleTemplates(StructuredSnapshot rows) {
         Map<String, String> templates = new LinkedHashMap<>();
@@ -354,6 +362,10 @@ public class StructuredCatalogAssembler {
             if (templates.putIfAbsent(name, row.getContent()) != null) {
                 throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
                         "发布校验失败: template 名称重复: " + name);
+            }
+            if (!name.endsWith(".ftl")) {
+                // yml 片段：内容含 Spring 占位符，不做 FreeMarker 语法校验（详见方法 Javadoc）
+                continue;
             }
             try {
                 templateValidator.validate(name, row.getContent());

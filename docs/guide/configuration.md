@@ -658,7 +658,84 @@ starter 清单必须已在 metadata 的 `bootVersions[].starters` 白名单登�
 
 ---
 
-## 10. 验证清单
+## 10. 模板改为 DB 唯一数据源（T5）
+
+> 本节对应「配置结构化入库」改造的第五阶段（T5，template-db-source）。
+
+**模板集（`cfg_template`）是生成期唯一的模板来源，没有 classpath 兜底。**
+
+### 10.1 变化点
+
+| 项 | T4 之前 | T5 之后 |
+|---|---|---|
+| `TemplateRenderer` 装载 | `StringTemplateLoader` 覆盖 + `ClassTemplateLoader` 兜底 | **仅** `StringTemplateLoader`（构造期传入的模板集） |
+| 模板集为空 | 回退 classpath 内置 6 个模板 | **生成失败（3001 明细细节）** |
+| classpath `templates/**` | 渲染兜底数据源 | 仅作 **`--demo` 的初始种子**（入库后不再参与渲染） |
+| starter yml 片段读取 | 模板集优先，classpath 兜底 | **仅**模板集；缺失即 3004 |
+| 模板语法校验 | 全部模板条目 | **仅 `*.ftl`**（`application-*.yml` 片段含 Spring 占位符，不做 FreeMarker 校验） |
+
+### 10.2 `--demo` 播种链
+
+```
+读 classpath 内置清单（metadata.yml + starters/*.yml）
+读 classpath 内置模板（templates/**，共 8 个）
+        │
+        ▼
+模板可达性自检（starter 声明的每个模板/片段都能在内置模板集中找到；缺则启动即失败 9002）
+        │
+        ▼
+入库（release_id = 0，确定性全量替换）
+  ① cfg_template      ← 8 个内置模板（6 基础 + xxx-redis 联动模板/片段 2）
+  ② cfg_starter       ← 内置 starter 清单（source = MANUAL 通道）
+  ③ cfg_java_version / cfg_boot_version / cfg_boot_java / cfg_boot_starter_ref ← 内置元数据
+        │
+        ▼
+自动发布一版（config_release 头 + copyAsRelease 固化快照）
+        │
+        ▼
+从该发布的结构行装配快照（= 生成期唯一模板来源）
+```
+
+- 内置模板为 **8 个**：`Application.java.ftl`、`README.md.ftl`、`application.yml.ftl`、
+  `build.gradle.ftl`、`pom.xml.ftl`、`settings.gradle.ftl`、
+  `starters/xxx-redis/RedisConfig.java.ftl`、`starters/xxx-redis/application-redis.yml`。
+- 入库是**确定性全量替换**（不读库内既有状态），因此 `--demo` 启动结果与库内残留草稿无关；
+  **`SYNC` 通道与冲突规则草稿不在种子范围内**，保持库内既有内容。
+- 播种失败（可达性/入库异常）**不阻塞启动**：退化为「内置清单内存快照 + 空模板集」并告警，
+  此时生成会以 3001 明确失败，运维可改用外部清单目录或管理端发布修复。
+
+### 10.3 非 `--demo` 启动
+
+- DB 有发布 → 从最新发布结构行装配；模板集 = 该发布的 `cfg_template` 全量
+- DB 无发布 / 空作用域 → **空快照**（空模板集）→ 生成以 3001 明确失败，等待管理端首次发布
+
+### 10.4 外部清单目录（`initializer.catalog.dir`）
+
+外部目录是**显式运维通道**，其 `templates/**` 即该次启动的模板集（DB 模板集不参与）。
+目录下 `metadata.yml` / `starters/*.yml` 存在即以其播种，格式正确即可用。
+
+### 10.5 发布期「模板可达性」硬校验
+
+`LinkageRenderer.validateRequirements(bootVersionId, starterIds)` 被两处共用：
+
+1. **生成前置校验**（`ProjectGenerator.validate`）：渲染任何字节之前先汇总「缺哪些模板」并 3001 失败
+2. **发布期 / 导入期硬校验**：避免出现「发布通过但生成失败」
+
+校验口径：选中的 starter 声明的全部 `linkages.templates[].source` 与
+`linkages.application-yml-fragments[].source` 必须都在模板集内。
+
+### 10.6 常见故障与处理
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 生成返回 3001 `模板集缺失必需模板…: pom.xml.ftl` | 发布快照的 `cfg_template` 为空或不完整 | `--demo` 重启，或经 `/api/admin/templates` / ZIP 导入补全模板后重新发布 |
+| 生成返回 3001 `模板集缺失必需模板…: starters/<x>/...` | starter 声明了联动模板但模板集里没有 | 把该模板补进模板集（管理端表单或 ZIP 导入）再发布 |
+| 4002 `模板语法非法: xxx.ftl` | `.ftl` 语法错误 | 修正模板内容；`.yml` 片段不做 FreeMarker 校验 |
+| 4002 `模板 xxx 缺少必需字段: content` | 模板条目 content 为空 | 补全内容（目录条目已被排除，正常不会出现） |
+
+---
+
+## 11. 验证清单
 
 配置变更后建议按序验证：
 
@@ -685,3 +762,11 @@ mvn verify        # 单测 + JaCoCo 覆盖率门禁（配置合法性由加载�
     确认响应 `summary` 规模与原草稿一致、`hidden` 未被丢弃，随后 `POST /config/publish` 成功
 11. 导入安全冒烟：构造含 `templates/../../x.ftl` 的 ZIP 上传，应返回 **4008 + 路径穿越明细**，
     且草稿未被改动（`GET /api/admin/config/metadata` 仍是导入前内容）
+12. **模板唯一数据源冒烟（T5）**：`--demo` 启动后 `GET /api/admin/templates` 应有 **8** 个内置模板，
+    且 `POST /api/generate` 成功；随后 `DELETE /api/admin/templates/pom.xml.ftl` → 发布 →
+    `POST /api/generate` 应返回 **3001 明细含 `pom.xml.ftl`**（证明无 classpath 兜底）
+13. **空模板集语义冒烟（T5）**：非 `--demo` 且 DB 无发布时启动，`POST /api/generate` 应返回
+    3001 明确失败、不产出空骨架
+14. **starter 联动模板缺失冒烟（T5）**：发布仅含 `web` starter（无联动）的配置后可正常生成；
+    再发布含 `xxx-redis-spring-boot-starter` 但模板集缺 `starters/xxx-redis/*` 的配置应被拒
+    （发布期模板可达性硬校验）

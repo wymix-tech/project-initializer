@@ -4,6 +4,10 @@ import com.wymix.initializer.app.InitializerApplication;
 import com.wymix.initializer.app.admin.entity.ConfigKind;
 import com.wymix.initializer.app.admin.repository.ConfigRepository;
 import com.wymix.initializer.app.admin.repository.StructuredDraftWriter;
+import com.wymix.initializer.app.metadata.MetadataCatalogConfig;
+import com.wymix.initializer.app.starter.StarterCatalogConfig;
+import com.wymix.initializer.core.metadata.MetadataCatalog;
+import com.wymix.initializer.core.starter.StarterCatalog;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationRunner;
@@ -52,6 +56,9 @@ class CatalogSnapshotBootstrapTest {
 
     @Autowired
     private StructuredDraftWriter writer;
+
+    @Autowired
+    private DemoCatalogSeeder demoSeeder;
 
     @Test
     void seed_withPublishedRelease_assemblesSnapshotFromRows() throws Exception {
@@ -127,6 +134,61 @@ class CatalogSnapshotBootstrapTest {
         assertThat(snapshotHolder.current().metadataCatalog().javaVersions()).isEmpty();
         repository.deleteScope(badRelease);
         repository.clearDraftKind(ConfigKind.METADATA);
+    }
+
+    @Test
+    void seed_demoEnabled_seedsCatalogAndTemplatesThenPublishes() throws Exception {
+        // T5：--demo 播种链 = 模板可达性自检 → 内置清单与模板入库 → 自动发布一版 → 从该发布装表
+        // 断言要点：快照模板集即 DB 全量模板集（8 个内置模板），清单来自内置 metadata + starter
+        for (ConfigKind kind : ConfigKind.values()) {
+            repository.clearDraftKind(kind);
+        }
+        MetadataCatalog metadata = new MetadataCatalogConfig()
+                .metadataCatalog(new StarterCatalogConfig().starterCatalog(), true);
+        StarterCatalog starters = new StarterCatalogConfig().starterCatalog();
+        snapshotHolder.seed(null);
+
+        var seeded = demoSeeder.seedAndPublish(metadata, starters, "test-seeder");
+        assertThat(seeded).isNotNull();
+        // --demo 分支由 properties 决定（本测试类为 demo 开关的独立上下文），此处直接跑默认分支
+        seeder.run(null);
+
+        CatalogSnapshot snapshot = snapshotHolder.current();
+        assertThat(snapshot).isNotNull();
+        assertThat(snapshot.templateOverrides())
+                .containsKeys("pom.xml.ftl", "application.yml.ftl", "README.md.ftl",
+                        "Application.java.ftl", "build.gradle.ftl", "settings.gradle.ftl",
+                        "starters/xxx-redis/RedisConfig.java.ftl",
+                        "starters/xxx-redis/application-redis.yml");
+        assertThat(snapshot.metadataCatalog().javaVersions()).isNotEmpty();
+        assertThat(snapshot.starterCatalog().size()).isEqualTo(starters.size());
+
+        repository.deleteScope(seeded.getId());
+    }
+
+    @Test
+    void seed_withReleaseProvidingTemplates_prefersDbTemplates() throws Exception {
+        // T2/T5 交叉：非 demo 起步时，快照模板集**只**来自 DB 发布快照（无 classpath 兜底）
+        for (ConfigKind kind : ConfigKind.values()) {
+            repository.clearDraftKind(kind);
+        }
+        writer.write(ConfigKind.TEMPLATE, """
+                name: "pom.xml.ftl"
+                content: "<project>db-only</project>"
+                """);
+        long releaseId = repository.insertRelease("tester", "含模板的非 demo 发布").getId();
+        repository.copyAsRelease(ConfigRepository.DRAFT_RELEASE_ID, releaseId);
+
+        snapshotHolder.seed(null);
+        seeder.run(null);
+
+        CatalogSnapshot snapshot = snapshotHolder.current();
+        assertThat(snapshot).isNotNull();
+        assertThat(snapshot.templateOverrides()).containsOnlyKeys("pom.xml.ftl");
+        assertThat(snapshot.templateOverrides().get("pom.xml.ftl")).contains("db-only");
+
+        repository.deleteScope(releaseId);
+        repository.clearDraftKind(ConfigKind.TEMPLATE);
     }
 
     @Test

@@ -49,7 +49,7 @@ class TemplateSnapshotTest {
             com.wymix.initializer.core.starter.StarterCatalog starterCatalog = snapshotStarterCatalog();
             // starter 元信息来自清单：装载 metadata 后联动合并
             MetadataCatalog catalog = MetadataCatalog.load(in).merge(starterCatalog);
-            generator = new ProjectGenerator(catalog, new TemplateRenderer(), starterCatalog);
+            generator = new ProjectGenerator(catalog, ClasspathTemplates.renderer(), starterCatalog);
         } catch (Exception e) {
             throw new IllegalStateException("快照测试环境初始化失败", e);
         }
