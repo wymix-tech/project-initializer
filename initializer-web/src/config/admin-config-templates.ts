@@ -1,18 +1,24 @@
 import type { AdminConfigKind } from '@/types/api'
 
 /**
- * 管理端各配置草稿的示例模板与字段释义（降低 YAML 手写门槛）。
+ * 管理端各配置模块的**字段释义与占位示例**（T6 表单化后的角色收敛）。
  *
- * <p>设计要点：
+ * <p><b>角色变化（T6.4）</b>：T6 之前管理端以「YAML 文本框」维护配置，本文件提供
+ * 可直接保存的示例 YAML + 字段释义，帮用户降低手写门槛；T6 起管理后台改为**表单化维护**
+ * （`components/admin/*Form.vue`），表单字段自带标签与提示，不再需要贴示例 YAML。
+ *
+ * <p>因此本文件退化为「字段说明与示例数据的唯一出处」，保留两块能力：
  * <ul>
- *   <li>示例内容与后端解析器同构，逐字段带中文注释，可直接保存并发布
- *       （各 kind 示例的 starter ID 互相自洽，避免悬空引用被发布期拒绝）</li>
- *   <li>字段释义与示例同源维护，避免文档漂移；纯常量导出，无副作用</li>
+ *   <li>{@code fields} / {@code notes}：字段释义与发布注意事项，表单页可作补充说明与
+ *       「字段说明」面板的数据源（保持与后端解析口径同源，避免文档漂移）；</li>
+ *   <li>{@code sample}：**占位示例**（不再是「可直接发布的完整配置」），仅用于说明字段形态；
+ *       表单化后不再写入草稿，导出/导入请走 ZIP 归档通道（T4）。</li>
  * </ul>
  *
- * <p>各 kind 结构依据：
- * metadata → {@code catalog/metadata.yml}；starter → {@code catalog/starters/*.yml}（多文档）；
- * conflict-rule → {@code rules} 节；template → 多文档 {@code {name, content}}。
+ * <p>各 kind 结构依据（与后端解析器同构）：
+ * metadata → {@code cfg_java_version} / {@code cfg_boot_version} 等表；
+ * starter → {@code cfg_starter} 及其子表；conflict-rule → {@code cfg_conflict_rule}；
+ * template → {@code cfg_template}。
  */
 
 /** 单个字段的用途释义。 */
@@ -25,11 +31,11 @@ export interface ConfigFieldDoc {
   purpose: string
 }
 
-/** 一个配置种类的示例 + 字段释义 + 校验注意事项。 */
+/** 一个配置模块的占位示例 + 字段释义 + 校验注意事项。 */
 export interface AdminConfigTemplate {
-  /** 该配置种类的一句话定位 */
+  /** 该配置模块的一句话定位 */
   summary: string
-  /** 带逐字段注释的示例 YAML（可直接发布） */
+  /** 带逐字段注释的占位示例（T6 起仅作字段形态说明，不再直接写草稿） */
   sample: string
   /** 字段用途释义表 */
   fields: ConfigFieldDoc[]
@@ -111,7 +117,7 @@ bootVersions:
   ],
 }
 
-/** starter 清单（与 catalog/starters/*.yml 同构，多文档）：依赖坐标 + 选中后的联动生成规则。 */
+/** starter 清单：依赖坐标 + 选中后的联动生成规则。 */
 const STARTER_TEMPLATE: AdminConfigTemplate = {
   summary: 'starter 的权威数据源：依赖坐标（含版本）、展示名、分类、维护方与「选中后自动生成」的联动规则；多个 starter 用 --- 分隔成多文档。发布后自动合并进元数据，无需在 metadata 里重复登记。',
   sample: `# ===== starter 清单（与 catalog/starters/*.yml 同构）=====
@@ -269,11 +275,34 @@ export const ADMIN_CONFIG_TEMPLATES: Record<AdminConfigKind, AdminConfigTemplate
 }
 
 /**
- * 取指定配置种类的示例 YAML。
+ * 取指定配置模块的占位示例文本。
  *
- * @param kind 配置种类
+ * <p>T6 起表单化维护，示例仅作字段形态说明（不再写入草稿）；未登记模块返回空串，
+ * 便于调用方降级（如后端新增 kind 而前端未同步）。
+ *
+ * @param kind 配置模块键
  * @returns 带逐字段注释的示例全文（未登记种类返回空串）
  */
 export function sampleOf(kind: AdminConfigKind): string {
   return ADMIN_CONFIG_TEMPLATES[kind]?.sample ?? ''
+}
+
+/**
+ * 取指定配置模块的字段释义表。
+ *
+ * @param kind 配置模块键
+ * @returns 字段释义清单（未登记种类返回空数组）
+ */
+export function fieldsOf(kind: AdminConfigKind): ConfigFieldDoc[] {
+  return ADMIN_CONFIG_TEMPLATES[kind]?.fields ?? []
+}
+
+/**
+ * 取指定配置模块的发布注意事项。
+ *
+ * @param kind 配置模块键
+ * @returns 注意事项清单（未登记种类返回空数组）
+ */
+export function notesOf(kind: AdminConfigKind): string[] {
+  return ADMIN_CONFIG_TEMPLATES[kind]?.notes ?? []
 }

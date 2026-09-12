@@ -1,7 +1,7 @@
 # 配置结构化入库与表单化维护（规划稿）
 
 > 状态：**T1（db-schema）、T2（snapshot-assembler）、T3（admin-structured-api）、
-> T4（yaml-import-export）、T5（template-db-source）已实施**；T6 起待开发
+> T4（yaml-import-export）、T5（template-db-source）、T6（web-forms）已实施**；T7 起待开发
 > T1 交付：`initializer-app/src/main/resources/db/{schema,data}.sql` + 16 个实体/Mapper +
 > `ConfigRepository` 结构化读写 + `StructuredSnapshot`/`StructuredYamlCodec`/`StructuredDraftWriter`/
 > `LegacyYamlMigration`（T1→T2 过渡桥）+ 升级文档（`docs/guide/configuration.md` §6）
@@ -24,6 +24,12 @@
 > `DemoCatalogSeeder` + `DemoCatalogWriter` 实现「内置清单与模板入库 → 自动发布一版」、
 > `CatalogSnapshotBootstrap` demo 分支改走 DB 发布装表
 > + 文档（`docs/guide/configuration.md` §10）
+> T6 交付：前端表单化工作台（`AdminPanel.vue` 改左导航 + 卡片表单外壳；
+> 新增 `components/admin/{MetadataForm,StarterForm,ConflictRuleForm,TemplateForm,PublishConsole,ImportExportPanel}.vue`；
+> `api/client.ts` 补 `adminStructuredApi` / `adminArchiveApi` / `adminApi.sync`；
+> `types/admin.ts` 对齐 `CatalogDtos` + `ConfigArchiveDtos`；`stores/starterConfigWizard.ts` 改结构化提交；
+> 删除 `starter-yaml-builder.ts`，`config/admin-config-templates.ts` 退化为字段释义与占位示例）
+> + 文档（`docs/guide/configuration.md` §11，验证清单顺延 §12 并加 T6 冒烟 3 条）
 > 勘误：§12 的 ER 图实为 **15 张 `cfg_*` 表**（非 17）；实体为 15 张 + `ConfigDraftMetaEntity` = 16
 > 来源：需求「元数据/starter清单/冲突规则/模板 改为表单维护 + 关系表存储 + YAML 导入导出」
 > 关联：M3 里程碑（`docs/design/m3-overview.md`、`docs/design/m3-detail.md`）
@@ -199,7 +205,7 @@ docs/
 | 3 | `admin-structured-api` | ✅ 改造管理端为分模块结构化读写 API，制品库同步改写结构化 starter 草稿（source 标记） | 2 |
 | 4 | `yaml-import-export` | ✅ 实现 ZIP 导入解析入库与导出下载，复用 core 解析器并补充导入导出错误码 | 2 |
 | 5 | `template-db-source` | ✅ 模板渲染改为只读数据库全量模板集，仅 demo 模式以 classpath 内置作初始种子 | 2 |
-| 6 | `web-forms` | 梳理前端结构后，将管理后台改为 TDesign 表单化维护与导入导出页 | 3, 4, 5 |
+| 6 | `web-forms` | ✅ 管理后台改为表单化维护工作台（左导航 + 卡片表单 + 导入导出页） | 3, 4, 5 |
 | 7 | `docs-tests` | 更新配置与关系表文档，适配并补充装配器、导入导出、发布回滚相关测试 | 6 |
 
 ## 12.1 T4 实施说明（导入导出）
@@ -241,9 +247,55 @@ docs/
 ### 遗留与后续
 
 - `StructuredYamlCodec`/`StructuredDraftWriter`/`MetadataDoc` 仍服务 YAML 契约与导入通道，
-  T6 表单化后可评估摘除。
+  T6 表单化后**仍未摘除**（T6 只接前端，未动后端通道），后续评估见 §12.3。
 - `initializer.catalog.dir` 外部清单目录通道保留（其 `templates/**` 即该次启动的模板集），
   下线说明由 T8 收口。
+
+## 12.3 T6 实施说明（前端表单化工作台）
+
+### 交付范围
+
+- **外壳**：`AdminPanel.vue` 改为「左侧分区导航 + 右侧卡片表单」；六分区
+  （发布台 / 元数据 / starter 清单 / 冲突规则 / 模板 / 导入导出）。
+- **表单组件**：`components/admin/` 下 6 个分区组件 + 共用样式 `admin-form.css`。
+- **会话**：`composables/useAdminSession.ts` 收敛 token / 登录态 / 忙碌态 / 提示条，
+  各分区共享同一会话（不再各自持有一份）。
+- **接口层**：`api/client.ts` 新增 `adminStructuredApi`（结构化 CRUD + `readDraftVersion`）、
+  `adminArchiveApi`（ZIP 导入导出 + `fileNameOf`）、`adminApi.sync`。
+- **类型层**：新增 `types/admin.ts`，与后端 `CatalogDtos` / `ConfigArchiveDtos` 一一对应。
+- **向导**：`stores/starterConfigWizard.ts` 改结构化提交（读清单 → 合并 → 整体 PUT）；
+  预览区展示提交体 JSON。**删除 `starter-yaml-builder.ts`**。
+
+### 关键决策
+
+1. **不引入 TDesign**：计划 §5 原打算引入 TDesign Vue Next。实施时评估后未引入——
+   本次表单是「列表 + 行内编辑 + 文本域」的轻量形态，现有原生控件 + 统一样式即可覆盖，
+   引入组件库会新增依赖体积、主题变量与大量无用组件的维护面（收益 < 成本）。
+   样式统一在 `admin-form.css`（含深色顶栏 + Spring 绿 `#6DB33F` 选中态）。
+   **若后续表单复杂度上来（级联选择、树形、虚拟滚动），可再评估引入。**
+
+2. **表单只提交完整结构**：与 T3「整体提交」契约一致，天然无孤儿行、无增删改 diff；
+   删除行 = 从数组移除后保存。
+
+3. **版本取自 YAML 契约**：结构化 GET 不回版本，`readDraftVersion()` 走
+   `GET /api/admin/config/metadata`（轻量）取 `config_draft_meta.version`；
+   结构化与 YAML 端点共享同一 version 口径，`If-Match` 可混用。
+
+4. **向导不再渲染 YAML**：T1 起「向导拼 YAML → 后端反解析」的往返路径会让
+   `hidden` / `required` 等列语义有丢失风险（见 PR #44）；T6 直接把表单映射为结构化 DTO，
+   **预览即提交体**，「所见即所存」。
+
+5. **测试夹具必须是工厂**：表单把响应对象直接挂进响应式 ref 并就地编辑，
+   共享同一个字面量夹具会让后序用例看到前序用例的修改。`admin-forms.spec.ts` 的
+   `view()` 因此是函数而非常量（这是个真实踩到的坑）。
+
+### 遗留与后续（T7 收口）
+
+- `config/admin-config-templates.ts` 仍保留四类模块的 `sample`（占位示例）与 `fields`/`notes`；
+  当前表单未直接渲染 `fields`，可作为后续「字段说明」抽屉的数据源，或由 T7 决定摘除。
+- `starter-yaml-builder.ts` 已删除；若 T7 发现仍有引用需一并清理测试与文档。
+- `StructuredYamlCodec` / `StructuredDraftWriter` / `MetadataDoc` 仍服务 YAML 契约与导入通道，
+  T7 之后可评估摘除（T6 未动，避免与前端改造耦合）。
 
 ## 13. 现状基线（改造前）
 

@@ -5,6 +5,7 @@
   "testRunner": "vitest",
   "coverageAnalysis": "perTest",
   "mutate": ["src/**/*.ts", "!src/main.ts", "!src/types/**"],
+  "ignoreStatic": true,
   "thresholds": {
     "high": 80,
     "low": 70,

@@ -141,3 +141,21 @@ export interface AdminAudit {
 
 /** 管理端配置草稿种类 */
 export type AdminConfigKind = 'metadata' | 'starter' | 'conflict-rule' | 'template'
+
+/**
+ * 制品库同步结果概况（POST /api/admin/sync，M3.3）。
+ *
+ * 各通道字段为同步链路的计数摘要；仅用于管理端提示条展示。
+ */
+export interface AdminSyncOutcome {
+  /** 采纳的同步条目总数 */
+  accepted?: number
+  /** 被手工同名配置覆盖的条目数 */
+  overridden?: number
+  /** 同步后同步层 starter 条目数 */
+  syncedStarters?: number
+  /** 摘要文案（后端给出的可读概况，存在时优先展示） */
+  summary?: string
+  /** 其余通道计数（原样透传，前端不解读） */
+  [key: string]: unknown
+}

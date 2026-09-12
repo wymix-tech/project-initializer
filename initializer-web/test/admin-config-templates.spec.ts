@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { ADMIN_CONFIG_TEMPLATES, sampleOf } from '@/config/admin-config-templates'
+import { ADMIN_CONFIG_TEMPLATES, sampleOf, fieldsOf, notesOf } from '@/config/admin-config-templates'
 import type { AdminConfigKind } from '@/types/api'
 
 /**
- * 示例模板契约测试：确保每个配置种类都配齐「示例 + 字段释义 + 注意事项」，
- * 新增 kind 时漏补示例会在此处暴露（避免管理端出现空白引导）。
+ * 字段释义契约测试（T6 角色收敛后）：确保每个配置模块都配齐
+ * 「占位示例 + 字段释义 + 注意事项」，新增 kind 时漏补会在此处暴露。
+ *
+ * T6 起管理端为表单化维护，sample 仅作字段形态说明（不再写入草稿），
+ * 故不再断言「示例可直接发布」；只保证形态与释义完整、可被表单页用作补充说明。
  */
 const KINDS: AdminConfigKind[] = ['metadata', 'starter', 'conflict-rule', 'template']
 
@@ -38,6 +41,13 @@ describe('管理端配置示例模板', () => {
 
   it('未登记种类返回空串（防御：新增后端 kind 未同步前端时降级为空）', () => {
     expect(sampleOf('unknown-kind' as AdminConfigKind)).toBe('')
+  })
+
+  it('fieldsOf / notesOf 暴露与常量一致的数据，未登记种类降级为空', () => {
+    expect(fieldsOf('starter')).toBe(ADMIN_CONFIG_TEMPLATES.starter.fields)
+    expect(notesOf('metadata')).toBe(ADMIN_CONFIG_TEMPLATES.metadata.notes)
+    expect(fieldsOf('unknown-kind' as AdminConfigKind)).toEqual([])
+    expect(notesOf('unknown-kind' as AdminConfigKind)).toEqual([])
   })
 
   it('示例中的占位符值均加引号，避免被 YAML 解析为流式映射', () => {

@@ -5,16 +5,20 @@ import StarterConfigWizard from '@/components/StarterConfigWizard.vue'
 import { useStarterConfigWizardStore } from '@/stores/starterConfigWizard'
 
 /**
- * starter 配置向导组件冒烟测：步骤渲染、导航、字段校验阻断、预览渲染。
+ * starter 配置向导组件冒烟测：步骤渲染、导航、字段校验阻断、结构化提交体预览。
+ *
+ * T6 起向导改为结构化提交，预览区展示 `previewDto`（JSON），不再是渲染出的 YAML。
  */
 const fetchMock = vi.fn()
 
 beforeEach(() => {
   fetchMock.mockReset()
+  // 载入清单（结构化）+ 读草稿版本（YAML 契约）两个请求共用同一响应
   fetchMock.mockResolvedValue({
     ok: true,
     status: 200,
-    json: () => Promise.resolve({ kind: 'starter', contentYaml: null, version: null, updatedAt: null }),
+    json: () => Promise.resolve({ starters: [], kind: 'metadata', contentYaml: null, version: null, updatedAt: null }),
+    text: () => Promise.resolve(JSON.stringify({ starters: [] })),
   } as unknown as Response)
   vi.stubGlobal('fetch', fetchMock)
   setActivePinia(createPinia())
@@ -76,7 +80,7 @@ describe('StarterConfigWizard 步骤导航', () => {
 })
 
 describe('StarterConfigWizard 预览', () => {
-  it('第四步实时渲染 yml 预览', async () => {
+  it('第四步展示结构化提交体预览', async () => {
     const wizard = useStarterConfigWizardStore()
     wizard.setToken('tk')
     wizard.form.id = 'web'
@@ -89,8 +93,10 @@ describe('StarterConfigWizard 预览', () => {
     await settle()
     const pre = wrapper.find('.preview-yaml')
     expect(pre.exists()).toBe(true)
-    expect(pre.text()).toContain('id: web')
-    expect(pre.text()).toContain('linkages: {}')
+    // 预览即提交体（JSON），与 PUT /api/admin/starters 同源
+    expect(pre.text()).toContain('"id": "web"')
+    expect(pre.text()).toContain('"artifactId": "spring-boot-starter-web"')
+    expect(pre.text()).toContain('"hidden": false')
   })
 })
 

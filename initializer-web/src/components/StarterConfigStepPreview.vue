@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useStarterConfigWizardStore } from '@/stores/starterConfigWizard'
 
 /**
@@ -9,11 +10,14 @@ import { useStarterConfigWizardStore } from '@/stores/starterConfigWizard'
  */
 const wizard = useStarterConfigWizardStore()
 
+/** 预览文本：即将提交的结构化条目 JSON（与提交体同源，保证「所见即所存」）。 */
+const previewText = computed(() => JSON.stringify(wizard.previewDto, null, 2))
+
 /** 复制预览到剪贴板（失败静默，降级为手动选中复制）。 */
 async function copyPreview(): Promise<void> {
   try {
-    await navigator.clipboard.writeText(wizard.previewYaml)
-    wizard.showText('info', '已复制 YAML 到剪贴板')
+    await navigator.clipboard.writeText(previewText.value)
+    wizard.showText('info', '已复制结构化提交体到剪贴板')
   } catch {
     wizard.showText('error', '复制失败，请手动选中复制')
   }
@@ -24,15 +28,16 @@ async function copyPreview(): Promise<void> {
   <div>
     <h3>④ 预览与发布</h3>
     <p class="scw-hint">
-      下方即向导根据表单生成的 starter yml。点「写入草稿」追加到 starter 草稿（不立即生效）；
+      下方即向导将要提交的**结构化条目**（与保存请求体同源，T6 起不再拼 YAML）。
+      点「写入草稿」追加到 starter 清单草稿（不立即生效）；
       点「保存并发布」触发后端全量校验 + 快照热切换。
     </p>
 
     <div class="preview-head">
-      <span class="preview-title">生成的 starter yml</span>
+      <span class="preview-title">结构化提交体（JSON）</span>
       <button type="button" class="btn-sm" @click="copyPreview">复制</button>
     </div>
-    <pre class="preview-yaml">{{ wizard.previewYaml }}</pre>
+    <pre class="preview-yaml">{{ previewText }}</pre>
 
     <div class="summary">
       <div class="summary-item">

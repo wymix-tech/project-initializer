@@ -372,7 +372,8 @@ curl -X POST -H "X-Admin-Token: $TOKEN" -H "Content-Type: application/json" \
 3. **联动规则（可选）**：config-package、模板(source→target)、application.yml 片段、集成抽象类；占位符仅允许 `{basePackage}` `{packagePath}` `{artifact}` `{group}` `{bootVersion}` `{javaVersion}`，越界即时提示
 4. **预览与发布**：实时预览生成的 starter yml → 写入草稿（带乐观锁 `If-Match`，追加为多文档）→ 发布（全量校验 + 热切换）
 
-**后端零改动**：向导复用 `PUT /api/admin/config/starter` + `POST /api/admin/config/publish`，生成的 yml 与 `catalog/starters/*.yml` 同构，直接追加进 starter 草稿。高级用户可随时切回「YAML 直编」模式。
+**T6 更新**：向导已改为**结构化提交**——复用 `PUT /api/admin/starters`（整体清单）+ `POST /api/admin/config/publish`，
+预览区展示即将提交的结构化条目（JSON），不再拼 YAML。详见 §11。
 
 ## 6. 升级说明：YAML 文本 → 结构化关系表（T1）
 
@@ -735,7 +736,68 @@ starter 清单必须已在 metadata 的 `bootVersions[].starters` 白名单登�
 
 ---
 
-## 11. 验证清单
+## 11. 前端表单化工作台（T6）
+
+> 本节对应「配置结构化入库」改造的第六阶段（T6，web-forms）。
+
+管理后台由「YAML 文本框」升级为**模块化表单工作台**：左侧分区导航，右侧卡片式表单。
+所有写路径都走 T3 结构化契约与 T4 归档契约，**前端不再拼 YAML 文本**。
+
+### 11.1 分区导航
+
+| 分区 | 组件 | 数据通道 |
+|---|---|---|
+| 发布台 | `PublishConsole.vue` | `POST /config/publish`、`POST /releases/{id}/rollback`、`POST /sync`、`GET /releases`、`GET /audits` |
+| 元数据 | `MetadataForm.vue` | `GET` / `PUT /api/admin/metadata` |
+| starter 清单 | `StarterForm.vue` | `GET` / `PUT /api/admin/starters` |
+| 冲突规则 | `ConflictRuleForm.vue` | `GET` / `PUT /api/admin/conflict-rules` |
+| 模板 | `TemplateForm.vue` | `GET /templates`、`GET` / `PUT` / `DELETE /templates/{name}` |
+| 导入导出 | `ImportExportPanel.vue` | `GET /config/export`、`POST /config/import` |
+
+### 11.2 关键契约（前端侧）
+
+- **整体提交**：元数据 / starter / 冲突规则的保存都是「提交该模块完整结构」，
+  后端按「清该 kind 草稿 → 整体写」落库；因此删除行无需单独接口，删完保存即生效。
+- **`hidden` 必须留在表单里**：`cfg_starter.hidden` 是列语义（PR #40），
+  starter 表单提供「隐藏」开关，缺失该开关会让 `hidden: true` 在保存时**被静默丢弃**。
+- **草稿宽松 / 发布严格**：表单保存只做字段级与结构级校验；跨模块引用（Boot ↔ Java、
+  规则 ↔ starter、`requires` 悬空）与模板可达性统一在**发布期**收敛为 4002 明细，
+  提示条整段展示，支持边补边存。
+- **CLOB 隔离**：模板列表只取 `name / updatedAt / sort`；全文按需
+  `GET /api/admin/templates/{name}`，列表接口不搬运大文本。
+- **`*.ftl` 才做 FreeMarker 校验**：模板编辑区对 `application-*.yml` 片段标注「yml 片段」，
+  预览为纯文本；片段含 Spring 占位符 `${VAR:default}`，不能按模板解析。
+- **乐观锁**：结构化端点不直接回版本，版本统一取自 `config_draft_meta.version`
+  （`readDraftVersion` 走 YAML 契约的轻量 GET），与结构化写入共享同一 `If-Match` 口径。
+- **一致性**：`types/admin.ts` 与后端 `CatalogDtos` / `ConfigArchiveDtos` 一一对应；
+  `types/api.ts` 只承载生成向导与 YAML 契约类型，两套类型不混用。
+
+### 11.3 starter 新增向导改为结构化提交
+
+4 步向导（`StarterConfigWizard.vue` + `stores/starterConfigWizard.ts`）不再渲染 starter yml，
+而是：
+
+```
+读清单 GET /api/admin/starters  →  合并一条（同名覆盖，其余保留）
+                              →  PUT /api/admin/starters（整体提交，带 If-Match）
+```
+
+预览区展示的就是**提交体本身**（`previewDto` JSON），保证「所见即所存」；
+`hidden` / `required` / `requires` / `bootVersions` 等列语义不再经「渲染 YAML → 反解析」往返，
+不会漂移或丢失。
+
+> **`starter-yaml-builder.ts` 已随 T6 删除**：生成/解析 YAML 文本的能力由后端
+> （`StructuredYamlCodec` / `ConfigArchiveCodec`）独家承担，前端不再重复实现。
+> `config/admin-config-templates.ts` 退化为「字段释义 + 占位示例」，不再写入草稿。
+
+### 11.4 视觉
+
+沿用小清新企业风：深色顶栏 + Spring 绿 `#6DB33F`（左导航选中态、向导模式按钮）。
+校验错误（4002 / 4008 / 4009）以**提示条**呈现，点击可清除，不弹窗打断操作。
+
+---
+
+## 12. 验证清单
 
 配置变更后建议按序验证：
 
@@ -770,3 +832,11 @@ mvn verify        # 单测 + JaCoCo 覆盖率门禁（配置合法性由加载�
 14. **starter 联动模板缺失冒烟（T5）**：发布仅含 `web` starter（无联动）的配置后可正常生成；
     再发布含 `xxx-redis-spring-boot-starter` 但模板集缺 `starters/xxx-redis/*` 的配置应被拒
     （发布期模板可达性硬校验）
+15. **表单化工作台冒烟（T6）**：`cd initializer-web && npm run typecheck && npm run test:coverage`；
+    浏览器打开管理后台 → 登录 → 左导航六分区可切换（发布台 / 元数据 / starter 清单 / 冲突规则 / 模板 / 导入导出）
+16. **表单写入与列语义冒烟（T6）**：starter 表单勾选「隐藏」+「必选」保存 →
+    `GET /api/admin/starters` 读回 `hidden` / `required` 均为 true（不经 YAML 往返也不丢）；
+    模板列表 `GET /api/admin/templates` 响应**不含 `content`**
+17. **表单错误明细冒烟（T6）**：构造跨模块悬空引用（如 Boot 引用未定义 Java）保存草稿 →
+    发布台发布 → 提示条展示 **4002 逐条明细**；导入含 `templates/../../x.ftl` 的 ZIP →
+    提示条展示 **4008 路径穿越明细**且草稿未变更

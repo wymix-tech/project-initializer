@@ -29,6 +29,24 @@ const strategies: { value: FragmentMergeStrategy; label: string }[] = [
       <code>{artifact}</code> <code>{group}</code> <code>{bootVersion}</code> <code>{javaVersion}</code>。
     </p>
 
+    <!-- requires 依赖联动分组 -->
+    <div class="block">
+      <div class="block-head">
+        <span>依赖联动 requires（一行一组，组内逗号分隔）</span>
+      </div>
+      <p class="scw-hint">
+        单元素行 = 强制依赖（选中本 starter 时自动勾选并锁定）；
+        多元素行 = OR 分组（仅提示，不自动勾选）。分组内任一被选即满足该分组，全部分组满足才算依赖满足。
+      </p>
+      <textarea
+        :value="wizard.requiresText"
+        class="requires-input"
+        rows="2"
+        placeholder="b, c&#10;d"
+        @input="wizard.setRequires(($event.target as HTMLTextAreaElement).value)"
+      ></textarea>
+    </div>
+
     <!-- config-package -->
     <div class="field">
       <label for="scw-cp">配置类包名（config-package）</label>
@@ -98,6 +116,10 @@ h3 { font-size: 15px; margin-bottom: 8px; }
 .field { margin-bottom: 16px; display: flex; flex-direction: column; gap: 4px; }
 .field label { font-size: 13px; color: #57606a; }
 .field input { padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 14px; }
+.requires-input {
+  width: 100%; padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px;
+  font-size: 14px; font-family: inherit; resize: vertical;
+}
 .block { margin-bottom: 16px; }
 .block-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; color: #24292f; }
 .pair-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
