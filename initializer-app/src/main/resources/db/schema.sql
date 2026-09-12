@@ -249,3 +249,12 @@ CREATE INDEX IF NOT EXISTS idx_cfg_template_release ON cfg_template (release_id)
 
 -- T1 补丁：starter 主表补 hidden 列（对应 StarterCatalogEntry.hidden，前端依赖选择列表默认隐藏）
 ALTER TABLE cfg_starter ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- T4 补丁：starter 唯一约束口径修正
+-- 原 uk_cfg_starter(release_id, starter_id) 未包含 source，与「手工 MANUAL / 同步 SYNC 两通道并存」
+-- 的语义冲突：同一 release 作用域内，两个通道各有一条同名 starter 是合法状态
+-- （「同名手工优先」由发布期 CatalogMerger 的合并保留集保证，而非靠唯一约束互斥）。
+-- 改为 (release_id, source, starter_id) 后，两通道可各自持有同名条目，且各通道内部仍禁止重名。
+ALTER TABLE cfg_starter DROP CONSTRAINT IF EXISTS uk_cfg_starter;
+ALTER TABLE cfg_starter ADD CONSTRAINT IF NOT EXISTS uk_cfg_starter_source
+    UNIQUE (release_id, source, starter_id);

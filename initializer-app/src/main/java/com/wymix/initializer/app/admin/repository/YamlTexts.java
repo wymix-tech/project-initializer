@@ -12,7 +12,7 @@ import org.yaml.snakeyaml.Yaml;
  *
  * <p>线程安全性：无状态工具类（每次调用新建 Yaml 实例），线程安全。
  */
-final class YamlTexts {
+public final class YamlTexts {
 
     private YamlTexts() {
     }
@@ -23,7 +23,7 @@ final class YamlTexts {
      * @param value 待渲染对象（映射 / 列表 / 标量）
      * @return YAML 文本
      */
-    static String dump(Object value) {
+    public static String dump(Object value) {
         DumperOptions options = new DumperOptions();
         options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
         options.setPrettyFlow(true);

@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -75,6 +76,21 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleMissingParam(MissingServletRequestParameterException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ErrorResponse.of(ErrorCode.INVALID_REQUEST, "缺少必需参数: " + e.getParameterName()));
+    }
+
+    /**
+     * 缺少 multipart 分段处理（如导入归档未携带 {@code file} 字段）。
+     *
+     * <p>必须显式声明：否则会落到兜底处理被映射为 500 INTERNAL_ERROR，
+     * 把客户端漏传文件误报成服务端故障。
+     *
+     * @param e 缺分段异常
+     * @return 400 错误响应
+     */
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ErrorResponse> handleMissingPart(MissingServletRequestPartException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ErrorResponse.of(ErrorCode.INVALID_REQUEST, "缺少必需的文件字段: " + e.getRequestPartName()));
     }
 
     /**

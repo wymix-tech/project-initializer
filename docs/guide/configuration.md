@@ -575,9 +575,90 @@ T3 起，管理端提供**分模块结构化契约**，表单化前端直接读�
 同步层草稿整体重建。`ConfigKind.STARTER_SYNC` 取值、审计动作（`SYNC` / `SYNC_FAILED`）、
 「同名手工优先」语义均不变。
 
+> **T4 起 schema 变更**：`cfg_starter` 的唯一约束由 `(release_id, starter_id)` 改为
+> `(release_id, source, starter_id)`。原口径与「两通道并存」语义冲突——同一 release 作用域内
+> 两个通道各持一条同名 starter 是合法状态（同名优先由发布期合并保留集保证，而非靠唯一约束互斥）。
+> `schema.sql` 末尾有幂等 `ALTER`，旧库重启自动补齐。
+
 ---
 
-## 9. 验证清单
+## 9. 配置导入导出：ZIP 归档双向通道（T4）
+
+> 本节对应「配置结构化入库」改造的第四阶段（T4，yaml-import-export）。
+
+数据库与 YAML 文件之间的双向通道：**一键导出 ZIP 下载**、**上传 ZIP 解析入库**。
+归档目录与原外部清单目录一致，因此「数据库导出 → 手工编辑 → 再导入」是自然的工作流，
+也覆盖了历史 YAML 数据的迁移路径（旧版本导出 → 新版本导入）。
+
+### 9.1 端点
+
+| 方法与路径 | 语义 | 请求/响应要点 |
+|---|---|---|
+| `GET /api/admin/config/export` | 导出草稿为 ZIP 下载 | `Content-Disposition: attachment`，附件名 `initializer-config.zip` |
+| `POST /api/admin/config/import?operator=<人>` | 上传 ZIP 解析入库 | `multipart/form-data`，文件字段名 `file`；可选 `If-Match` |
+
+- 鉴权同其余管理端端点（`X-Admin-Token`）。
+- **导入只写草稿**（`release_id = 0`），**不发布、不切换快照**；导入后仍需人工核对并 `POST /config/publish`。
+- 导入响应：`{rows, versions, summary}`；`versions` 为四类 kind 的版本映射，
+  `summary` 形如 `metadata[java=2,boot=1,bootJava=2,whitelist=2] starters[3,deps=5,requireItems=2] conflictRules[1] templates[8]`（**不含模板全文与 token**）。
+- 导入成功写审计 `IMPORT`；失败写 `IMPORT_FAILED`（`noRollbackFor` 保证失败明细落库），草稿保持原状。
+
+### 9.2 归档布局
+
+```
+initializer-config.zip
+├── metadata.yml                    # 元数据：Java/Boot 版本、兼容矩阵、starter 白名单、框架父 POM
+├── starters/<id>                   # 一 starter 一文件（内容即单文档 starter yml，含 hidden）
+├── conflict-rules.yml              # 冲突规则（可缺省 = 空规则集）
+└── templates/<相对路径>            # 模板全文（路径即模板名，可缺省 = 空模板集）
+```
+
+- 条目名不带 `.yml` 扩展名也一并接受（导出侧写的是 `starters/<id>`）。
+- 归档未包含的节 = **空集语义**：`starters/` 缺失即清空手工 starter 清单草稿。
+- **导出只含手工通道（`source = MANUAL`）**：制品库同步层（`source = SYNC`）由同步链路机器写入、
+  可随时重建，不属于人工维护资产；混入会在往返后污染手工清单并破坏「同名手工优先」。
+- `templates/**` 是**纯模板全文**（不是 `{name, content}` YAML 文档），路径即模板名。
+
+### 9.3 安全加固（导入侧）
+
+任一项不满足即整体拒绝（**4008**，明细指出违规条目与限值）：
+
+| 约束 | 取值 |
+|---|---|
+| 路径穿越 | 拒绝任何 `..` 段（含 `a\..\b` 反斜杠伪装）、绝对路径 `/x` 与盘符 `C:/x` |
+| 条目数 | ≤ 2048 |
+| 单文件解压后 | ≤ 2 MiB |
+| 解压总量 | ≤ 32 MiB（防压缩炸弹） |
+| 目录层级 | ≤ 16 层 |
+| 条目名长度 | ≤ 512 字符 |
+| 编码 | 严格 UTF-8（非法字节序列拒绝，不静默替换为 `U+FFFD`） |
+
+### 9.4 校验口径
+
+导入侧解析**复用 initializer-core 的既有解析器**（`MetadataCatalog` 语义、`YamlStarterParser`、
+`ConflictRuleParser`、`TemplateRenderer` 语法校验），并额外做一次**归档整体自洽性**断言
+（`allowDangling = false`）：metadata 兼容矩阵引用的 Java 版本必须已定义、Boot 版本 ID 不得重复、
+starter 清单必须已在 metadata 的 `bootVersions[].starters` 白名单登记、`requires` 不得悬空。
+—— 草稿态的「边补边存」宽松语义仍只属于表单端点；**导入进草稿的是自洽的整体**。
+
+条目数与结构行上限与表单端一致（条目 ≤ 512、结构行 ≤ 20000、单模板 ≤ 512 KB）。
+
+### 9.5 幂等承诺
+
+「导出 → 直接再导入」对手工清单**严格幂等**：同一份草稿导出后导入，读回内容与归档一次导出内容一致
+（已有测试锁定 `unzip(导出₂) == unzip(导出₁)`，并断言 `hidden` 列往返不丢）。
+
+### 9.6 错误码
+
+| 错误码 | 含义 |
+|---|---|
+| 4008 `CONFIG_IMPORT_ARCHIVE_INVALID` | 归档不可读 / 条目名违规 / 超限 / 非法 UTF-8 / 重复条目 / 空归档 |
+| 4009 `CONFIG_IMPORT_VALIDATION_FAILED` | 归档内容结构或字段非法、跨档一致性失败、模板语法非法 |
+| 4010 `CONFIG_EXPORT_FAILED` | 导出侧归档序列化失败 |
+
+---
+
+## 10. 验证清单
 
 配置变更后建议按序验证：
 
@@ -599,3 +680,8 @@ mvn verify        # 单测 + JaCoCo 覆盖率门禁（配置合法性由加载�
    `GET /api/admin/templates/{name}` 才返回全文
 9. 契约同源冒烟：结构化写入后 `GET /api/admin/config/starter` 应能读到同一份内容（YAML 视图），
    反之亦然
+10. 导入导出冒烟：`GET /api/admin/config/export` 下载 ZIP →
+    `POST /api/admin/config/import?operator=admin -F file=@initializer-config.zip` 回灌，
+    确认响应 `summary` 规模与原草稿一致、`hidden` 未被丢弃，随后 `POST /config/publish` 成功
+11. 导入安全冒烟：构造含 `templates/../../x.ftl` 的 ZIP 上传，应返回 **4008 + 路径穿越明细**，
+    且草稿未被改动（`GET /api/admin/config/metadata` 仍是导入前内容）

@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -82,12 +83,40 @@ class AdminApiControllerTest {
                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.StructuredDraftWriter.class));
     }
 
+
+    /**
+     * 构造被测控制器（全部协作者 mock，导入导出服务提供 T4 端点的桩）。
+     *
+     * @return 可直接挂到 MockMvc 的控制器实例
+     */
+    private static AdminApiController newController() {
+        return new AdminApiController(newConfigService(),
+                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
+                newStructuredService(),
+                newImportExportService());
+    }
+
+    /**
+     * 构造导入导出服务（mock 仓库 + 真实编解码器，T4 端点切片用）。
+     *
+     * @return 全协作者为 mock/无状态组件的导入导出服务
+     */
+    private static com.wymix.initializer.app.admin.service.ConfigImportExportService newImportExportService() {
+        com.wymix.initializer.app.admin.repository.ConfigRepository repository =
+                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.ConfigRepository.class);
+        // 草稿作用域读取默认返回空快照（切片测试只验证 HTTP 契约，不关心内容）
+        org.mockito.Mockito.when(repository.readScope(org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(com.wymix.initializer.app.admin.repository.StructuredSnapshot.empty(0L));
+        return new com.wymix.initializer.app.admin.service.ConfigImportExportService(
+                repository,
+                new com.wymix.initializer.app.admin.repository.ConfigArchiveCodec(),
+                new com.wymix.initializer.app.admin.repository.StructuredSnapshotCodec(),
+                new com.wymix.initializer.app.admin.repository.StructuredYamlCodec());
+    }
+
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(
-                        new AdminApiController(newConfigService(),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
-                                newStructuredService()))
+        mockMvc = MockMvcBuilders.standaloneSetup(newController())
                 .build();
     }
 
@@ -140,9 +169,7 @@ class AdminApiControllerTest {
     void structuredEndpoints_requireOperatorAndValidateBody() throws Exception {
         // 结构化契约（全局异常处理器映射）：operator 缺省 → 422/4002
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new AdminApiController(newConfigService(),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
-                                newStructuredService()))
+                        newController())
                 .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
                 .build();
         mockMvc.perform(put("/api/admin/metadata")
@@ -175,9 +202,7 @@ class AdminApiControllerTest {
     void structuredEndpoints_emptyListsAndListQuery() throws Exception {
         // 空清单合法（草稿宽松）：mock 仓库写入 0 行，乐观锁走 data.sql 预置版本
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new AdminApiController(newConfigService(),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
-                                newStructuredService()))
+                        newController())
                 .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
                 .build();
         mockMvc.perform(put("/api/admin/conflict-rules")
@@ -192,12 +217,42 @@ class AdminApiControllerTest {
     }
 
     @Test
+    void importExportEndpoints_requireFileAndOperator() throws Exception {
+        mockMvc = MockMvcBuilders.standaloneSetup(newController())
+                .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
+                .build();
+
+        // 缺 multipart 文件 → 400（MissingServletRequestPart 由 spring 映射为 400）
+        mockMvc.perform(multipart("/api/admin/config/import?operator=tester"))
+                .andExpect(status().isBadRequest());
+
+        // 缺 operator 查询参数 → 400
+        mockMvc.perform(multipart("/api/admin/config/import")
+                        .file(new org.springframework.mock.web.MockMultipartFile(
+                                "file", "config.zip", "application/zip", "x".getBytes())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void exportEndpoint_returnsZipAttachment() throws Exception {
+        mockMvc = MockMvcBuilders.standaloneSetup(newController())
+                .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
+                .build();
+        // mock 仓库返回空作用域 → 导出仍产出合法（空）归档
+        mockMvc.perform(get("/api/admin/config/export"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .header().string("Content-Disposition",
+                                org.hamcrest.Matchers.containsString("initializer-config.zip")))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .content().contentType("application/zip"));
+    }
+
+    @Test
     void getDraft_invalidKind_returns404MappedFrom4001() throws Exception {
         // kind 非法 → 4001（CONFIG_DRAFT_NOT_FOUND）→ GlobalExceptionHandler 422 语义测试在集成层覆盖
         mockMvc = MockMvcBuilders.standaloneSetup(
-                        new AdminApiController(newConfigService(),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
-                                newStructuredService()))
+                        newController())
                 .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
                 .build();
         mockMvc.perform(get("/api/admin/config/unknown-kind"))

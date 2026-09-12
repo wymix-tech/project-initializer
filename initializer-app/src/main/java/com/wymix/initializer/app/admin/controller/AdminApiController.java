@@ -11,9 +11,11 @@ import com.wymix.initializer.app.admin.dto.CatalogDtos.TemplateCatalogUpsertRequ
 import com.wymix.initializer.app.admin.dto.CatalogDtos.TemplateDetail;
 import com.wymix.initializer.app.admin.dto.CatalogDtos.TemplateListView;
 import com.wymix.initializer.app.admin.dto.CatalogDtos.TemplateUpsertRequest;
+import com.wymix.initializer.app.admin.dto.ConfigArchiveDtos.ImportView;
 import com.wymix.initializer.app.admin.entity.ConfigKind;
 import com.wymix.initializer.app.admin.entity.ConfigReleaseEntity;
 import com.wymix.initializer.app.admin.security.AdminAuthFilter;
+import com.wymix.initializer.app.admin.service.ConfigImportExportService;
 import com.wymix.initializer.app.admin.service.ConfigService;
 import com.wymix.initializer.app.admin.service.StructuredDraftService;
 import com.wymix.initializer.app.admin.sync.CatalogSyncService;
@@ -21,6 +23,10 @@ import com.wymix.initializer.app.admin.service.ConfigService.DraftView;
 import com.wymix.initializer.app.admin.service.ConfigService.PublishResult;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,8 +37,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 
@@ -65,20 +74,27 @@ public class AdminApiController {
     /** 乐观锁请求头（HTTP If-Match 语义，值为 GET 草稿返回的 version）。 */
     public static final String IF_MATCH_HEADER = "If-Match";
 
+    /** 导入归档的表单字段名（与前端约定，multipart/file）。 */
+    public static final String IMPORT_FILE_FIELD = "file";
+
     private final ConfigService configService;
     private final CatalogSyncService syncService;
     private final StructuredDraftService structuredDraftService;
+    private final ConfigImportExportService importExportService;
 
     /**
      * @param configService          配置应用服务（YAML 契约 + 发布/回滚/历史/审计）
      * @param syncService            制品库同步应用服务（M3.3）
      * @param structuredDraftService 结构化草稿服务（T3 分模块表单化读写）
+     * @param importExportService    配置导入导出服务（T4：ZIP 下载 / 上传解析入库）
      */
     public AdminApiController(ConfigService configService, CatalogSyncService syncService,
-                              StructuredDraftService structuredDraftService) {
+                              StructuredDraftService structuredDraftService,
+                              ConfigImportExportService importExportService) {
         this.configService = configService;
         this.syncService = syncService;
         this.structuredDraftService = structuredDraftService;
+        this.importExportService = importExportService;
     }
 
     // ==================== 结构化契约（T3，推荐） ====================
@@ -221,6 +237,49 @@ public class AdminApiController {
             @RequestHeader(value = IF_MATCH_HEADER, required = false) Integer ifMatch,
             @RequestParam("operator") String operator) {
         return structuredDraftService.deleteTemplate(name, operator, ifMatch);
+    }
+
+    // ==================== 导入导出（T4） ====================
+
+    /**
+     * 导出当前草稿为 ZIP 归档（数据库 → YAML 文件下载）。
+     *
+     * <p>归档目录与外部清单目录一致：{@code metadata.yml} + {@code starters/*.yml} +
+     * {@code conflict-rules.yml} + {@code templates/**}，包含 {@code hidden} 列语义，
+     * 「导出 → 再导入」幂等。
+     *
+     * @return ZIP 下载响应（附件文件名 {@code initializer-config.zip}）
+     */
+    @GetMapping("/config/export")
+    public ResponseEntity<Resource> exportConfig() {
+        ConfigImportExportService.ExportResult result = importExportService.export("admin");
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + result.fileName() + "\"")
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .body(new ByteArrayResource(result.content()));
+    }
+
+    /**
+     * 从 ZIP 归档导入配置到草稿（YAML 文件 → 数据库，整体替换且失败整体回滚）。
+     *
+     * <p>导入只写草稿（{@code release_id = 0}），<b>不发布、不切换快照</b>；
+     * 归档内的路径穿越、条目数、单文件与解压总量、UTF-8 合法性均在解析前拦截。
+     *
+     * @param file     上传的 ZIP 归档（multipart 字段名 {@code file}）
+     * @param ifMatch  可选整体乐观锁期望版本（任一 kind 不匹配即拒）
+     * @param operator 操作人（查询参数，必填）
+     * @return 导入结果（各 kind 写入行数 + 新版本 + 规模摘要）
+     * @throws IOException 读取上传流失败
+     */
+    @PostMapping(value = "/config/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ImportView importConfig(@RequestPart(IMPORT_FILE_FIELD) MultipartFile file,
+                                   @RequestHeader(value = IF_MATCH_HEADER, required = false) Integer ifMatch,
+                                   @RequestParam("operator") String operator) throws IOException {
+        ConfigImportExportService.ImportResult result;
+        try (var in = file.getInputStream()) {
+            result = importExportService.importArchive(in, operator, ifMatch);
+        }
+        return ImportView.from(result);
     }
 
     // ==================== YAML 契约（T1 过渡，保留） ====================

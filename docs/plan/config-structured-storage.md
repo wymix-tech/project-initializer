@@ -1,6 +1,7 @@
 # 配置结构化入库与表单化维护（规划稿）
 
-> 状态：**T1（db-schema）、T2（snapshot-assembler）、T3（admin-structured-api）已实施**；T4/T5 起待开发
+> 状态：**T1（db-schema）、T2（snapshot-assembler）、T3（admin-structured-api）、
+> T4（yaml-import-export）已实施**；T5 起待开发
 > T1 交付：`initializer-app/src/main/resources/db/{schema,data}.sql` + 16 个实体/Mapper +
 > `ConfigRepository` 结构化读写 + `StructuredSnapshot`/`StructuredYamlCodec`/`StructuredDraftWriter`/
 > `LegacyYamlMigration`（T1→T2 过渡桥）+ 升级文档（`docs/guide/configuration.md` §6）
@@ -12,6 +13,11 @@
 > `AdminApiController` 结构化端点）+ `CatalogSyncService` 直写结构化 starter 行
 > + `ConfigRepository` 按 kind 替换与模板轻量查询
 > + 结构化 API 文档（`docs/guide/configuration.md` §8）
+> T4 交付：ZIP 导入导出（`ConfigArchiveCodec` + `StructuredSnapshotCodec` +
+> `ConfigImportExportService` + `AdminApiController` 的 `/config/export`、`/config/import`）
+> + 导入侧安全加固（路径穿越 / 条目数 / 单文件与总量 / 严格 UTF-8）
+> + `ErrorCode` 40xx 导入导出错误码 + `cfg_starter` 唯一约束补 `source` 通道维度
+> + 文档（`docs/guide/configuration.md` §9）
 > 勘误：§12 的 ER 图实为 **15 张 `cfg_*` 表**（非 17）；实体为 15 张 + `ConfigDraftMetaEntity` = 16
 > 来源：需求「元数据/starter清单/冲突规则/模板 改为表单维护 + 关系表存储 + YAML 导入导出」
 > 关联：M3 里程碑（`docs/design/m3-overview.md`、`docs/design/m3-detail.md`）
@@ -131,6 +137,9 @@ initializer-app/
 │   │                                 #       CfgTemplateEntity/ConfigDraftMetaEntity
 │   ├── mapper/                       # [NEW] 上列实体对应 MyBatis-Plus Mapper（批量插入/按 release_id 分组查询）
 │   ├── repository/ConfigRepository.java  # [MODIFY] 收口结构化表的按 release_id 读写、草稿复制为发布、发布行读取、草稿乐观锁
+│   ├── repository/ConfigArchiveCodec.java        # [DONE-T4] ZIP 打包/解包 + 路径穿越/上限/UTF-8 安全加固
+│   ├── repository/StructuredSnapshotCodec.java   # [DONE-T4] 归档 YAML 文档 → 结构行（复用 core 解析器）
+│   ├── dto/ConfigArchiveDtos.java                # [DONE-T4] 导入/导出响应 DTO
 │   ├── refresh/
 │   │   ├── StructuredCatalogAssembler.java  # [NEW] 表行 -> 核心模型 -> CatalogSnapshot，复用 core 校验
 │   │   ├── CatalogRefresher.java            # [MODIFY] 保留 YAML 解析供导入导出；新增结构化装配委托
@@ -138,7 +147,7 @@ initializer-app/
 │   │   └── CatalogSnapshotBootstrap.java    # [MODIFY] 启动从最新 release 装表；demo 模式播种入库后统一走表
 │   ├── service/
 │   │   ├── ConfigService.java               # [MODIFY] 草稿/发布/回滚改为结构化读写；发布=复制行为新 release_id
-│   │   └── ConfigImportExportService.java   # [NEW] ZIP 导入解析入库 / 导出 DB 为 ZIP
+│   │   └── ConfigImportExportService.java   # [DONE-T4] ZIP 导入解析入库 / 导出 DB 为 ZIP
 │   ├── controller/AdminApiController.java   # [MODIFY] 分模块结构化 CRUD + 导入导出端点（multipart/下载）
 │   └── sync/                                # [MODIFY] 同步结果改写结构化 starter 草稿（source=SYNC）
 ├── src/main/java/com/wymix/initializer/app/generator/GeneratorService.java  # [MODIFY] 适配全量模板集渲染
@@ -146,7 +155,7 @@ initializer-core/
 ├── src/main/java/com/wymix/initializer/core/metadata/MetadataCatalog.java   # [MODIFY] 新增公共工厂 of(...)
 └── src/main/java/com/wymix/initializer/core/generator/TemplateRenderer.java # [MODIFY] 仅 StringTemplateLoader（无 classpath 兜底）
 initializer-api/
-└── src/main/java/com/wymix/initializer/api/error/ErrorCode.java  # [MODIFY] 新增导入/导出错误码（40xx 段）
+└── src/main/java/com/wymix/initializer/api/error/ErrorCode.java  # [DONE-T4] 40xx 段补 4008/4009/4010
 initializer-web/
 ├── src/api/client.ts                  # [MODIFY] 结构化 CRUD、导入导出、发布/回滚/审计接口
 ├── src/types/api.ts                   # [MODIFY] 结构化 DTO 与导入导出响应类型
@@ -182,10 +191,25 @@ docs/
 | 1 | `db-schema` | ✅ 建元数据/starter/冲突规则/模板关系表 DDL（15 张）及实体、Mapper、按 `release_id` 作用域的 Repository | — |
 | 2 | `snapshot-assembler` | ✅ 新增 `StructuredCatalogAssembler`（表行直装），发布/回滚/启动三条链路改结构化装配，`MetadataCatalog.of` 公共工厂 | 1 |
 | 3 | `admin-structured-api` | ✅ 改造管理端为分模块结构化读写 API，制品库同步改写结构化 starter 草稿（source 标记） | 2 |
-| 4 | `yaml-import-export` | 实现 ZIP 导入解析入库与导出下载，复用 core 解析器并补充导入导出错误码 | 2 |
+| 4 | `yaml-import-export` | ✅ 实现 ZIP 导入解析入库与导出下载，复用 core 解析器并补充导入导出错误码 | 2 |
 | 5 | `template-db-source` | 模板渲染改为只读数据库全量模板集，仅 demo 模式以 classpath 内置作初始种子 | 2 |
 | 6 | `web-forms` | 梳理前端结构后，将管理后台改为 TDesign 表单化维护与导入导出页 | 3, 4, 5 |
 | 7 | `docs-tests` | 更新配置与关系表文档，适配并补充装配器、导入导出、发布回滚相关测试 | 6 |
+
+## 12.1 T4 实施说明（导入导出）
+
+- **导出**：`ConfigRepository.readScope(0)` 一次取 15 表全量行 → `ConfigArchiveCodec.renderMetadata`
+  （结构行 → `metadata.yml`）/ `StructuredYamlCodec.renderStarters`（一 starter 一文档）/
+  `renderConflictRules` / 模板全文直取 → `ConfigArchiveCodec.writeArchive` 打包 ZIP。
+  **只导出手工通道（`source = MANUAL`）**：同步层可重建、非人工资产，混入会污染手工清单。
+- **导入**：`readArchive`（安全加固）→ `StructuredSnapshotCodec.parseXxx(严格模式)` →
+  跨档白名单一致性断言 → 同一事务内「抢占四类 kind 乐观锁 → 按 kind 清空草稿 → 写入结构行」。
+  失败整体回滚；`noRollbackFor = BusinessException` 保证 `IMPORT_FAILED` 审计落库。
+- **幂等锚点**：`hidden` 列往返不丢 + 「导出 → 导入 → 再导出」内容一致（测试锁定）。
+- **发现的既有缺陷**：`parseMetadata` 曾用 `Map` 收敛 Boot 父行做重复 ID 校验，
+  重复业务 ID 会在建映射时静默折叠而漏检；已改为保留 `List` 行清单做校验、映射只用于子行父键定位。
+- **schema 变更**：`cfg_starter` 唯一约束补 `source` 维度（`(release_id, source, starter_id)`），
+  与「两通道并存、同名手工优先」语义对齐；`schema.sql` 末尾幂等 `ALTER`。
 
 ## 13. 现状基线（改造前）
 

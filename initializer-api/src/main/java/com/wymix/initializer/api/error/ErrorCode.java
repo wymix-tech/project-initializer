@@ -74,6 +74,15 @@ public enum ErrorCode {
     /** 依赖冲突（M3.5）：生成请求的 starter 组合命中冲突规则，服务端硬校验拒绝 */
     DEPENDENCY_CONFLICT(4007, "依赖组合冲突"),
 
+    /** 导入/导出：上传的配置归档（ZIP）不可读或解包失败（T4） */
+    CONFIG_IMPORT_ARCHIVE_INVALID(4008, "配置导入包非法"),
+
+    /** 导入/导出：归档内容结构、字段或安全约束校验失败（T4，明细随异常文案输出） */
+    CONFIG_IMPORT_VALIDATION_FAILED(4009, "配置导入校验失败"),
+
+    /** 导入/导出：导出生成归档失败（T4） */
+    CONFIG_EXPORT_FAILED(4010, "配置导出失败"),
+
     /** 系统内部未知错误 */
     INTERNAL_ERROR(9001, "系统内部错误");
 

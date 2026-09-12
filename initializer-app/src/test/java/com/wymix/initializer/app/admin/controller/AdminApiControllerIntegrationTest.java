@@ -366,4 +366,110 @@ class AdminApiControllerIntegrationTest {
             assertThat(resp.getBody()).contains("4002");
         }
     }
+
+    @Test
+    void importExport_endpoints_roundTripThroughHttp_andPublishImportedDraft() {
+        // 1. 编排草稿（发布准备）→ 导出归档
+        putDraft("conflict-rule", "rules: []", null);
+        putDraft("metadata", VALID_METADATA, null);
+        putDraft("starter", VALID_STARTER, null);
+        ResponseEntity<byte[]> exported = download("/api/admin/config/export");
+        assertThat(exported.getStatusCode().value()).isEqualTo(200);
+        assertThat(exported.getHeaders().getFirst("Content-Disposition"))
+                .contains("initializer-config.zip");
+        assertThat(exported.getBody()).isNotEmpty();
+
+        // 2. 用导出内容重新导入（multipart）→ 草稿整体替换、返回规模摘要
+        ResponseEntity<String> imported = upload("/api/admin/config/import?operator=tester",
+                exported.getBody(), null);
+        assertThat(imported.getStatusCode().value())
+                .as("import 响应: %s", imported.getBody())
+                .isEqualTo(200);
+        assertThat(imported.getBody()).contains("rows").contains("java=1");
+
+        // 3. 导入的草稿可直接发布（导入只写草稿，发布仍走完整校验通道）
+        String publishBody = "{\"operator\":\"tester\",\"remark\":\"T4 导入后发布\"}";
+        ResponseEntity<String> published = rest.exchange("/api/admin/config/publish", HttpMethod.POST,
+                new HttpEntity<>(publishBody, adminHeaders()), String.class);
+        assertThat(published.getStatusCode().value())
+                .as("publish 响应: %s", published.getBody())
+                .isEqualTo(200);
+
+        // 4. 导入的 starter 对生成链路生效
+        String generateBody = """
+                {
+                  "group": "com.example",
+                  "artifact": "imported-app",
+                  "packageName": "com.example.imported",
+                  "javaVersion": "17",
+                  "bootVersion": "3.2.5",
+                  "starters": ["web"]
+                }
+                """;
+        ResponseEntity<String> generate = rest.exchange("/api/generate", HttpMethod.POST,
+                new HttpEntity<>(generateBody, adminHeaders()), String.class);
+        assertThat(generate.getStatusCode().value()).isEqualTo(200);
+    }
+
+    @Test
+    void importEndpoint_pathTraversalArchive_returns4008AndKeepsDraft() {
+        // 前置一份可辨识的草稿（导入失败后必须仍在）
+        putDraft("metadata", VALID_METADATA, null);
+
+        byte[] evil = zipWithTraversalEntry();
+        ResponseEntity<String> resp = upload("/api/admin/config/import?operator=tester", evil, null);
+        assertThat(resp.getStatusCode().value()).isEqualTo(422);
+        assertThat(resp.getBody()).contains("4008").contains("路径穿越");
+
+        // 草稿未被污染
+        ResponseEntity<String> draft = rest.exchange("/api/admin/config/metadata",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(draft.getBody()).contains("3.2.5");
+    }
+
+    /** 下载二进制（导出归档）。 */
+    private ResponseEntity<byte[]> download(String path) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(AdminAuthFilter.TOKEN_HEADER, "intg-admin-token");
+        return rest.exchange(path, HttpMethod.GET, new HttpEntity<>(headers), byte[].class);
+    }
+
+    /** 上传 multipart 归档（导入）。 */
+    private ResponseEntity<String> upload(String path, byte[] archive, Integer ifMatch) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        headers.set(AdminAuthFilter.TOKEN_HEADER, "intg-admin-token");
+        if (ifMatch != null) {
+            headers.set(AdminApiController.IF_MATCH_HEADER, String.valueOf(ifMatch));
+        }
+        org.springframework.util.LinkedMultiValueMap<String, Object> parts =
+                new org.springframework.util.LinkedMultiValueMap<>();
+        parts.add("file", new org.springframework.core.io.ByteArrayResource(archive) {
+            @Override
+            public String getFilename() {
+                return "config.zip";
+            }
+        });
+        return rest.exchange(path, HttpMethod.POST, new HttpEntity<>(parts, headers), String.class);
+    }
+
+    /** 构造含路径穿越条目的 ZIP（用于安全加固 HTTP 层验证）。 */
+    private static byte[] zipWithTraversalEntry() {
+        try {
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(
+                    buffer, java.nio.charset.StandardCharsets.UTF_8)) {
+                for (String[] entry : new String[][] {
+                        {"metadata.yml", "javaVersions:\n  - id: \"17\"\n    label: Java 17\n"},
+                        {"templates/../../escape.ftl", "boom"}}) {
+                    zip.putNextEntry(new java.util.zip.ZipEntry(entry[0]));
+                    zip.write(entry[1].getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    zip.closeEntry();
+                }
+            }
+            return buffer.toByteArray();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
 }
