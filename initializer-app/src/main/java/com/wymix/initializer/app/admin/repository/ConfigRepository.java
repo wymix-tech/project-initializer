@@ -776,6 +776,102 @@ public class ConfigRepository {
         return mapped;
     }
 
+    // ==================== T3：按 kind 的结构化草稿替换（表单化写入） ====================
+
+    /**
+     * 整体替换草稿作用域内的元数据行（T3 表单化写入）：子表先删、父表后删，再整行写入。
+     *
+     * @param snapshot 新的元数据结构行（{@code releaseId} 被强制为草稿作用域）
+     * @return 实际写入的行数合计
+     */
+    public int replaceDraftMetadata(StructuredSnapshot snapshot) {
+        clearDraftMetadata();
+        return insertScope(snapshot, DRAFT_RELEASE_ID);
+    }
+
+    /**
+     * 整体替换草稿作用域内指定来源通道的 starter 行（T3 表单化写入）。
+     *
+     * <p>只清目标通道（{@code MANUAL} / {@code SYNC}）的父行及其子行，
+     * 另一通道零改动——这是「手工清单」与「制品库同步层」并存语义的持久层保证。
+     *
+     * @param source   来源通道（{@link #SOURCE_MANUAL} / {@link #SOURCE_SYNC}）
+     * @param snapshot 新的 starter 结构行（父行可带占位负主键，写入期换算）
+     * @return 实际写入的行数合计
+     */
+    public int replaceDraftStartersBySource(String source, StructuredSnapshot snapshot) {
+        deleteDraftStartersBySource(source);
+        return insertScope(snapshot, DRAFT_RELEASE_ID);
+    }
+
+    /**
+     * 整体替换草稿作用域内的冲突规则行（T3 表单化写入）：成员子表先删、规则父表后删，再整行写入。
+     *
+     * @param snapshot 新的冲突规则结构行（父行可带占位负主键，写入期换算）
+     * @return 实际写入的行数合计
+     */
+    public int replaceDraftConflictRules(StructuredSnapshot snapshot) {
+        clearDraftConflictRules();
+        return insertScope(snapshot, DRAFT_RELEASE_ID);
+    }
+
+    /**
+     * 整体替换草稿作用域内的模板行（T3 表单化写入）。
+     *
+     * @param snapshot 新的模板结构行
+     * @return 实际写入的行数合计
+     */
+    public int replaceDraftTemplates(StructuredSnapshot snapshot) {
+        templateMapper.delete(new LambdaQueryWrapper<CfgTemplateEntity>()
+                .eq(CfgTemplateEntity::getReleaseId, DRAFT_RELEASE_ID));
+        return insertScope(snapshot, DRAFT_RELEASE_ID);
+    }
+
+    // ==================== T3：模板轻量查询（列表不搬 CLOB） ====================
+
+    /**
+     * 查询草稿作用域内的模板**摘要**（只取 name / sort / updated_at，**不查 content CLOB**）。
+     *
+     * <p>模板全文（{@code cfg_template.content}）可能很大，列表接口只展示名称与更新时间；
+     * 调用方按需再走 {@link #findDraftTemplate(String)} 取全文（T3 实现要点：CLOB 不进列表）。
+     *
+     * @return 模板摘要行（{@code content} 恒为 {@code null}；无模板返回空列表）
+     */
+    public List<CfgTemplateEntity> listDraftTemplateSummaries() {
+        return templateMapper.selectList(new LambdaQueryWrapper<CfgTemplateEntity>()
+                .select(CfgTemplateEntity::getId, CfgTemplateEntity::getReleaseId,
+                        CfgTemplateEntity::getName, CfgTemplateEntity::getSort,
+                        CfgTemplateEntity::getUpdatedAt)
+                .eq(CfgTemplateEntity::getReleaseId, DRAFT_RELEASE_ID)
+                .orderByAsc(CfgTemplateEntity::getSort));
+    }
+
+    /**
+     * 查询草稿作用域内的模板**全量行（含 content 全文）**。
+     *
+     * <p>用于「按 name 幂等 upsert / 单条删除」这类需要保留其余模板全文的写入路径；
+     * 只读列表请用 {@link #listDraftTemplateSummaries()} 以避免搬运 CLOB。
+     *
+     * @return 模板全量行（无模板返回空列表）
+     */
+    public List<CfgTemplateEntity> listDraftTemplates() {
+        return templateMapper.selectList(new LambdaQueryWrapper<CfgTemplateEntity>()
+                .eq(CfgTemplateEntity::getReleaseId, DRAFT_RELEASE_ID)
+                .orderByAsc(CfgTemplateEntity::getSort));
+    }
+
+    /**
+     * 按模板名查询草稿作用域内的单条模板（含 content 全文）。
+     *
+     * @param name 模板名（相对 templates/ 路径）
+     * @return 模板行；不存在返回 {@code null}
+     */
+    public CfgTemplateEntity findDraftTemplate(String name) {
+        return templateMapper.selectOne(new LambdaQueryWrapper<CfgTemplateEntity>()
+                .eq(CfgTemplateEntity::getReleaseId, DRAFT_RELEASE_ID)
+                .eq(CfgTemplateEntity::getName, name));
+    }
+
     // ==================== 发布历史与审计 ====================
 
     /**

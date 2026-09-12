@@ -115,6 +115,113 @@ class AdminApiControllerIntegrationTest {
         assertThat(resp.getBody()).contains("4001");
     }
 
+    /** 结构化 PUT 辅助：携带可选 If-Match 与 X-Admin-Token。 */
+    private ResponseEntity<String> putStructured(String path, String json, Integer ifMatch) {
+        HttpHeaders headers = adminHeaders();
+        if (ifMatch != null) {
+            headers.set(AdminApiController.IF_MATCH_HEADER, String.valueOf(ifMatch));
+        }
+        return rest.exchange(path, HttpMethod.PUT, new HttpEntity<>(json, headers), String.class);
+    }
+
+    @Test
+    void structuredApi_endToEnd_writeModules_thenPublishAndReadBack() {
+        // 1) 结构化写入元数据（Java + Boot + 兼容矩阵 + starter 白名单）
+        String metadata = """
+                {
+                  "javaVersions": [{"id": "17", "label": "Java 17", "recommendedBootVersion": "3.2.5"}],
+                  "bootVersions": [{"id": "3.2.5", "label": "Spring Boot 3.2.5", "official": true,
+                                    "supportedJavaVersions": ["17"], "starters": ["web"]}],
+                  "operator": "tester"
+                }
+                """;
+        assertThat(putStructured("/api/admin/metadata", metadata, null).getStatusCode().value()).isEqualTo(200);
+
+        // 2) 结构化写入 starter（含 hidden，直落 cfg_starter.hidden）
+        String starters = """
+                {
+                  "starters": [{
+                    "id": "web", "category": "web", "maintainer": "official",
+                    "description": "Spring Web", "required": true, "hidden": true,
+                    "dependencies": [{"groupId": "org.springframework.boot", "artifactId": "spring-boot-starter-web"}],
+                    "requires": [], "bootVersions": ["3.2.5"], "linkages": {}
+                  }],
+                  "operator": "tester"
+                }
+                """;
+        assertThat(putStructured("/api/admin/starters", starters, null).getStatusCode().value()).isEqualTo(200);
+
+        // 3) 结构化写入模板（content 全文）
+        String templates = """
+                {"templates": [{"name": "pom.ftl", "content": "<project>${groupId}</project>"}],
+                 "operator": "tester"}
+                """;
+        ResponseEntity<String> savedTemplates = putStructured("/api/admin/templates", templates, null);
+        assertThat(savedTemplates.getStatusCode().value()).isEqualTo(200);
+        assertThat(savedTemplates.getBody()).contains("模板 1 个");
+
+        // 4) 模板列表不含 content CLOB，详情才返回全文
+        ResponseEntity<String> list = rest.exchange("/api/admin/templates",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(list.getStatusCode().value()).isEqualTo(200);
+        assertThat(list.getBody()).contains("pom.ftl").doesNotContain("<project>");
+        ResponseEntity<String> detail = rest.exchange("/api/admin/templates/pom.ftl",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(detail.getBody()).contains("<project>");
+
+        // 5) 结构化读回：hidden 保留
+        ResponseEntity<String> readStarters = rest.exchange("/api/admin/starters",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(readStarters.getBody()).contains("\"hidden\":true");
+
+        // 6) 发布：结构化草稿直接装表生效（两套契约同源，发布链路零改动）
+        putDraft("conflict-rule", "rules: []", null);
+        ResponseEntity<String> published = rest.exchange("/api/admin/config/publish", HttpMethod.POST,
+                new HttpEntity<>("{\"operator\":\"tester\",\"remark\":\"T3 结构化端到端\"}", adminHeaders()),
+                String.class);
+        assertThat(published.getStatusCode().value()).isEqualTo(200);
+        assertThat(published.getBody()).contains("\"javaVersionCount\":1");
+        assertThat(published.getBody()).contains("\"starterCount\":1");
+
+        // 7) 生成读路径即时反映新快照
+        HttpHeaders jsonHeaders = new HttpHeaders();
+        jsonHeaders.setContentType(MediaType.APPLICATION_JSON);
+        String generateBody = """
+                {
+                  "group": "com.example", "artifact": "t3-app", "packageName": "com.example.t3",
+                  "javaVersion": "17", "bootVersion": "3.2.5", "starters": ["web"]
+                }
+                """;
+        ResponseEntity<String> generate = rest.exchange("/api/generate", HttpMethod.POST,
+                new HttpEntity<>(generateBody, jsonHeaders), String.class);
+        assertThat(generate.getStatusCode().value()).as("generate: %s", generate.getBody()).isEqualTo(200);
+
+        // 8) 审计留痕：结构化变更 + 发布
+        ResponseEntity<String> audits = rest.exchange("/api/admin/audits",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(audits.getBody()).contains("UPDATE_STRUCTURED");
+    }
+
+    @Test
+    void structuredApi_validationFailure_returns4002() {
+        // 缺 operator → 4002（结构校验）
+        ResponseEntity<String> missingOperator = putStructured("/api/admin/starters",
+                "{\"starters\":[]}", null);
+        assertThat(missingOperator.getStatusCode().value()).isEqualTo(422);
+        assertThat(missingOperator.getBody()).contains("4002");
+
+        // 重复 starter ID → 4002
+        String dup = """
+                {"starters": [
+                  {"id": "dup", "category": "web", "maintainer": "official"},
+                  {"id": "dup", "category": "web", "maintainer": "official"}],
+                 "operator": "tester"}
+                """;
+        ResponseEntity<String> duplicated = putStructured("/api/admin/starters", dup, null);
+        assertThat(duplicated.getStatusCode().value()).isEqualTo(422);
+        assertThat(duplicated.getBody()).contains("4002");
+    }
+
     @Test
     void putDraft_roundTrip_andIfMatchConflict() {
         ResponseEntity<String> first = putDraft("conflict-rule", "rules: []", null);

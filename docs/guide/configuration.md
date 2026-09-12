@@ -525,7 +525,59 @@ T2 起，**发布 / 回滚 / 启动装表**三条链路不再把表行渲染成 
 
 ---
 
-## 8. 验证清单
+## 8. 管理端结构化 API：分模块表单化读写（T3）
+
+> 本节对应「配置结构化入库」改造的第三阶段（T3，管理端结构化 API）。
+
+T3 起，管理端提供**分模块结构化契约**，表单化前端直接读写 `cfg_*` 草稿行
+（`release_id = 0`），不再需要「拼 YAML → 工具解析」；同时**保留** T1 的 YAML 契约
+（`/api/admin/config/{kind}`）供导入通道（T4）与旧客户端使用。两套契约读写同一批结构行，
+权威来源唯一，可混用。
+
+### 8.1 端点
+
+| 方法与路径 | 语义 | 请求/响应要点 |
+|---|---|---|
+| `GET /api/admin/metadata` | 读元数据草稿 | Java 版本 + Boot 版本（含兼容矩阵、starter 白名单、框架父 POM） |
+| `PUT /api/admin/metadata` | 整体保存元数据草稿 | 全量提交 `javaVersions` / `bootVersions` |
+| `GET /api/admin/starters` | 读手工 starter 清单草稿 | 含依赖 / requires 分组 / Boot 关联 / 联动；`hidden` / `required` 直落列 |
+| `PUT /api/admin/starters` | 整体保存手工 starter 草稿 | 只写 `source = MANUAL` 行，同步层零改动 |
+| `GET /api/admin/conflict-rules` | 读冲突规则草稿 | 规则 + 涉及 starter 多选 |
+| `PUT /api/admin/conflict-rules` | 整体保存冲突规则草稿 | 类型仅 `pair` / `group` |
+| `GET /api/admin/templates` | 模板**列表** | **只回 name / 更新时间 / 顺序，不含 `content` CLOB** |
+| `GET /api/admin/templates/{name}` | 模板**详情** | 含 `content` 全文，按需单独取 |
+| `PUT /api/admin/templates/{name}` | 单模板 upsert | 按 name 幂等，保留其余模板 |
+| `PUT /api/admin/templates` | 模板集整体替换 | 全量提交 |
+| `DELETE /api/admin/templates/{name}` | 单模板删除 | `?operator=` 必填，保留其余模板 |
+
+- 鉴权仍为 `X-Admin-Token`；乐观锁仍为 `If-Match`（值为 `GET` 返回的版本）。
+  结构化端点的保存响应为 `{kind, rows, version, summary}`（`summary` 只含规模，**不含模板全文**）。
+- 结构化端点与 YAML 端点共享同一 `config_draft_meta.version`，两者版本可混用。
+
+### 8.2 契约边界
+
+- **整体提交**：`PUT` 语义是「提交该模块的完整结构」，写入按「先清该 kind 草稿行 → 整体写」实现，
+  天然无孤儿行；空清单 = 清空该模块草稿。
+- **草稿宽松 / 发布严格**：结构化保存只做字段级与结构级校验（必填、`pair/group` 取值、
+  条目数 ≤ 512、结构行 ≤ 20000、单模板 ≤ 512KB）；跨模块引用（Boot ↔ Java、冲突规则 ↔ starter、
+  requires 悬空）与图合法性仍统一在**发布期**收敛为 4002 明细，支持边补边存。
+- **CLOB 隔离**：模板列表查询只取 `name/sort/updated_at`，不搬运 `content`；
+  全文按需走 `GET /templates/{name}`。
+- **审计**：结构化变更写 `UPDATE_STRUCTURED` 动作，明细记录规模
+  （如 `starter 3 项 / 依赖 5 条 / 联动 2 条`、`模板 8 个`、`规则 2 条 / 涉及 starter 5 项`），
+  **不打印模板全文与 token**（超长统一截断）。
+
+### 8.3 制品库同步（T3 变更）
+
+`CatalogSyncService` 的同步结果**直写结构化 starter 行**
+（`cfg_starter` 等表、`source = SYNC`），不再拼 YAML：
+拉取 → `CatalogMerger` 合并（保留集 = 手工 ID + 当前同步层 ID，同名手工优先）→
+同步层草稿整体重建。`ConfigKind.STARTER_SYNC` 取值、审计动作（`SYNC` / `SYNC_FAILED`）、
+「同名手工优先」语义均不变。
+
+---
+
+## 9. 验证清单
 
 配置变更后建议按序验证：
 
@@ -542,3 +594,8 @@ mvn verify        # 单测 + JaCoCo 覆盖率门禁（配置合法性由加载�
    `GET /api/admin/config/starter` 读回，确认 `hidden: true` 仍在（不被静默丢弃）
 7. 结构化装配冒烟：发布一版 → 重启（非 `--demo`）→ `GET /api/metadata/*` 应还原发布内容；
    构造含非法引用的草稿发布应被 4002 拒绝且旧快照继续服务
+8. 结构化 API 冒烟：`PUT /api/admin/starters` 提交含 `hidden: true` 的条目 →
+   `GET /api/admin/starters` 读回确认 `hidden` 仍在；再 `GET /api/admin/templates` 确认**响应不含 `content`**，
+   `GET /api/admin/templates/{name}` 才返回全文
+9. 契约同源冒烟：结构化写入后 `GET /api/admin/config/starter` 应能读到同一份内容（YAML 视图），
+   反之亦然

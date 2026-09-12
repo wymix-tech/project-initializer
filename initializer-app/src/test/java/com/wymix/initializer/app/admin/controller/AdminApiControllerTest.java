@@ -9,6 +9,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -42,6 +43,28 @@ class AdminApiControllerTest {
     private MockMvc mockMvc;
 
     /**
+     * 构造被测结构化草稿服务（协作者 mock）。
+     *
+     * @return 仅依赖 mock 仓库的结构化草稿服务
+     */
+    private static com.wymix.initializer.app.admin.service.StructuredDraftService newStructuredService() {
+        com.wymix.initializer.app.admin.repository.ConfigRepository repository =
+                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.ConfigRepository.class);
+        // 草稿读取默认返回空快照（0 行），列表返回空清单
+        org.mockito.Mockito.when(repository.readDraftScope(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(com.wymix.initializer.app.admin.repository.StructuredSnapshot.empty(0L));
+        org.mockito.Mockito.when(repository.listDraftTemplateSummaries())
+                .thenReturn(java.util.List.of());
+        com.wymix.initializer.app.admin.entity.ConfigDraftMetaEntity meta =
+                new com.wymix.initializer.app.admin.entity.ConfigDraftMetaEntity();
+        meta.setKind("CONFLICT_RULE");
+        meta.setVersion(0);
+        org.mockito.Mockito.when(repository.findDraftMeta(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(meta);
+        return new com.wymix.initializer.app.admin.service.StructuredDraftService(repository);
+    }
+
+    /**
      * 构造被测 ConfigService（全部协作者 mock）。
      *
      * <p>T2 结构化改造后 ConfigService 的「清单校验器」协作者换成了
@@ -63,7 +86,8 @@ class AdminApiControllerTest {
     void setUp() {
         mockMvc = MockMvcBuilders.standaloneSetup(
                         new AdminApiController(newConfigService(),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class)))
+                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
+                                newStructuredService()))
                 .build();
     }
 
@@ -113,11 +137,67 @@ class AdminApiControllerTest {
     }
 
     @Test
+    void structuredEndpoints_requireOperatorAndValidateBody() throws Exception {
+        // 结构化契约（全局异常处理器映射）：operator 缺省 → 422/4002
+        mockMvc = MockMvcBuilders.standaloneSetup(
+                        new AdminApiController(newConfigService(),
+                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
+                                newStructuredService()))
+                .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
+                .build();
+        mockMvc.perform(put("/api/admin/metadata")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"javaVersions\":[],\"bootVersions\":[]}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(4002));
+
+        mockMvc.perform(put("/api/admin/starters")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"starters\":[]}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(4002));
+
+        mockMvc.perform(put("/api/admin/conflict-rules")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"rules\":[]}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(4002));
+
+        // 单模板 upsert：name 由路径给出、content 缺省 → 4002
+        mockMvc.perform(put("/api/admin/templates/foo.ftl")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"operator\":\"tester\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(4002));
+    }
+
+    @Test
+    void structuredEndpoints_emptyListsAndListQuery() throws Exception {
+        // 空清单合法（草稿宽松）：mock 仓库写入 0 行，乐观锁走 data.sql 预置版本
+        mockMvc = MockMvcBuilders.standaloneSetup(
+                        new AdminApiController(newConfigService(),
+                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
+                                newStructuredService()))
+                .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
+                .build();
+        mockMvc.perform(put("/api/admin/conflict-rules")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"rules\":[],\"operator\":\"tester\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("conflict-rule"))
+                .andExpect(jsonPath("$.rows").value(0));
+        mockMvc.perform(get("/api/admin/templates"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.templates.length()").value(0));
+    }
+
+    @Test
     void getDraft_invalidKind_returns404MappedFrom4001() throws Exception {
         // kind 非法 → 4001（CONFIG_DRAFT_NOT_FOUND）→ GlobalExceptionHandler 422 语义测试在集成层覆盖
         mockMvc = MockMvcBuilders.standaloneSetup(
                         new AdminApiController(newConfigService(),
-                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class)))
+                                org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
+                                newStructuredService()))
                 .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
                 .build();
         mockMvc.perform(get("/api/admin/config/unknown-kind"))
