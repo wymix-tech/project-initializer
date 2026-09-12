@@ -12,8 +12,11 @@ import com.wymix.initializer.app.admin.dto.CatalogDtos.TemplateDetail;
 import com.wymix.initializer.app.admin.dto.CatalogDtos.TemplateListView;
 import com.wymix.initializer.app.admin.dto.CatalogDtos.TemplateUpsertRequest;
 import com.wymix.initializer.app.admin.dto.ConfigArchiveDtos.ImportView;
+import com.wymix.initializer.app.admin.dto.LegacyMigrationDtos.MigrationProbeView;
+import com.wymix.initializer.app.admin.dto.LegacyMigrationDtos.MigrationRunView;
 import com.wymix.initializer.app.admin.entity.ConfigKind;
 import com.wymix.initializer.app.admin.entity.ConfigReleaseEntity;
+import com.wymix.initializer.app.admin.repository.LegacyYamlMigration;
 import com.wymix.initializer.app.admin.security.AdminAuthFilter;
 import com.wymix.initializer.app.admin.service.ConfigImportExportService;
 import com.wymix.initializer.app.admin.service.ConfigService;
@@ -81,20 +84,24 @@ public class AdminApiController {
     private final CatalogSyncService syncService;
     private final StructuredDraftService structuredDraftService;
     private final ConfigImportExportService importExportService;
+    private final LegacyYamlMigration legacyYamlMigration;
 
     /**
      * @param configService          配置应用服务（YAML 契约 + 发布/回滚/历史/审计）
      * @param syncService            制品库同步应用服务（M3.3）
      * @param structuredDraftService 结构化草稿服务（T3 分模块表单化读写）
      * @param importExportService    配置导入导出服务（T4：ZIP 下载 / 上传解析入库）
+     * @param legacyYamlMigration    存量 YAML 库内直迁服务（T8：旧 config_draft 表 → 结构行）
      */
     public AdminApiController(ConfigService configService, CatalogSyncService syncService,
                               StructuredDraftService structuredDraftService,
-                              ConfigImportExportService importExportService) {
+                              ConfigImportExportService importExportService,
+                              LegacyYamlMigration legacyYamlMigration) {
         this.configService = configService;
         this.syncService = syncService;
         this.structuredDraftService = structuredDraftService;
         this.importExportService = importExportService;
+        this.legacyYamlMigration = legacyYamlMigration;
     }
 
     // ==================== 结构化契约（T3，推荐） ====================
@@ -280,6 +287,40 @@ public class AdminApiController {
             result = importExportService.importArchive(in, operator, ifMatch);
         }
         return ImportView.from(result);
+    }
+
+    // ==================== 存量迁移（T8） ====================
+
+    /**
+     * 存量 YAML 迁移预检：判断旧 {@code config_draft} 表是否存在、有多少有效行、是否需要迁移。
+     *
+     * <p>只读探测，不写库、不改草稿；供运维在升级窗口内「先看一眼」再决定是否执行直迁。
+     *
+     * @return 预检视图（旧表名 / 是否存在 / 各 kind 行数 / 是否需迁移 / 提示）
+     */
+    @GetMapping("/config/migrate-legacy")
+    public MigrationProbeView probeLegacyMigration() {
+        return MigrationProbeView.from(legacyYamlMigration.probe());
+    }
+
+    /**
+     * 执行存量 YAML 库内直迁：旧 {@code config_draft} 四类 YAML → 结构化草稿行
+     * （{@code release_id = 0}）。
+     *
+     * <p><b>只写草稿，不发布、不切换快照</b>；整体在同一事务内执行，
+     * 任一 kind 失败即回滚，草稿保持迁移前状态。执行后仍需人工核对并
+     * {@code POST /config/publish} 发布一版作为回滚基线
+     * （升级前的历史发布仅有头信息，不可作为回滚点）。
+     *
+     * <p>与归档通道（{@code POST /config/import}）的区别：本端点直接读旧库表，
+     * 无需先用旧版 jar 导出 YAML 文件，适合可停机维护的升级窗口。
+     *
+     * @param operator 操作人（查询参数，必填；用于审计留痕）
+     * @return 迁移结果（各 kind 写入结构行数 + 规模摘要）
+     */
+    @PostMapping("/config/migrate-legacy")
+    public MigrationRunView runLegacyMigration(@RequestParam("operator") String operator) {
+        return MigrationRunView.from(legacyYamlMigration.migrateFromLegacyDraftTable(operator));
     }
 
     // ==================== YAML 契约（T1 过渡，保留） ====================

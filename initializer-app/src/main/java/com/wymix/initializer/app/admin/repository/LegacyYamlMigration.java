@@ -53,6 +53,9 @@ public class LegacyYamlMigration {
     /** 旧版草稿表名（迁移源）。 */
     static final String LEGACY_DRAFT_TABLE = "config_draft";
 
+    /** 审计动作：存量 YAML 迁移执行。 */
+    public static final String ACTION_MIGRATE = "MIGRATE_LEGACY";
+
     private final DataSource dataSource;
     private final ConfigRepository repository;
     private final StructuredDraftWriter draftWriter;
@@ -84,6 +87,65 @@ public class LegacyYamlMigration {
     }
 
     /**
+     * 迁移前探测（T8 演练/运维预检）：旧表是否存在、各 kind 存量行数与可迁移性。
+     *
+     * <p>不写库、不校验 YAML 内容（内容校验留给正式迁移的失败整体回滚语义），
+     * 只回答「需不需要迁 / 迁什么 / 有哪些 kind」。
+     *
+     * @return 探测结果
+     * @throws BusinessException 元数据读取失败（5000 INTERNAL_ERROR）
+     */
+    public Map<String, Object> probe() {
+        Map<String, Object> report = new LinkedHashMap<>();
+        boolean exists = legacyDraftTableExists();
+        report.put("legacyTable", LEGACY_DRAFT_TABLE);
+        report.put("legacyTableExists", exists);
+        if (!exists) {
+            report.put("kinds", Map.of());
+            report.put("rows", 0);
+            report.put("migrationRequired", false);
+            report.put("hint", "旧版草稿表不存在：库已是新结构，无需迁移（或已完成迁移）");
+            return report;
+        }
+        Map<String, Integer> counts = countLegacyRows();
+        int total = counts.values().stream().mapToInt(Integer::intValue).sum();
+        report.put("kinds", counts);
+        report.put("rows", total);
+        report.put("migrationRequired", total > 0);
+        report.put("hint", total > 0
+                ? "检测到存量 YAML 草稿，可调用 POST /api/admin/config/migrate-legacy 执行直迁"
+                : "旧版草稿表存在但无有效 YAML 行，无需迁移");
+        return report;
+    }
+
+    /**
+     * 统计旧表各 kind 的有效（非空 {@code content_yaml}）行数。
+     *
+     * @return kind 枚举名 → 行数（保持旧表主键顺序）
+     * @throws BusinessException 读取失败
+     */
+    private Map<String, Integer> countLegacyRows() {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(
+                     "SELECT kind, COUNT(*) FROM " + LEGACY_DRAFT_TABLE
+                             + " WHERE content_yaml IS NOT NULL AND TRIM(content_yaml) <> '' GROUP BY kind ORDER BY kind")) {
+            while (rows.next()) {
+                String kind = rows.getString(1);
+                if (kind == null || kind.isBlank()) {
+                    continue;
+                }
+                counts.put(ConfigKind.parse(kind).name(), rows.getInt(2));
+            }
+        } catch (SQLException e) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                    "统计旧版草稿表失败: " + e.getMessage(), e);
+        }
+        return counts;
+    }
+
+    /**
      * 执行库内直迁：读旧 {@code config_draft} 的四类 YAML → 写结构化草稿行。
      *
      * <p>调用方需自行确认旧表存在（{@link #legacyDraftTableExists()}）且已备份数据库。
@@ -91,16 +153,27 @@ public class LegacyYamlMigration {
      * @return 各 kind 写入的结构行数（kind 枚举名 → 行数）
      * @throws BusinessException 旧表缺失或 YAML 结构非法（4002）
      */
-    @Transactional
-    public Map<String, Integer> migrateFromLegacyDraftTable() {
-        Map<String, String> legacy = readLegacyDrafts();
-        if (legacy.isEmpty()) {
-            log.info("旧版 config_draft 表存在但无有效 YAML 行，无需迁移");
-            return Map.of();
+    @Transactional(noRollbackFor = BusinessException.class)
+    public Map<String, Integer> migrateFromLegacyDraftTable(String operator) {
+        try {
+            Map<String, String> legacy = readLegacyDrafts();
+            if (legacy.isEmpty()) {
+                log.info("旧版 config_draft 表存在但无有效 YAML 行，无需迁移");
+                repository.insertAudit(ACTION_MIGRATE, null, operator, "存量 YAML 迁移：无有效行，未执行写入");
+                return Map.of();
+            }
+            Map<String, Integer> written = draftWriter.migrateLegacyDrafts(legacy);
+            int rows = written.values().stream().mapToInt(Integer::intValue).sum();
+            repository.insertAudit(ACTION_MIGRATE, null, operator,
+                    "存量 YAML 迁移完成: kind=" + written.keySet() + "，结构行 " + rows + " 行；"
+                            + "回滚基线 = 迁移后首次发布会话产生的版本");
+            log.info("存量 YAML 草稿迁移完成: {}", written);
+            return written;
+        } catch (BusinessException e) {
+            // 失败留痕（与导入失败同策略）：明细供运维排查，草稿保持迁移前状态（未写入即无从污染）
+            repository.insertAudit(ACTION_MIGRATE, null, operator, "存量 YAML 迁移失败: " + e.getMessage());
+            throw e;
         }
-        Map<String, Integer> written = draftWriter.migrateLegacyDrafts(legacy);
-        log.info("存量 YAML 草稿迁移完成: {}", written);
-        return written;
     }
 
     /**

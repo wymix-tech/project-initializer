@@ -36,6 +36,10 @@ catalog/                              # 目录位置：initializer.catalog.dir�
 - **容错**：单个文件格式非法只跳过该文件并打印告警日志，不阻断启动；目录不存在则回退内置清单 / 管理端发布配置。
 - **优先级**：外部清单目录 >（`--demo`）classpath 内置清单 > 数据库最新已发布快照。
 
+> ⚠️ **该通道已被配置结构化入库取代**（见 [14.4](#144-initializercatalogdir-外部清单目录保留通道已标注下线)）：
+> 它会在**启动期直接覆盖 DB 发布快照**，与「DB 为唯一数据源」并存时会互相遮蔽；服务启动会打印 WARN。
+> 新环境请改用管理端表单维护或 ZIP 归档导入，外部目录将在后续版本下线。
+
 ---
 
 ## 1. 目录结构总览
@@ -848,6 +852,15 @@ mvn verify        # 单测 + JaCoCo 覆盖率门禁（配置合法性由加载�
     并发保存（旧 `If-Match`）返回 4003；回滚到历史 release 后读回内容一致
 21. **前端突变门禁（T7）**：`cd initializer-web && npm run test:mutation` 应为 **PASS**
     （突变分数 ≥ 70%）。该门禁依赖仓库内 `patch-package` 补丁，见 §13
+22. **存量迁移预检（T8）**：`GET /api/admin/config/migrate-legacy` 应回 `legacyTableExists` /
+    `kinds` / `rows` / `migrationRequired`；旧表不存在时 `migrationRequired=false` 且不写库
+23. **存量迁移与回退（T8）**：`POST /api/admin/config/migrate-legacy?operator=ops` → 逐模块核对 →
+    `POST /config/publish` 发布一版 → `POST /releases/{该版本}/rollback` 回滚成功；
+    对**升级前**的历史发布回滚应明确报错（仅头信息，无结构行），见 §14.3
+24. **归档往返演练（T8）**：`GET /config/export` 下载 → 清草稿 → `POST /config/import` 回灌 →
+    摘要规模一致、`hidden` 不丢 → 再次发布生成正常（§14.2 第 9 步）
+25. **外部目录下线告警（T8）**：配置 `initializer.catalog.dir` 指向含 `metadata.yml` 的目录启动，
+    日志应出现「外部清单目录已被配置结构化入库取代」WARN；移除该目录后回落到 DB 发布快照
 
 ---
 
@@ -893,3 +906,110 @@ mvn verify        # 单测 + JaCoCo 覆盖率门禁（配置合法性由加载�
 额外排除 `import()` 实参——与既有 `require(...)` 排除同口径，改完门禁真跑达标、无豁免。
 
 > 补丁仅针对已发布的上游缺陷；日后升级 `@stryker-mutator/instrumenter` 修复该问题后可直接删除补丁文件。
+
+---
+
+## 14. 迁移与切换（T8）
+
+> 本节对应「配置结构化入库」改造的第八阶段（T8，migration-cutover）。
+> 前置：T1~T7 已落地；本节只做**存量迁移演练、外部目录下线收口、`validation.yml` 边界标注**，
+> 不新增门禁要求（沿用 T7 结果）。
+
+### 14.1 两条迁移通道（按能否停机选）
+
+| 通道 | 端点 / 入口 | 适用场景 | 是否读旧库表 |
+|---|---|---|---|
+| **A｜导出 → 导入** | 旧版 jar `GET /api/admin/config/{kind}` + 新版 `PUT` / `POST /config/import` | 有现网数据、可跨版本操作，**推荐** | 否（走 YAML 文件） |
+| **B｜库内直迁** | `POST /api/admin/config/migrate-legacy?operator=` | 可停机维护窗口，旧 `config_draft` 表仍在同库 | 是（直读 `config_draft.content_yaml`） |
+
+通道 B 在 T8 新增了**运行期端点**（此前 `LegacyYamlMigration` 只有 Java 调用入口，
+运维无法在不重编译的前提下执行），并把探测与执行都收敛进管理端：
+
+```bash
+# 1) 预检：旧表是否存在 / 各 kind 有效行数 / 是否需要迁移（只读，不改库）
+curl -H "X-Admin-Token: $TOKEN" http://localhost:8080/api/admin/config/migrate-legacy
+# → {"legacyTable":"config_draft","legacyTableExists":true,
+#    "kinds":{"METADATA":1,"STARTER":2},"rows":3,"migrationRequired":true,
+#    "hint":"检测到存量 YAML 草稿，可调用 POST /api/admin/config/migrate-legacy 执行直迁"}
+
+# 2) 执行直迁（写草稿 release_id=0；整体单事务，失败全回滚）
+curl -X POST -H "X-Admin-Token: $TOKEN" \
+  "http://localhost:8080/api/admin/config/migrate-legacy?operator=ops"
+# → {"written":{"METADATA":4,"STARTER":2,"CONFLICT_RULE":3},"rows":9,"summary":"..."}
+
+# 3) 人工核对 → 发布一版作为回滚基线
+curl -X POST -H "X-Admin-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"operator":"ops","remark":"迁移后首版"}' \
+  http://localhost:8080/api/admin/config/publish
+```
+
+- **只写草稿**：直迁与导入一样，都**不发布、不切换快照**；发布前必须人工核对。
+- **失败整体回滚**：任一 kind 的 YAML 非法即整体拒绝，草稿保持迁移前状态；
+  迁移失败与成功都写审计（动作 `MIGRATE_LEGACY`），明细含 kind 与结构行数，**不含配置正文与 token**。
+- **幂等**：按 kind「先清后写」，重复执行结果一致（与导入通道同口径）。
+- **执行前务必备份数据库**。
+
+### 14.2 迁移演练清单（升级窗口照做）
+
+1. **备份数据库**（文件 H2 直接拷 `./data/initializer.mv.db`；外部 JDBC 用其原生备份手段）
+2. 旧版 jar 导出四类 YAML 留档（通道 A 的输入，也是「历史版本内容」唯一的留底方式）
+3. 升级到新版，重启（首次启动自动建表；`spring.sql.init.mode: always` 会跑幂等增量列升级）
+4. 预检 `GET /config/migrate-legacy`：
+   - `migrationRequired=true` → 走第 5 步
+   - `legacyTableExists=false` → 库已是新结构，转通道 A（导入第 2 步的 YAML 留档）
+5. 执行 `POST /config/migrate-legacy?operator=ops`
+6. 管理端逐模块核对（元数据 / starter / 冲突规则 / 模板），**重点核对 `hidden` / `required` / 模板可达性**
+7. `POST /config/publish` 发布一版 = **回滚基线**
+8. 冒烟：`POST /api/generate` 生成一次，确认产物正常（模板齐全，无 3001）
+9. 归档演练（通道 A 往返）：`GET /config/export` 下载 → `POST /config/import` 回灌 → 摘要规模一致
+10. 回退预案验证（见 §14.3）
+
+### 14.3 回退预案（与 §6.3 口径一致）
+
+**可回滚基线 = 迁移后发布的版本**。升级前的历史发布只有头信息（发布人 / 时间 / 备注），
+正文无法逐行还原，**不能作为回滚点**。
+
+- 迁移/导入后若核对不通过：草稿未发布 → 直接重新导入正确归档覆盖草稿即可，无需回滚。
+- 已发布后发现异常：`POST /api/admin/releases/{releaseId}/rollback`（`releaseId` = 迁移后首次发布的版本）
+  回滚会重新走完整校验并生成**新** release，历史快照零改写。
+- 需要恢复「升级前的旧内容」：用第 2 步留档的 YAML 走通道 A 导入 → 发布。
+
+### 14.4 `initializer.catalog.dir` 外部清单目录：保留通道，已标注下线
+
+外部清单目录（`initializer.catalog.dir`，默认 `<jar 所在目录>/catalog`）是 T1 之前的主力部署方式，
+**在本次改造中保留为兼容通道**，但语义与「DB 唯一数据源」存在冲突，因此：
+
+- **启动告警**：目录存在时服务会打印一条 WARN，提示它已被 ZIP 归档导入取代、
+  且会**在启动期直接覆盖 DB 发布快照**（两者并存时外部目录遮蔽 DB），建议新环境改用管理端表单 / ZIP 导入。
+- **不参与迁移**：外部目录不写入 DB，也不进归档；它是「每次启动现挂」的运维通道。
+- **下线计划**：后续版本将移除该通道（连同类），届时 `catalog/` 目录只保留 `validation.yml`（见 §14.5）。
+- **替代路径**：
+
+  | 原外部目录用法 | 现在推荐做法 |
+  |---|---|
+  | `metadata.yml` / `starters/*.yml` 手改后重启 | 管理端表单维护 → 发布（热生效）；或打包 ZIP → `POST /config/import` |
+  | `conflict-rules.yml` | 管理端「冲突规则」分区维护 |
+  | `templates/**` 覆盖 | 管理端「模板」分区维护；随 ZIP 归档「导出 → 编辑 → 导入」 |
+  | 批量从旧环境搬迁 | `GET /config/export` → 改文件 → `POST /config/import` → 发布 |
+
+### 14.5 `validation.yml`：明确保留在 classpath（本次不动）
+
+元信息命名校验规则（`validation.yml`：Group / Artifact / Package 正则）**不在本次四项范围内**，
+仍按原有优先级装载，**边界如下**：
+
+- 装载优先级：外部清单目录 `validation.yml`（若配置了 `initializer.catalog.dir`）→
+  `classpath:catalog/validation.yml`（兜底）。
+- **不入库、不参与归档导入导出**：`/config/export` 的归档中**不含** `validation.yml`，
+  导入也不会改动校验规则。
+- 因此它**不是**「DB 唯一数据源」，与其余四类配置的运维路径不同：改规则需改文件后重启。
+- 后续若要把校验规则也纳入表单维护，需单独立项（涉及新表 + 新的 kind）。
+
+### 14.6 迁移常见故障
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 预检 `legacyTableExists=false` 但旧库确实有数据 | 数据源指向了新库文件 / 旧库文件路径不对 | 核对 `spring.datasource.url` 指向的库文件 |
+| 直迁返回 4002「旧版草稿表不存在」 | 表已被清理或库已是新结构 | 改用通道 A（YAML 留档导入） |
+| 直迁返回 4002 且提示某 kind 的 YAML 非法 | 旧草稿本身残缺（历史脏数据） | 用旧版 jar 单独导出该 kind、手工修正后走通道 A |
+| 发布被 4002 拒（悬空引用 / 模板不可达） | 迁移内容跨模块不自洽或模板不全 | 按提示条明细补全后再发布；草稿已写入可直接改 |
+| 回滚到升级前版本失败 4002「发布记录缺失结构行」 | 该版本是升级前的旧发布（只有头信息） | 属预期行为，见 §14.3；改用留档 YAML 重新发布 |

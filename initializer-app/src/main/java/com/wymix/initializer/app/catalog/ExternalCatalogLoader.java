@@ -133,6 +133,10 @@ public class ExternalCatalogLoader {
             return ExternalCatalog.empty();
         }
         log.info("装载外部清单目录: {}", dir);
+        log.warn("外部清单目录（initializer.catalog.dir）已被配置结构化入库（M3）取代，"
+                + "属保留的兼容通道：它会在启动期直接覆盖 DB 发布快照，与「DB 为唯一数据源」并存时会互相遮蔽。"
+                + "新环境请改用管理端表单维护或 ZIP 归档导入（POST /api/admin/config/import），"
+                + "外部目录将在后续版本下线。详见 docs/guide/configuration.md §14");
         MetadataCatalog metadata = loadMetadata(dir.resolve(METADATA_FILE));
         StarterCatalog starters = loadStarters(dir.resolve(STARTERS_DIR));
         ConflictCatalog conflicts = loadConflictRules(dir.resolve(CONFLICT_RULES_FILE));

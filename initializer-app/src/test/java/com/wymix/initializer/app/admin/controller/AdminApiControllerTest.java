@@ -93,7 +93,17 @@ class AdminApiControllerTest {
         return new AdminApiController(newConfigService(),
                 org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
                 newStructuredService(),
-                newImportExportService());
+                newImportExportService(),
+                newLegacyMigration());
+    }
+
+    /**
+     * 构造存量迁移服务（T8 端点切片用，协作者 mock）。
+     *
+     * @return 全协作者为 mock 的存量 YAML 迁移服务
+     */
+    private static com.wymix.initializer.app.admin.repository.LegacyYamlMigration newLegacyMigration() {
+        return org.mockito.Mockito.mock(com.wymix.initializer.app.admin.repository.LegacyYamlMigration.class);
     }
 
     /**
@@ -231,6 +241,49 @@ class AdminApiControllerTest {
                         .file(new org.springframework.mock.web.MockMultipartFile(
                                 "file", "config.zip", "application/zip", "x".getBytes())))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void probeLegacyMigration_returnsProbeView() throws Exception {
+        com.wymix.initializer.app.admin.repository.LegacyYamlMigration migration = newLegacyMigration();
+        org.mockito.Mockito.when(migration.probe()).thenReturn(java.util.Map.of(
+                "legacyTable", "config_draft",
+                "legacyTableExists", true,
+                "kinds", java.util.Map.of("METADATA", 1),
+                "rows", 1,
+                "migrationRequired", true,
+                "hint", "可执行直迁"));
+        mockMvc = MockMvcBuilders.standaloneSetup(new AdminApiController(newConfigService(),
+                        org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
+                        newStructuredService(), newImportExportService(), migration))
+                .build();
+
+        mockMvc.perform(get("/api/admin/config/migrate-legacy"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.legacyTableExists").value(true))
+                .andExpect(jsonPath("$.migrationRequired").value(true))
+                .andExpect(jsonPath("$.rows").value(1));
+    }
+
+    @Test
+    void runLegacyMigration_requiresOperatorAndReturnsSummary() throws Exception {
+        com.wymix.initializer.app.admin.repository.LegacyYamlMigration migration = newLegacyMigration();
+        org.mockito.Mockito.when(migration.migrateFromLegacyDraftTable("tester"))
+                .thenReturn(java.util.Map.of("METADATA", 3, "STARTER", 2));
+        mockMvc = MockMvcBuilders.standaloneSetup(new AdminApiController(newConfigService(),
+                        org.mockito.Mockito.mock(com.wymix.initializer.app.admin.sync.CatalogSyncService.class),
+                        newStructuredService(), newImportExportService(), migration))
+                .setControllerAdvice(new com.wymix.initializer.app.exception.GlobalExceptionHandler())
+                .build();
+
+        // 缺 operator → 400
+        mockMvc.perform(post("/api/admin/config/migrate-legacy"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/api/admin/config/migrate-legacy?operator=tester"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows").value(5))
+                .andExpect(jsonPath("$.written.METADATA").value(3));
     }
 
     @Test

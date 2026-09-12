@@ -126,7 +126,7 @@ rules:
   > 整体加载失败**（用例不注册、`afterAll` 不触发、覆盖率归因全灭）。补丁让 `isValidParent`
   > 额外排除 `import()` 实参（与既有 `require(...)` 排除同口径）。详见教程 §13。
 - 重点测试对象：`StructuredCatalogAssembler`（装配/N+1 断言）、`ConfigService`（乐观锁/发布互斥/回滚）、
-  导入导出（含恶意 ZIP：路径穿越/条目数/单文件大小）、`ConflictRuleEngine`（pair/group/悬空 id）、
+  导入导出（含恶意 ZIP：路径穿越/条目数/单文件大小）、存量迁移（`LegacyYamlMigration` 预检/直迁/`LegacyCutoverDrillTest` 全链路演练）、`ConflictRuleEngine`（pair/group/悬空 id）、
   15 张 `cfg_*` 表的 mapper 层（H2）。
 - 快照测试扩展：管理端发布合法配置 → 生成产物与既有 fixture 一致（证明发布链路无回归）。
 
@@ -162,6 +162,19 @@ rules:
   可成对高亮并「二选一」切换。前端 `wizard.ts` 以 `manualStarters`（意图源）+
   `syncSelection()`（派生闭包）实现自动选中/释放，`mutexInfo` / `lockedStarters` 提供 UI 标记。
 - **OR 分组**：多元素分组仅在提示层提示，不自动勾选。
+
+## M3.10 存量迁移与切换通道
+
+- **背景**：T1 起配置正文改为关系表存储，旧版 `config_draft.content_yaml` / `config_release.*_yaml`
+  的存量数据必须迁移（详见教程 §14）。
+- **通道 A｜导出 → 导入**：旧版 jar `GET /api/admin/config/{kind}` 导出 YAML 留档，
+  新版经 `POST /api/admin/config/import` 回灌草稿（ZIP 归档，M3.4 通道）。
+- **通道 B｜库内直迁**：`POST /api/admin/config/migrate-legacy?operator=` 直读旧 `config_draft` 表
+  → 结构化草稿行；预检 `GET /api/admin/config/migrate-legacy` 返回旧表是否存在 / 各 kind 行数 /
+  是否需迁移。两条通道都**只写草稿、不发布、失败整体回滚**，成功后写审计（`MIGRATE_LEGACY`）。
+- **回退基线**：升级前历史发布仅有头信息、无法逐行还原，**可回滚基线 = 迁移后发布的版本**。
+- **外部目录**：`initializer.catalog.dir` 保留为兼容通道（启动 WARN 提示已被 ZIP 导入取代），
+  `validation.yml` 明确留在 classpath、不入库、不参与归档（见教程 §14.4 / §14.5）。
 
 ## M3.9 待选候选项标识
 

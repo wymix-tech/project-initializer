@@ -1,7 +1,8 @@
 # 配置结构化入库与表单化维护（规划稿）
 
 > 状态：**T1（db-schema）、T2（snapshot-assembler）、T3（admin-structured-api）、
-> T4（yaml-import-export）、T5（template-db-source）、T6（web-forms）已实施**；T7 起待开发
+> T4（yaml-import-export）、T5（template-db-source）、T6（web-forms）、T7（docs-tests）、
+> T8（migration-cutover）已实施**——本规划稿全部任务组完成
 > T1 交付：`initializer-app/src/main/resources/db/{schema,data}.sql` + 16 个实体/Mapper +
 > `ConfigRepository` 结构化读写 + `StructuredSnapshot`/`StructuredYamlCodec`/`StructuredDraftWriter`/
 > `LegacyYamlMigration`（T1→T2 过渡桥）+ 升级文档（`docs/guide/configuration.md` §6）
@@ -207,6 +208,7 @@ docs/
 | 5 | `template-db-source` | ✅ 模板渲染改为只读数据库全量模板集，仅 demo 模式以 classpath 内置作初始种子 | 2 |
 | 6 | `web-forms` | ✅ 管理后台改为表单化维护工作台（左导航 + 卡片表单 + 导入导出页） | 3, 4, 5 |
 | 7 | `docs-tests` | 更新配置与关系表文档，适配并补充装配器、导入导出、发布回滚相关测试 | 6 |
+| 8 | `migration-cutover` | ✅ 存量 YAML 迁移演练（预检 + 直迁端点 + 回退预案）、`initializer.catalog.dir` 下线收口、`validation.yml` 边界标注 | 7 |
 
 ## 12.1 T4 实施说明（导入导出）
 
@@ -296,6 +298,46 @@ docs/
 - `starter-yaml-builder.ts` 已删除；若 T7 发现仍有引用需一并清理测试与文档。
 - `StructuredYamlCodec` / `StructuredDraftWriter` / `MetadataDoc` 仍服务 YAML 契约与导入通道，
   T7 之后可评估摘除（T6 未动，避免与前端改造耦合）。
+
+## 12.4 T7 实施说明（文档与测试收口）
+
+- 文档：`docs/guide/configuration.md` 补 §13、`docs/design/m3-detail.md` 补 M3.6~M3.9 并改数据模型口径。
+- 门禁修复：前端突变门禁 FAIL 的真因是 **Vite 拒绝加载被变异的动态 `import()` 说明符**，
+  而非 runner 归因失效；以仓库内 `patch-package` 补丁（`isValidParent` 排除 `import()`）修复，
+  详见 `docs/guide/configuration.md` §13.3。
+
+## 12.5 T8 实施说明（迁移与切换）
+
+### 交付范围
+
+1. **存量迁移运行期入口**：新增 `GET /api/admin/config/migrate-legacy`（预检）与
+   `POST /api/admin/config/migrate-legacy?operator=`（执行）。此前 `LegacyYamlMigration`
+   只有 Java 调用入口，运维需重编译才能执行；T8 把它收敛为管理端端点，
+   并补「各 kind 有效行数 / 是否需要迁移 / 提示」的预检报告。
+2. **迁移留痕**：直迁成功与失败都写审计（动作 `MIGRATE_LEGACY`），
+   沿用导入通道的 `noRollbackFor = BusinessException` 策略（失败明细落库、草稿保持原状）。
+3. **演练测试**：`LegacyCutoverDrillTest` 端到端复现「旧库 → 预检 → 直迁 → 发布 →
+   归档往返 → 再发布 → 回滚」，并锁定「回滚基线 = 迁移后发布的版本」口径。
+4. **外部目录收口**：`initializer.catalog.dir` 保留为兼容通道，启动打印 WARN
+   提示它已被 ZIP 导入取代且会在启动期遮蔽 DB 快照（**不删代码**，仅告警 + 文档标注下线）。
+5. **`validation.yml` 边界**：明确留在 classpath、不入库、不参与归档导入导出（本次不动）。
+6. 文档：`docs/guide/configuration.md` 新增 §14（迁移与切换）+ §12 追加 4 条 T8 冒烟项。
+
+### 关键决策
+
+1. **直迁端点与导入端点职责不重叠**：直迁读旧库表（停机窗口、无需旧版 jar 导出），
+   导入读 ZIP（跨版本、可编辑后再灌）。两者都只写草稿、不发布、失败整体回滚。
+2. **预检只读**：`probe()` 不校验 YAML 内容、不写库，只回答「需不需要迁」，
+   避免运维在未备份时误触发写操作。
+3. **历史发布仍不可回滚**：T1 的取舍（旧 `*_yaml` 无行级作用域，无法逐行还原）在 T8 维持，
+   回退预案统一为「留档 YAML → 通道 A 重新发布」，已在 §14.3 与教程 §6.3 对齐口径。
+
+### 遗留与后续
+
+- `StructuredYamlCodec` / `StructuredDraftWriter` / `MetadataDoc` 仍服务 YAML 契约与导入通道，
+  摘除需单独立项（教程 §11.3 已标注）。
+- `initializer.catalog.dir` 通道代码保留，下线需另开任务（含 `ExternalCatalogLoader`、
+  `CatalogSnapshotBootstrap` 外部目录分支、`ValidationRulesConfig` 外部优先逻辑的清理）。
 
 ## 13. 现状基线（改造前）
 

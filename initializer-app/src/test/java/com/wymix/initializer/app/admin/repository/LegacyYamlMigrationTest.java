@@ -90,7 +90,7 @@ class LegacyYamlMigrationTest {
         insertLegacy("METADATA", METADATA_YAML);
         insertLegacy("STARTER", STARTER_YAML);
 
-        Map<String, Integer> written = migration.migrateFromLegacyDraftTable();
+        Map<String, Integer> written = migration.migrateFromLegacyDraftTable("tester");
 
         assertThat(written).containsKeys("METADATA", "STARTER");
         assertThat(repository.readDraftScope(ConfigKind.METADATA).javaVersions()).hasSize(1);
@@ -103,21 +103,21 @@ class LegacyYamlMigrationTest {
         insertLegacy("METADATA", METADATA_YAML);
         insertLegacy("STARTER", null);
 
-        Map<String, Integer> written = migration.migrateFromLegacyDraftTable();
+        Map<String, Integer> written = migration.migrateFromLegacyDraftTable("tester");
 
         assertThat(written).containsOnlyKeys("METADATA");
     }
 
     @Test
     void migrateFromLegacyDraftTable_emptyLegacyTable_returnsEmptyMap() {
-        assertThat(migration.migrateFromLegacyDraftTable()).isEmpty();
+        assertThat(migration.migrateFromLegacyDraftTable("tester")).isEmpty();
     }
 
     @Test
     void migrateFromLegacyDraftTable_rejectsUnknownKind() throws Exception {
         insertLegacy("NOT_A_KIND", METADATA_YAML);
 
-        assertThatThrownBy(() -> migration.migrateFromLegacyDraftTable())
+        assertThatThrownBy(() -> migration.migrateFromLegacyDraftTable("tester"))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -129,7 +129,7 @@ class LegacyYamlMigrationTest {
         }
 
         assertThat(migration.legacyDraftTableExists()).isFalse();
-        assertThatThrownBy(() -> migration.migrateFromLegacyDraftTable())
+        assertThatThrownBy(() -> migration.migrateFromLegacyDraftTable("tester"))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -138,7 +138,7 @@ class LegacyYamlMigrationTest {
         insertLegacy("METADATA", METADATA_YAML);
         insertLegacy("STARTER", "id: broken\n");
 
-        assertThatThrownBy(() -> migration.migrateFromLegacyDraftTable())
+        assertThatThrownBy(() -> migration.migrateFromLegacyDraftTable("tester"))
                 .isInstanceOf(BusinessException.class);
     }
 }
