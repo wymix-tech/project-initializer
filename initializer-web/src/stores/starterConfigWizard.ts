@@ -1,10 +1,6 @@
 import { defineStore } from 'pinia'
-import { adminApi, ApiError } from '@/api/client'
-import {
-  buildStarterYaml,
-  DOC_SEPARATOR,
-  findUnknownPlaceholders,
-} from '@/starter-yaml-builder'
+import { adminStructuredApi, ApiError } from '@/api/client'
+import type { DraftSaveResult, StarterDto } from '@/types/admin'
 import {
   emptyStarterConfigForm,
   makeAbstractClassRow,
@@ -14,7 +10,7 @@ import {
   type StarterConfigForm,
 } from '@/types/starter-config'
 
-/** 向导步骤：1 基本信息 → 2 依赖 → 3 联动 → 4 预览与发布 */
+/** 向导步骤：1 基本信息 → 2 依赖 → 3 联动 → 4 预览与提交 */
 export const CFG_STEP_BASIC = 1
 export const CFG_STEP_DEPS = 2
 export const CFG_STEP_LINKAGE = 3
@@ -22,27 +18,32 @@ export const CFG_STEP_PREVIEW = 4
 export const CFG_TOTAL_STEPS = 4
 
 /** 步骤标签（与 StepIndicator 复用风格）。 */
-export const CFG_STEP_LABELS = ['基本信息', '依赖坐标', '联动规则', '预览与发布']
+export const CFG_STEP_LABELS = ['基本信息', '依赖坐标', '联动规则', '预览与提交']
 
 /** 提交动作状态。 */
 export type WizardActionState = 'idle' | 'saving' | 'publishing' | 'done' | 'error'
 
 /**
- * starter 配置向导状态：分步表单 + YAML 预览 + 草稿追加发布。
+ * starter 配置向导状态（T6.4）：分步表单 → **结构化提交**。
  *
- * 与管理端 {@link AdminPanel} 的 YAML 编辑模式互补：向导生成单文档 starter yml，
- * 追加进现有 starter 草稿（草稿为多文档），再走 {@code PUT /api/admin/config/starter}
- * （带乐观锁 If-Match）+ {@code POST /api/admin/config/publish}。后端零改动。
+ * <p>T6 之前向导把表单渲染成 starter yml 文本再 `PUT /api/admin/config/starter` 追加文档；
+ * T6 起改为直接提交结构化 DTO（`PUT /api/admin/starters` 整体清单），
+ * 不再拼 YAML、不再依赖多文档合并语义。这样：
+ * <ul>
+ *   <li>`hidden` / `required` 等列语义不会再在「YAML 渲染 → 反解析」往返中丢失；</li>
+ *   <li>向导产出的条目与「清单表」编辑的是同一批 `cfg_starter` 行（`source = MANUAL`）；</li>
+ *   <li>追加语义由「读清单 → 合并一条 → 整体提交」实现，读取走结构化接口。</li>
+ * </ul>
  *
- * 复用 AdminPanel 的 token 登录态（通过 adminApi 携带 X-Admin-Token）。
+ * <p>提交后仍需到发布台发布，草稿才真正热生效（与清单表一致）。
  */
 export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
   state: () => ({
     step: CFG_STEP_BASIC as number,
     form: emptyStarterConfigForm() as StarterConfigForm,
-    /** 现有 starter 草稿全文（GET 拉取，用于追加判断重复 id） */
-    existingDraft: '' as string,
-    /** 现有草稿乐观锁版本（PUT 携带 If-Match） */
+    /** 已登记的 starter ID 集合（结构化读取，用于查重；不含同步通道条目） */
+    existingIds: [] as string[],
+    /** 现有清单草稿乐观锁版本（PUT 携带 If-Match） */
     draftVersion: null as number | null,
     /** 已登录 admin token */
     token: '' as string,
@@ -53,14 +54,23 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
   }),
 
   getters: {
-    /** 实时渲染的 starter yml 预览（纯函数渲染，无副作用）。 */
-    previewYaml(state): string {
-      return buildStarterYaml(state.form)
+    /**
+     * 表单即将提交的结构化条目（预览区展示，与提交体同源）。
+     *
+     * 空值归一化为 null / 空数组，与 `CatalogDtos.StarterDto` 的可空字段口径一致。
+     */
+    previewDto(state): StarterDto {
+      return toStarterDto(state.form, state.existingIds.length)
     },
 
     /** 表单中出现的越界占位符（即时提示，避免发布期被拒）。 */
     unknownPlaceholders(state): string[] {
       return findUnknownPlaceholders(state.form)
+    },
+
+    /** requires 分组的多行文本（一行一组，组内逗号分隔）。 */
+    requiresText(state): string {
+      return state.form.requires.map((group) => group.join(', ')).join('\n')
     },
 
     /** 当前表单是否已声明任何联动规则（用于预览展示与步骤引导）。 */
@@ -82,12 +92,8 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
         if (f.id.trim() === '') errors.id = 'starter id 不能为空'
         else if (!/^[a-z][a-z0-9-]*$/.test(f.id.trim())) {
           errors.id = 'id 须小写字母开头，仅小写字母/数字/中划线'
-        } else {
-          // 草稿为多文档（--- 分隔），id 行可能位于文档首行或文档分隔符后
-          const idLine = new RegExp(`(?:^|\\n)id: ${f.id.trim()}\\s*(?:\\n|$)`)
-          if (idLine.test(state.existingDraft)) {
-            errors.id = `starter id「${f.id.trim()}」已存在于草稿中，请改名或先删除旧条目`
-          }
+        } else if (state.existingIds.includes(f.id.trim())) {
+          errors.id = `starter id「${f.id.trim()}」已存在于清单中，请改名或先删除旧条目`
         }
         if (f.description.trim() === '') errors.description = '描述建议填写（展示与文档说明）'
       }
@@ -130,13 +136,12 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
     canNext(state): boolean {
       const errs = this.stepErrors
       const step = state.step
-      // 仅校验当前步骤相关的字段键
       if (step === CFG_STEP_BASIC) return !('id' in errs)
       if (step === CFG_STEP_DEPS) return !('dependencies' in errs)
       if (step === CFG_STEP_LINKAGE) {
         return !('templates' in errs) && !('ymlFragments' in errs) && !('abstractClasses' in errs)
       }
-      // 预览步：占位符必须合法才能发布
+      // 预览步：占位符必须合法才能提交
       return this.unknownPlaceholders.length === 0
     },
   },
@@ -157,19 +162,19 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
     },
 
     /**
-     * 拉取当前 starter 草稿（多文档全文 + 乐观锁版本），用于追加前查重。
+     * 拉取当前 starter 清单（结构化），用于 id 查重与乐观锁版本。
      *
-     * 失败时：草稿不存在属正常（首发场景），仅置空 existingDraft，不报错。
+     * 失败时（草稿不存在 / token 无效）不阻断向导，按「首次保存」语义走 null 版本。
      */
     async loadExistingDraft(): Promise<void> {
       if (this.token === '') return
       try {
-        const view = await adminApi.getDraft('starter', this.token)
-        this.existingDraft = view.contentYaml ?? ''
-        this.draftVersion = view.version
+        const view = await adminStructuredApi.getStarters(this.token)
+        this.existingIds = view.starters.map((s) => s.id)
+        const version = await adminStructuredApi.readDraftVersion(this.token, 'starter')
+        this.draftVersion = version
       } catch {
-        // 草稿不存在或网络异常：置空不阻断向导，追加时按 null 版本走首次保存
-        this.existingDraft = ''
+        this.existingIds = []
         this.draftVersion = null
       }
     },
@@ -209,6 +214,29 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
       this.form.abstractClasses = this.form.abstractClasses.filter((a) => a.rowId !== rowId)
     },
 
+    /**
+     * 解析并写入 requires 分组（一行一组，组内逗号 / 空白分隔）。
+     *
+     * @param text 多行文本
+     */
+    setRequires(text: string): void {
+      this.form.requires = text
+        .split('\n')
+        .map((line) => [...new Set(line.split(/[\s,，]+/).map((s) => s.trim()).filter((s) => s !== ''))])
+        .filter((group) => group.length > 0)
+    },
+
+    /**
+     * 解析并写入关联 Boot 版本清单（逗号 / 空白分隔）。
+     *
+     * @param text 文本
+     */
+    setBootVersions(text: string): void {
+      this.form.bootVersions = [
+        ...new Set(text.split(/[\s,，]+/).map((s) => s.trim()).filter((s) => s !== '')),
+      ]
+    },
+
     /** 下一步（当前步骤校验通过才前进）。 */
     next(): void {
       if (this.canNext && this.step < CFG_TOTAL_STEPS) this.step += 1
@@ -231,10 +259,10 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
     },
 
     /**
-     * 追加本表单生成的 starter yml 到草稿并保存（带乐观锁）。
+     * 结构化提交：把本表单作为一条 starter 追加进清单草稿并保存（带乐观锁）。
      *
-     * 合并策略：草稿为空 → 直接作为首发全文；非空 → 以 {@link DOC_SEPARATOR}
-     * 拼接为新文档（草稿本身就是多文档，追加一个文档天然合法）。
+     * <p>合并策略：读取当前清单 → 按 id 覆盖同名或追加 → 整体提交
+     * （`PUT /api/admin/starters` 是「提交该模块完整结构」语义，天然无孤儿行）。
      *
      * @returns 是否保存成功（失败时 actionState=error，message 含明细）
      */
@@ -256,14 +284,16 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
       }
       this.actionState = 'saving'
       try {
-        const newDoc = buildStarterYaml(this.form)
-        const merged = this.existingDraft.trim() === ''
-          ? newDoc
-          : `${this.existingDraft.trimEnd()}${DOC_SEPARATOR}${newDoc}`
-        await adminApi.putDraft('starter', this.token, merged, this.draftVersion)
-        await this.loadExistingDraft()
+        const merged = await this.mergeIntoCatalog()
+        const result: DraftSaveResult = await adminStructuredApi.putStarters(
+          this.token,
+          { starters: merged },
+          this.draftVersion,
+        )
+        this.draftVersion = result.version
+        this.existingIds = merged.map((s) => s.id)
         this.actionState = 'done'
-        this.showText('info', '已写入 starter 草稿（未发布）')
+        this.showText('info', `已写入 starter 清单草稿（${result.summary}），未发布`)
         return true
       } catch (e) {
         this.actionState = 'error'
@@ -273,7 +303,19 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
     },
 
     /**
-     * 发布：保存草稿（如有改动）→ 触发全量校验 + 快照切换。
+     * 读取当前手工清单并把本表单合并进去。
+     *
+     * @returns 合并后的完整清单（同名覆盖，其余保留）
+     */
+    async mergeIntoCatalog(): Promise<StarterDto[]> {
+      const view = await adminStructuredApi.getStarters(this.token)
+      const entry = toStarterDto(this.form, view.starters.length)
+      const others = view.starters.filter((s) => s.id !== entry.id)
+      return [...others, entry]
+    },
+
+    /**
+     * 发布：先结构化保存草稿（如有改动）→ 触发全量校验 + 快照切换。
      *
      * 复用后端 publish 接口，发布校验失败返回 4002 + 明细，草稿保留可继续编辑。
      *
@@ -284,6 +326,7 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
       if (!saved) return false
       this.actionState = 'publishing'
       try {
+        const { adminApi } = await import('@/api/client')
         const result = await adminApi.publish(this.token)
         this.actionState = 'done'
         this.showText(
@@ -299,3 +342,82 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
     },
   },
 })
+
+/**
+ * 表单 → 结构化 starter 条目（`CatalogDtos.StarterDto` 同构）。
+ *
+ * 占位符越界检查在调用侧先行；此处只做「空串 → null / 空数组」归一化。
+ *
+ * @param form 表单状态
+ * @param sort 展示顺序（追加至清单末尾）
+ * @returns 结构化条目（提交与预览共用，保证「所见即所存」）
+ */
+export function toStarterDto(form: StarterConfigForm, sort: number): StarterDto {
+  const blank = (v: string): string | null => (v.trim() === '' ? null : v)
+  return {
+    id: form.id.trim(),
+    category: blank(form.category),
+    maintainer: blank(form.maintainer),
+    description: blank(form.description),
+    required: form.required,
+    hidden: form.hidden,
+    configPackage: blank(form.configPackage),
+    dependencies: form.dependencies.map((d) => ({
+      groupId: blank(d.groupId),
+      artifactId: blank(d.artifactId),
+      version: blank(d.version),
+    })),
+    requires: form.requires.map((group) => [...group]),
+    bootVersions: [...form.bootVersions],
+    linkages: {
+      templates: form.templates.map((t) => ({ source: blank(t.source), target: blank(t.target) })),
+      ymlFragments: form.ymlFragments.map((f) => ({
+        source: blank(f.source),
+        mergeStrategy: f.mergeStrategy,
+      })),
+      abstractClasses: form.abstractClasses.map((a) => ({ fqcn: blank(a.fqcn), alias: blank(a.alias) })),
+    },
+    sort,
+  }
+}
+
+/** 占位符白名单（与后端 PlaceholderPolicy 一致）。 */
+const ALLOWED_PLACEHOLDERS = new Set([
+  'basePackage',
+  'packagePath',
+  'artifact',
+  'group',
+  'bootVersion',
+  'javaVersion',
+])
+
+/**
+ * 检测表单中出现的越界占位符（与后端 PlaceholderPolicy 白名单一致）。
+ *
+ * 用于向导前端即时提示，避免发布期才被后端 9002 拒绝。
+ *
+ * @param form 表单状态
+ * @returns 越界占位符（保持出现顺序去重）；全部合法时为空
+ */
+export function findUnknownPlaceholders(form: StarterConfigForm): string[] {
+  const unknown = new Set<string>()
+  const scan = (text: string): void => {
+    if (!text) return
+    const re = /\{([^{}]+)\}/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      if (!ALLOWED_PLACEHOLDERS.has(m[1])) unknown.add(`{${m[1]}}`)
+    }
+  }
+  scan(form.configPackage)
+  for (const t of form.templates) {
+    scan(t.target)
+    scan(t.source)
+  }
+  for (const f of form.ymlFragments) scan(f.source)
+  for (const a of form.abstractClasses) {
+    scan(a.fqcn)
+    scan(a.alias)
+  }
+  return [...unknown]
+}

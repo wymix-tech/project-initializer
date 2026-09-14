@@ -14,11 +14,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * TemplateRenderer 单元测试：渲染成功 / 模板缺失 / 渲染异常。
+ * TemplateRenderer 单元测试（T5：DB 模板集为唯一数据源，渲染器无 classpath 兜底）：
+ * 渲染成功 / 模板缺失即 3001 / 渲染异常 / 模板集外模板不回退 classpath。
  */
 class TemplateRendererTest {
 
-    private final TemplateRenderer renderer = new TemplateRenderer();
+    private final TemplateRenderer renderer = ClasspathTemplates.renderer();
 
     private Map<String, Object> model() {
         Map<String, Object> model = new HashMap<>();
@@ -66,20 +67,74 @@ class TemplateRendererTest {
     }
 
     @Test
-    void overrideTemplate_uncoveredFallsBackToClasspath() {
-        // 覆盖映射只含 README：pom.xml 仍走 classpath 内置模板（兜底语义）
+    void templateOutsideTemplateSet_shouldFailInsteadOfClasspathFallback() {
+        // T5：模板集只含 README 时，classpath 明明存在 application.yml.ftl 也不得被使用
         TemplateRenderer partial = new TemplateRenderer(Map.of("README.md.ftl", "x"));
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        partial.render("application.yml.ftl", model(), out);
-        assertThat(out.toString(StandardCharsets.UTF_8)).contains("name: demo-app");
+        assertThatThrownBy(() -> partial.render("application.yml.ftl", model(), out))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.TEMPLATE_RENDER_FAILED))
+                .hasMessageContaining("application.yml.ftl");
     }
 
     @Test
-    void overrideTemplate_emptyMap_equivalentToDefault() {
+    void emptyTemplateSet_shouldFailInsteadOfClasspathFallback() {
+        // T5：空模板集 = 无可用模板，任何渲染都失败（不再等价于 classpath 默认渲染器）
         TemplateRenderer empty = new TemplateRenderer(Map.of());
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        empty.render("application.yml.ftl", model(), out);
-        assertThat(out.toString(StandardCharsets.UTF_8)).contains("name: demo-app");
+        assertThatThrownBy(() -> empty.render("application.yml.ftl", model(), out))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.TEMPLATE_RENDER_FAILED));
+    }
+
+    @Test
+    void nullTemplateSet_shouldFailInsteadOfClasspathFallback() {
+        TemplateRenderer nullSet = new TemplateRenderer(null);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        assertThatThrownBy(() -> nullSet.render("application.yml.ftl", model(), out))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.TEMPLATE_RENDER_FAILED));
+    }
+
+    @Test
+    void loadedTemplateSet_shouldContainAllBuiltInTemplates() {
+        // classpath 内置模板集（--demo 种子来源）必须覆盖 8 个内置模板：
+        // 基础模板 6 个 + xxx-redis 联动模板/yml 片段 2 个（测试资源另含 e2e 夹具模板）
+        Map<String, String> templates = ClasspathTemplates.load();
+        assertThat(templates).containsKeys("pom.xml.ftl", "build.gradle.ftl", "settings.gradle.ftl",
+                "Application.java.ftl", "application.yml.ftl", "README.md.ftl",
+                "starters/xxx-redis/RedisConfig.java.ftl", "starters/xxx-redis/application-redis.yml");
+    }
+
+    @Test
+    void render_shouldWriteUtf8AndFlushBeforeReturn() {
+        // 配置项必须真实生效（PIT 突变防线）：
+        // ①默认编码 UTF-8：模板含中文/emoji 时输出字节必须与 UTF-8 编码一致
+        //   （若去掉 setDefaultEncoding，StringTemplateLoader 路径会退回平台默认编码）
+        // ②异常处理器 RETHROW：模型缺键必须抛异常而非静默输出占位
+        // ③Writer 在返回前必须 flush：OutputStreamWriter 有内部缓冲，
+        //   若去掉 flush，小模板内容可能滞留在缓冲区里（表现为产物为空）
+        TemplateRenderer renderer = new TemplateRenderer(
+                Map.of("utf8.ftl", "中文内容-${artifact}-✅"));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        renderer.render("utf8.ftl", model(), out);
+        assertThat(out.toByteArray())
+                .isEqualTo("中文内容-demo-app-✅".getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void render_shouldFlushWriterSoCallerSeesCompleteContent() {
+        // flush 突变防线：直接观察「OutputStreamWriter → 调用方流」的字节到达情况。
+        // 用只记录 write(byte[],off,len) 的流 + 大模板（远超 Writer 缓冲），
+        // 若 render 不 flush，尾部内容不会到达调用方流。
+        byte[] payload = new byte[64 * 1024];
+        java.util.Arrays.fill(payload, (byte) 'x');
+        TemplateRenderer renderer = new TemplateRenderer(
+                Map.of("big.ftl", new String(payload, StandardCharsets.UTF_8) + "-TAIL"));
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        renderer.render("big.ftl", Map.of(), out);
+        assertThat(out.size()).isEqualTo(payload.length + "-TAIL".length());
+        assertThat(out.toString(StandardCharsets.UTF_8)).endsWith("-TAIL");
     }
 
     @Test

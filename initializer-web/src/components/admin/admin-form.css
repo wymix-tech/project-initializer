@@ -1,0 +1,38 @@
+/* 管理端表单共用样式（T6 表单化工作台）：各表单组件通过 @import 复用，避免样式漂移。 */
+.card { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 18px 20px; }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.card h3 { font-size: 16px; margin-bottom: 6px; }
+.card h4 { font-size: 14px; margin: 18px 0 8px; }
+.card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hint { color: #57606a; font-size: 13px; line-height: 1.6; max-width: 720px; }
+.ver { color: #57606a; font-size: 12px; background: #f6f8fa; border-radius: 4px; padding: 2px 8px; }
+.summary {
+  margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 13px;
+  background: #ddf4ff; color: #0550ae;
+}
+.empty { color: #57606a; font-size: 13px; padding: 8px 0; }
+.grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+.grid th, .grid td { border: 1px solid #d0d7de; padding: 6px 8px; text-align: left; vertical-align: middle; }
+.grid th { background: #eaeef2; white-space: nowrap; font-weight: 600; }
+.grid input[type='text'] { width: 100%; padding: 6px 8px; border: 1px solid #d0d7de; border-radius: 4px; font-size: 13px; }
+.grid .center { text-align: center; }
+.boot-card { border: 1px solid #d0d7de; border-radius: 6px; padding: 12px; margin-bottom: 10px; background: #fbfcfd; }
+.boot-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 8px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #57606a; flex: 1; min-width: 140px; }
+.field input[type='text'] {
+  padding: 6px 8px; border: 1px solid #d0d7de; border-radius: 4px; font-size: 13px; background: #fff;
+}
+.field-inline { flex-direction: row; align-items: center; gap: 6px; color: #24292f; }
+.btn {
+  padding: 6px 12px; border-radius: 6px; border: 1px solid #d0d7de;
+  background: #f6f8fa; cursor: pointer; font-size: 13px;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: #0969da; border-color: #0969da; color: #fff; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-icon {
+  border: 1px solid #d0d7de; background: #fff; border-radius: 6px;
+  width: 30px; height: 30px; cursor: pointer; color: #cf222e;
+}
+.btn-icon:disabled { opacity: 0.4; cursor: not-allowed; color: #8c959f; }
+.field-error { color: #cf222e; font-size: 12px; }

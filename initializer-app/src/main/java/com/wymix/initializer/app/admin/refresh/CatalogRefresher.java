@@ -39,6 +39,12 @@ import java.util.Set;
  * 多 starter 以 YAML 多文档（--- 分隔）表达；METADATA 草稿与 {@code metadata.yml} 同构；
  * TEMPLATE 草稿（M3.2）为多文档映射 {@code {name, content}}，name 相对 templates/ 目录。
  *
+ * <p><b>结构化装配委托（T2）</b>：发布/回滚/启动装表三条路径已改由
+ * {@link StructuredCatalogAssembler} 直接「表行 → 核心模型」装配，本类的 YAML 校验通道
+ * （本页 Javadoc 描述的 {@link #validateAndBuild} 系列）保留给**导入导出（T4）与草稿态校验**，
+ * 不再承担发布链路。两条通道的装载期校验口径一致（同用 core 的
+ * {@code MetadataCatalog.of} / {@code StarterCatalog.of} / {@link ConflictRule} 构造）。
+ *
  * <p>线程安全性：无状态单例（校验逻辑纯函数式），线程安全。
  */
 @Component

@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { useStarterConfigWizardStore } from '@/stores/starterConfigWizard'
+import { useStarterConfigWizardStore, toStarterDto, findUnknownPlaceholders } from '@/stores/starterConfigWizard'
+import { emptyStarterConfigForm } from '@/types/starter-config'
 import type { AdminDraftView, AdminPublishResult } from '@/types/api'
+import type { StarterCatalogView, StarterDto } from '@/types/admin'
 
 /**
- * starter 配置向导 store 单测：分步校验、草稿追加（乐观锁）、发布链路。
- * 复用 adminApi 但 mock fetch，验证请求体与 If-Match 头。
+ * starter 配置向导 store 单测：分步校验、**结构化提交**（乐观锁）、发布链路。
+ *
+ * T6 起向导不再拼 YAML，改为读清单 → 合并一条 → `PUT /api/admin/starters` 整体提交；
+ * 用例因此改断言结构化请求体与 If-Match 头。
  */
 const fetchMock = vi.fn()
 
@@ -15,16 +19,67 @@ beforeEach(() => {
   setActivePinia(createPinia())
 })
 
+/**
+ * 成功响应夹具。
+ *
+ * 结构化端点用 `handleStructured`（`res.text()` + JSON.parse）解析，
+ * 而 YAML 端点用 `handleResponse`（`res.json()`）；两者都要覆盖，故同时提供 json / text。
+ */
 function ok(body: unknown): Response {
-  return { ok: true, status: 200, json: () => Promise.resolve(body) } as unknown as Response
+  return {
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(body === null ? '' : JSON.stringify(body)),
+  } as unknown as Response
 }
 
-function noContent(): Response {
-  return { ok: true, status: 204 } as unknown as Response
+function draftView(version: number | null): AdminDraftView {
+  return { kind: 'metadata', contentYaml: null, version, updatedAt: null }
 }
 
-function draftView(yaml: string | null, version: number | null): AdminDraftView {
-  return { kind: 'starter', contentYaml: yaml, version, updatedAt: null }
+/** 结构化 starter 清单响应（缺省空清单）。 */
+function catalogView(starters: StarterDto[] = []): StarterCatalogView {
+  return { starters }
+}
+
+/** 结构化保存结果。 */
+function saveResult(version: number | null, summary = 'starter 1 项 / 依赖 1 条'): unknown {
+  return { kind: 'starter', rows: 2, version, summary }
+}
+
+/** 由向导表单填充一份「合法且可提交」的最小表单。 */
+function fillValidForm(wizard: ReturnType<typeof useStarterConfigWizardStore>): void {
+  wizard.form.id = 'web'
+  wizard.form.description = 'Spring Web'
+  wizard.form.dependencies = [
+    { rowId: 'r1', groupId: 'org.springframework.boot', artifactId: 'spring-boot-starter-web', version: '' },
+  ]
+}
+
+/** 空白结构化 starter 条目（测试夹具基座）。 */
+function emptyStarterDto(): StarterDto {
+  return {
+    id: '',
+    category: 'web',
+    maintainer: 'official',
+    description: '',
+    required: false,
+    hidden: false,
+    configPackage: null,
+    dependencies: [],
+    requires: [],
+    bootVersions: [],
+    linkages: null,
+    sort: 0,
+  }
+}
+
+/** 取最近一次结构化 PUT 调用。 */
+function lastPut(url: string): RequestInit | undefined {
+  return [...fetchMock.mock.calls]
+    .reverse()
+    .find((c) => c[0] === url && (c[1] as RequestInit)?.method === 'PUT')?.[1] as RequestInit | undefined
 }
 
 async function settle(): Promise<void> {
@@ -47,9 +102,9 @@ describe('starterConfigWizard 分步校验', () => {
     expect(wizard.canNext).toBe(false)
   })
 
-  it('id 与草稿重复时报错', () => {
+  it('id 与清单重复时报错', () => {
     const wizard = useStarterConfigWizardStore()
-    wizard.existingDraft = 'id: web\ncategory: web\n'
+    wizard.existingIds = ['web', 'data-jpa']
     wizard.form.id = 'web'
     expect(wizard.stepErrors.id).toContain('已存在')
   })
@@ -86,59 +141,93 @@ describe('starterConfigWizard 分步校验', () => {
   })
 })
 
-describe('starterConfigWizard 草稿追加与发布', () => {
-  it('saveToDraft 首次保存直接写入（无文档分隔符）', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView(null, null))) // loadExistingDraft
+describe('starterConfigWizard 结构化提交与发布', () => {
+  it('saveToDraft 读取清单后整体提交（首次保存无 If-Match）', async () => {
+    fetchMock.mockResolvedValueOnce(ok(catalogView())) // getStarters（合并前读取）
+    fetchMock.mockResolvedValueOnce(ok(saveResult(1))) // PUT /starters
     const wizard = useStarterConfigWizardStore()
     wizard.setToken('tk')
-    wizard.form.id = 'web'
-    wizard.form.description = 'Spring Web'
-    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'org.springframework.boot', artifactId: 'spring-boot-starter-web', version: '' }]
-    await wizard.loadExistingDraft()
-    fetchMock.mockResolvedValueOnce(noContent()) // PUT
-    fetchMock.mockResolvedValueOnce(ok(draftView('id: web\n', 1))) // 重新 loadExistingDraft
+    fillValidForm(wizard)
 
     const result = await wizard.saveToDraft()
     await settle()
     expect(result).toBe(true)
     expect(wizard.actionState).toBe('done')
-    // PUT 请求体不含 --- 分隔符（首次保存）
-    const putCall = fetchMock.mock.calls.find((c) => c[0] === '/api/admin/config/starter' && (c[1] as RequestInit)?.method === 'PUT')
-    expect(putCall).toBeTruthy()
-    const body = JSON.parse((putCall![1] as RequestInit).body as string)
-    expect(body.contentYaml).toContain('id: web')
-    expect(body.contentYaml).not.toContain('---')
-    // 首次保存无 If-Match
-    expect((putCall![1] as RequestInit).headers).not.toHaveProperty('If-Match')
+
+    const put = lastPut('/api/admin/starters')
+    expect(put).toBeTruthy()
+    const body = JSON.parse(put!.body as string)
+    expect(body.operator).toBe('admin')
+    expect(body.starters).toHaveLength(1)
+    expect(body.starters[0].id).toBe('web')
+    expect(body.starters[0].dependencies[0].artifactId).toBe('spring-boot-starter-web')
+    // 首次保存（draftVersion 为 null）不携带 If-Match
+    expect((put!.headers as Record<string, string>)['If-Match']).toBeUndefined()
   })
 
-  it('saveToDraft 追加到已有草稿带乐观锁 If-Match', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView('id: old\n', 5)))
+  it('saveToDraft 保留清单中其余条目并带乐观锁 If-Match', async () => {
+    const existing: StarterDto = {
+      id: 'old',
+      category: 'web',
+      maintainer: 'official',
+      description: 'old',
+      required: false,
+      hidden: false,
+      configPackage: null,
+      dependencies: [],
+      requires: [],
+      bootVersions: [],
+      linkages: null,
+      sort: 0,
+    }
+    fetchMock.mockResolvedValueOnce(ok(catalogView([existing])))
+    fetchMock.mockResolvedValueOnce(ok(saveResult(6)))
     const wizard = useStarterConfigWizardStore()
     wizard.setToken('tk')
-    wizard.form.id = 'web'
-    wizard.form.description = 'Spring Web'
-    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'org.springframework.boot', artifactId: 'spring-boot-starter-web', version: '' }]
-    await wizard.loadExistingDraft()
-    expect(wizard.draftVersion).toBe(5)
-    fetchMock.mockResolvedValueOnce(noContent())
-    fetchMock.mockResolvedValueOnce(ok(draftView('id: old\n---\nid: web\n', 6)))
+    wizard.draftVersion = 5
+    fillValidForm(wizard)
 
     const result = await wizard.saveToDraft()
     await settle()
     expect(result).toBe(true)
-    const putCall = fetchMock.mock.calls.find((c) => c[0] === '/api/admin/config/starter' && (c[1] as RequestInit)?.method === 'PUT')
-    const body = JSON.parse((putCall![1] as RequestInit).body as string)
-    expect(body.contentYaml).toContain('---')
-    expect(body.contentYaml.indexOf('id: old')).toBeLessThan(body.contentYaml.indexOf('---'))
-    expect(((putCall![1] as RequestInit).headers as Record<string, string>)['If-Match']).toBe('5')
+
+    const put = lastPut('/api/admin/starters')
+    const body = JSON.parse(put!.body as string)
+    expect(body.starters.map((s: StarterDto) => s.id)).toEqual(['old', 'web'])
+    expect((put!.headers as Record<string, string>)['If-Match']).toBe('5')
+    expect(wizard.draftVersion).toBe(6)
+  })
+
+  it('saveToDraft 同名条目覆盖而非重复追加', async () => {
+    const existing: StarterDto = {
+      id: 'web',
+      category: 'data',
+      maintainer: 'internal',
+      description: 'legacy',
+      required: true,
+      hidden: true,
+      configPackage: null,
+      dependencies: [],
+      requires: [],
+      bootVersions: [],
+      linkages: null,
+      sort: 0,
+    }
+    fetchMock.mockResolvedValueOnce(ok(catalogView([existing])))
+    fetchMock.mockResolvedValueOnce(ok(saveResult(7)))
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    fillValidForm(wizard)
+
+    await wizard.saveToDraft()
+    const body = JSON.parse(lastPut('/api/admin/starters')!.body as string)
+    expect(body.starters).toHaveLength(1)
+    expect(body.starters[0].description).toBe('Spring Web')
   })
 
   it('saveToDraft 未登录时报错不请求', async () => {
     const wizard = useStarterConfigWizardStore()
-    wizard.form.id = 'web'
-    wizard.form.description = 'd'
-    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    fillValidForm(wizard)
     const result = await wizard.saveToDraft()
     expect(result).toBe(false)
     expect(wizard.messageType).toBe('error')
@@ -146,17 +235,13 @@ describe('starterConfigWizard 草稿追加与发布', () => {
   })
 
   it('publish 先保存草稿再触发发布', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
+    fetchMock.mockResolvedValueOnce(ok(catalogView()))
+    fetchMock.mockResolvedValueOnce(ok(saveResult(1)))
+    const pub: AdminPublishResult = { releaseId: 9, javaVersionCount: 4, starterCount: 6, templateOverrideCount: 1, conflictRuleCount: 3 }
+    fetchMock.mockResolvedValueOnce(ok(pub))
     const wizard = useStarterConfigWizardStore()
     wizard.setToken('tk')
-    wizard.form.id = 'web'
-    wizard.form.description = 'Spring Web'
-    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'org.springframework.boot', artifactId: 'spring-boot-starter-web', version: '' }]
-    await wizard.loadExistingDraft()
-    fetchMock.mockResolvedValueOnce(noContent()) // PUT
-    fetchMock.mockResolvedValueOnce(ok(draftView('id: web\n', 1))) // reload draft
-    const pub: AdminPublishResult = { releaseId: 9, javaVersionCount: 4, starterCount: 6, templateOverrideCount: 1, conflictRuleCount: 3 }
-    fetchMock.mockResolvedValueOnce(ok(pub)) // publish
+    fillValidForm(wizard)
 
     const result = await wizard.publish()
     await settle()
@@ -167,20 +252,16 @@ describe('starterConfigWizard 草稿追加与发布', () => {
   })
 
   it('publish 校验失败返回 4002 明细', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
-    const wizard = useStarterConfigWizardStore()
-    wizard.setToken('tk')
-    wizard.form.id = 'web'
-    wizard.form.description = 'Spring Web'
-    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'org.springframework.boot', artifactId: 'spring-boot-starter-web', version: '' }]
-    await wizard.loadExistingDraft()
-    fetchMock.mockResolvedValueOnce(noContent()) // PUT ok
-    fetchMock.mockResolvedValueOnce(ok(draftView('id: web\n', 1)))
+    fetchMock.mockResolvedValueOnce(ok(catalogView()))
+    fetchMock.mockResolvedValueOnce(ok(saveResult(1)))
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 400,
       json: () => Promise.resolve({ code: 4002, message: '校验失败明细', timestamp: 1 }),
     } as unknown as Response)
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    fillValidForm(wizard)
 
     const result = await wizard.publish()
     await settle()
@@ -277,7 +358,7 @@ describe('starterConfigWizard 行 actions', () => {
     expect(wizard.messageType).toBe('info')
   })
 
-  it('loadExistingDraft 草稿不存在时置空不报错', async () => {
+  it('清单读取失败时置空不报错', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false, status: 404,
       json: () => Promise.resolve({ code: 4001, message: 'not found', timestamp: 1 }),
@@ -285,19 +366,19 @@ describe('starterConfigWizard 行 actions', () => {
     const wizard = useStarterConfigWizardStore()
     wizard.setToken('tk')
     await wizard.loadExistingDraft()
-    expect(wizard.existingDraft).toBe('')
+    expect(wizard.existingIds).toEqual([])
     expect(wizard.draftVersion).toBeNull()
   })
 
-  it('previewYaml 与 hasLinkages getter 反映联动', () => {
+  it('previewDto 与 hasLinkages getter 反映联动', () => {
     const wizard = useStarterConfigWizardStore()
     wizard.form.id = 'demo'
     wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
     expect(wizard.hasLinkages).toBe(false)
-    expect(wizard.previewYaml).toContain('linkages: {}')
+    expect(wizard.previewDto.linkages?.templates).toEqual([])
     wizard.form.configPackage = '{basePackage}.config'
     expect(wizard.hasLinkages).toBe(true)
-    expect(wizard.previewYaml).toContain('config-package:')
+    expect(wizard.previewDto.configPackage).toBe('{basePackage}.config')
   })
 })
 
@@ -469,21 +550,32 @@ describe('starterConfigWizard loadExistingDraft', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('成功时设置 existingDraft 和 draftVersion', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView('id: web\n', 3)))
+  it('成功时设置 existingIds 和 draftVersion', async () => {
+    fetchMock.mockResolvedValueOnce(ok(catalogView([{ ...emptyStarterDto(), id: 'web' }])))
+    fetchMock.mockResolvedValueOnce(ok(draftView(3)))
     const wizard = useStarterConfigWizardStore()
     wizard.setToken('tk')
     await wizard.loadExistingDraft()
-    expect(wizard.existingDraft).toBe('id: web\n')
+    expect(wizard.existingIds).toEqual(['web'])
     expect(wizard.draftVersion).toBe(3)
   })
 
-  it('草稿 contentYaml 为 null 时置空', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
+  it('清单为空时 existingIds 为空数组、版本为 null', async () => {
+    fetchMock.mockResolvedValueOnce(ok(catalogView([])))
+    fetchMock.mockResolvedValueOnce(ok(draftView(null)))
     const wizard = useStarterConfigWizardStore()
     wizard.setToken('tk')
     await wizard.loadExistingDraft()
-    expect(wizard.existingDraft).toBe('')
+    expect(wizard.existingIds).toEqual([])
+    expect(wizard.draftVersion).toBeNull()
+  })
+
+  it('请求失败时不阻断向导，按首次保存语义置空', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('network'))
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    await wizard.loadExistingDraft()
+    expect(wizard.existingIds).toEqual([])
     expect(wizard.draftVersion).toBeNull()
   })
 })
@@ -515,40 +607,32 @@ describe('starterConfigWizard saveToDraft 错误路径', () => {
   })
 
   it('保存失败（非 ApiError）时展示通用错误', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
-    const wizard = useStarterConfigWizardStore()
-    wizard.setToken('tk')
-    wizard.form.id = 'web'
-    wizard.form.description = 'd'
-    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
-    await wizard.loadExistingDraft()
-    // PUT 返回非 JSON 错误体，handleResponse 中 res.json() 抛 SyntaxError → 非 ApiError
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 500,
       json: () => Promise.reject(new SyntaxError('bad')),
     } as unknown as Response)
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    fillValidForm(wizard)
     const result = await wizard.saveToDraft()
     await settle()
     expect(result).toBe(false)
     expect(wizard.actionState).toBe('error')
-    // putDraft 对非 JSON 错误体抛 ApiError（adminErrorFallback），所以 detail 含 HTTP
+    // 非 JSON 错误体 → handleStructured 回退默认错误体，detail 含 HTTP 状态
     expect(wizard.message).toContain('HTTP 500')
   })
 
   it('保存失败（ApiError）时展示后端明细', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
-    const wizard = useStarterConfigWizardStore()
-    wizard.setToken('tk')
-    wizard.form.id = 'web'
-    wizard.form.description = 'd'
-    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
-    await wizard.loadExistingDraft()
+    fetchMock.mockResolvedValueOnce(ok(catalogView()))
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 400,
       json: () => Promise.resolve({ code: 4002, message: '校验失败明细', timestamp: 1 }),
     } as unknown as Response)
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    fillValidForm(wizard)
     const result = await wizard.saveToDraft()
     await settle()
     expect(result).toBe(false)
@@ -568,21 +652,17 @@ describe('starterConfigWizard publish 错误路径', () => {
   })
 
   it('publish 发布失败（非 ApiError）时展示通用错误', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
-    const wizard = useStarterConfigWizardStore()
-    wizard.setToken('tk')
-    wizard.form.id = 'web'
-    wizard.form.description = 'd'
-    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
-    await wizard.loadExistingDraft()
-    fetchMock.mockResolvedValueOnce(noContent()) // PUT ok
-    fetchMock.mockResolvedValueOnce(ok(draftView('id: web\n', 1))) // reload
+    fetchMock.mockResolvedValueOnce(ok(catalogView()))
+    fetchMock.mockResolvedValueOnce(ok(saveResult(1)))
     // publish 返回非 JSON 错误体
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 502,
       json: () => Promise.reject(new SyntaxError('bad')),
     } as unknown as Response)
+    const wizard = useStarterConfigWizardStore()
+    wizard.setToken('tk')
+    fillValidForm(wizard)
 
     const result = await wizard.publish()
     await settle()
@@ -678,9 +758,9 @@ describe('starterConfigWizard stepErrors 边界', () => {
     expect(wizard.stepErrors.description).toContain('描述建议填写')
   })
 
-  it('id 前后空格但草稿查重仍匹配', () => {
+  it('id 前后空格但清单查重仍匹配', () => {
     const wizard = useStarterConfigWizardStore()
-    wizard.existingDraft = 'id: web\ncategory: web\n'
+    wizard.existingIds = ['web']
     wizard.form.id = '  web  '
     wizard.form.description = 'd'
     wizard.step = 1
@@ -797,32 +877,34 @@ describe('starterConfigWizard stepErrors 边界', () => {
   })
 })
 
-describe('starterConfigWizard id 草稿查重', () => {
-  it('草稿为多文档时 id 在第二个文档也能查重', () => {
+describe('starterConfigWizard id 清单查重', () => {
+  it('清单中存在同名 id 即报重复', () => {
     const wizard = useStarterConfigWizardStore()
-    wizard.existingDraft = 'id: old\n---\nid: web\n'
+    wizard.existingIds = ['webflux']
     wizard.form.id = 'web'
-    wizard.form.description = 'd'
-    wizard.step = 1
+    expect(wizard.stepErrors.id).toBeUndefined()
+    wizard.form.id = 'webflux'
     expect(wizard.stepErrors.id).toContain('已存在')
   })
 
-  it('id 在草稿中不存在时不报错', () => {
+  it('id 在清单中不存在时不报错', () => {
     const wizard = useStarterConfigWizardStore()
-    wizard.existingDraft = 'id: other\n'
+    wizard.existingIds = ['webflux']
     wizard.form.id = 'web'
-    wizard.form.description = 'd'
-    wizard.step = 1
     expect(wizard.stepErrors.id).toBeUndefined()
   })
 
-  it('草稿为空时不报重复', () => {
+  it('清单为空时不报重复', () => {
     const wizard = useStarterConfigWizardStore()
-    wizard.existingDraft = ''
     wizard.form.id = 'web'
-    wizard.form.description = 'd'
-    wizard.step = 1
     expect(wizard.stepErrors.id).toBeUndefined()
+  })
+
+  it('id 前后空格时按 trim 后比对', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.existingIds = ['web']
+    wizard.form.id = '  web  '
+    expect(wizard.stepErrors.id).toContain('已存在')
   })
 })
 
@@ -844,47 +926,79 @@ describe('starterConfigWizard unknownPlaceholders getter', () => {
   })
 })
 
-describe('starterConfigWizard saveToDraft 成功路径细节', () => {
-  it('saveToDraft 追加时正确拼接 DOC_SEPARATOR', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView('id: old\n', 5)))
+describe('starterConfigWizard 结构化提交成功路径细节', () => {
+  it('保存成功后同步 existingIds 与 draftVersion', async () => {
+    fetchMock.mockResolvedValueOnce(ok(catalogView([{ ...emptyStarterDto(), id: 'old' }])))
+    fetchMock.mockResolvedValueOnce(ok(saveResult(6)))
     const wizard = useStarterConfigWizardStore()
     wizard.setToken('tk')
-    wizard.form.id = 'web'
-    wizard.form.description = 'Spring Web'
-    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'org.springframework.boot', artifactId: 'spring-boot-starter-web', version: '' }]
-    await wizard.loadExistingDraft()
-    fetchMock.mockResolvedValueOnce(noContent())
-    fetchMock.mockResolvedValueOnce(ok(draftView('id: old\n---\nid: web\n', 6)))
+    fillValidForm(wizard)
 
     const result = await wizard.saveToDraft()
     await settle()
     expect(result).toBe(true)
-    expect(wizard.actionState).toBe('done')
     expect(wizard.message).toContain('已写入')
-    const putCall = fetchMock.mock.calls.find((c) => c[0] === '/api/admin/config/starter' && (c[1] as RequestInit)?.method === 'PUT')
-    const body = JSON.parse((putCall![1] as RequestInit).body as string)
-    expect(body.contentYaml).toContain('id: old')
-    expect(body.contentYaml).toContain('---')
-    expect(body.contentYaml).toContain('id: web')
-    // 顺序：old 在前，--- 在中间，web 在后
-    expect(body.contentYaml.indexOf('id: old')).toBeLessThan(body.contentYaml.indexOf('---'))
-    expect(body.contentYaml.indexOf('---')).toBeLessThan(body.contentYaml.indexOf('id: web'))
+    expect(wizard.existingIds).toEqual(['old', 'web'])
+    expect(wizard.draftVersion).toBe(6)
   })
 
-  it('saveToDraft 成功后重新加载草稿', async () => {
-    fetchMock.mockResolvedValueOnce(ok(draftView(null, null)))
+  it('previewDto 与提交体同源（含 hidden / required / requires）', () => {
     const wizard = useStarterConfigWizardStore()
-    wizard.setToken('tk')
-    wizard.form.id = 'web'
-    wizard.form.description = 'd'
-    wizard.form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
-    await wizard.loadExistingDraft()
-    fetchMock.mockResolvedValueOnce(noContent()) // PUT
-    fetchMock.mockResolvedValueOnce(ok(draftView('id: web\n', 1))) // reload
+    fillValidForm(wizard)
+    wizard.form.required = true
+    wizard.form.hidden = true
+    wizard.form.bootVersions = ['3.2.5']
+    wizard.setRequires('b, c\nd')
+    const dto = wizard.previewDto
+    expect(dto.id).toBe('web')
+    expect(dto.required).toBe(true)
+    expect(dto.hidden).toBe(true)
+    expect(dto.bootVersions).toEqual(['3.2.5'])
+    expect(dto.requires).toEqual([['b', 'c'], ['d']])
+    expect(dto.linkages).toEqual({ templates: [], ymlFragments: [], abstractClasses: [] })
+  })
 
-    await wizard.saveToDraft()
-    await settle()
-    expect(wizard.existingDraft).toBe('id: web\n')
-    expect(wizard.draftVersion).toBe(1)
+  it('requiresText 与 setRequires 往返保持分组结构', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.setRequires('b, c\n\nd\n')
+    expect(wizard.form.requires).toEqual([['b', 'c'], ['d']])
+    expect(wizard.requiresText).toBe('b, c\nd')
+  })
+
+  it('setBootVersions 去重去空', () => {
+    const wizard = useStarterConfigWizardStore()
+    wizard.setBootVersions(' 3.2.5, 2.7.18,3.2.5 , ')
+    expect(wizard.form.bootVersions).toEqual(['3.2.5', '2.7.18'])
+  })
+})
+
+describe('toStarterDto 与 findUnknownPlaceholders 纯函数', () => {
+  it('空串归一化为 null，占位符计入无异常', () => {
+    const form = emptyStarterConfigForm()
+    form.id = 'web'
+    // 类型上是枚举字面量，这里刻意用空串验证「空串 → null」归一化（表单允许清空后提交）
+    form.category = '' as unknown as typeof form.category
+    form.maintainer = 'official'
+    form.description = ''
+    form.dependencies = [{ rowId: 'r1', groupId: 'g', artifactId: 'a', version: '' }]
+    const dto = toStarterDto(form, 3)
+    expect(dto.category).toBeNull()
+    expect(dto.description).toBeNull()
+    expect(dto.configPackage).toBeNull()
+    expect(dto.dependencies[0].version).toBeNull()
+    expect(dto.sort).toBe(3)
+  })
+
+  it('findUnknownPlaceholders 扫描模板 / 片段 / 抽象类', () => {
+    const form = emptyStarterConfigForm()
+    form.configPackage = '{basePackage}.config'
+    form.templates = [{ rowId: 't1', source: 's.ftl', target: 'src/{packagePath}/{foo}.java' }]
+    form.ymlFragments = [{ rowId: 'f1', source: 'starters/{bar}/x.yml', mergeStrategy: 'append' }]
+    form.abstractClasses = [{ rowId: 'a1', fqcn: 'com.{baz}.X', alias: 'x' }]
+    expect(findUnknownPlaceholders(form)).toEqual(['{foo}', '{bar}', '{baz}'])
+  })
+
+  it('无占位符时返回空数组', () => {
+    expect(findUnknownPlaceholders(emptyStarterConfigForm())).toEqual([])
   })
 })

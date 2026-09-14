@@ -38,7 +38,7 @@ class GeneratorServiceTest {
             // starter 元信息来自清单：装载 metadata 后联动合并
             var catalog = com.wymix.initializer.core.metadata.MetadataCatalog.load(in).merge(starterCatalog);
             ProjectGenerator generator = new ProjectGenerator(catalog,
-                    new com.wymix.initializer.core.generator.TemplateRenderer(), starterCatalog);
+                    TestTemplates.renderer(), starterCatalog);
             service = new GeneratorService(new com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder(),
                     generator, new ValidationService(
                     com.wymix.initializer.core.validation.ValidationRules.load(
@@ -71,8 +71,8 @@ class GeneratorServiceTest {
     }
 
     @Test
-    void snapshotWithoutTemplateOverrides_shouldServeGeneration() {
-        // 验收修复（P1-2）回归：热发布仅新增/调整清单（无模板覆盖）时，生成侧同样走快照引擎，
+    void snapshotBackedGeneration_shouldServeGeneration() {
+        // 验收修复（P1-2）回归：热发布仅新增/调整清单时，生成侧同样走快照引擎，
         // 新 starter 对生成接口即时生效——原实现回退 classpath 兜底清单导致新 starter 选中即 2003
         CatalogSnapshotHolder holder = new CatalogSnapshotHolder();
         StarterCatalog snapshotStarters = StarterCatalog.of(List.of(
@@ -93,12 +93,13 @@ class GeneratorServiceTest {
                     supportedJavaVersions: ["17"]
                     starters: ["web", "hot-new-internal-starter"]
                 """.getBytes(StandardCharsets.UTF_8))).merge(snapshotStarters);
-        holder.seed(new CatalogSnapshot(snapshotMetadata, snapshotStarters));
+        // T5：模板集只来自快照（DB 全量模板集），测试显式注入 classpath 种子模板集
+        holder.seed(new CatalogSnapshot(snapshotMetadata, snapshotStarters, TestTemplates.load()));
 
         ProjectGenerator classpathFallback = new ProjectGenerator(
                 MetadataCatalog.load(getClass().getResourceAsStream("/catalog/metadata.yml"))
                         .merge(webStarterCatalog()),
-                new com.wymix.initializer.core.generator.TemplateRenderer(), webStarterCatalog());
+                TestTemplates.renderer(), webStarterCatalog());
         GeneratorService snapService = new GeneratorService(holder, classpathFallback, validationService());
         GenerateRequest req = new GenerateRequest("com.example", "demo-app", "com.example.demo",
                 "17", "3.2.5", List.of("web", "hot-new-internal-starter"));
@@ -113,6 +114,42 @@ class GeneratorServiceTest {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    @Test
+    void snapshotWithEmptyTemplateSet_shouldThrow3001InsteadOfEmptySkeleton() {
+        // T5：模板集为 DB 唯一数据源、渲染器无 classpath 兜底 —— 快照模板集为空时
+        // 生成必须以前置校验失败（3001 明确明细），而不是产出空骨架或悄悄回退 classpath
+        CatalogSnapshotHolder holder = new CatalogSnapshotHolder();
+        holder.seed(new CatalogSnapshot(snapshotMetadata(), webStarterCatalog()));
+
+        GeneratorService emptyTemplates = new GeneratorService(holder,
+                new ProjectGenerator(
+                        MetadataCatalog.load(getClass().getResourceAsStream("/catalog/metadata.yml"))
+                                .merge(webStarterCatalog()),
+                        new com.wymix.initializer.core.generator.TemplateRenderer(), webStarterCatalog()),
+                validationService());
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        assertThatThrownBy(() -> emptyTemplates.generate(request(), out))
+                .isInstanceOfSatisfying(BusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(ErrorCode.TEMPLATE_RENDER_FAILED);
+                    assertThat(e.getMessage()).contains("pom.xml.ftl");
+                });
+        assertThat(out.size()).isZero();
+    }
+
+    private static MetadataCatalog snapshotMetadata() {
+        return MetadataCatalog.load(new ByteArrayInputStream("""
+                javaVersions:
+                  - id: "17"
+                    label: "Java 17"
+                bootVersions:
+                  - id: "3.2.5"
+                    label: "Spring Boot 3.2.5"
+                    official: true
+                    supportedJavaVersions: ["17"]
+                    starters: ["web"]
+                """.getBytes(StandardCharsets.UTF_8))).merge(webStarterCatalog());
     }
 
     @Test

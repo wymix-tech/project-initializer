@@ -33,8 +33,8 @@ const mockApi = vi.mocked(api, true)
 const fetchMock = vi.fn()
 
 const starters: Starter[] = [
-  { id: 'web', label: 'Spring Web', maintainer: 'official', category: 'web', description: 'Spring MVC', version: null, required: false, requires: [] },
-  { id: 'xxx-redis', label: '内部 Redis', maintainer: 'internal', category: 'middleware', description: 'Redis 封装', version: null, required: false, requires: [] },
+  { id: 'web', label: 'Spring Web', maintainer: 'official', category: 'web', description: 'Spring MVC', version: null, required: false, requires: [], hidden: false },
+  { id: 'xxx-redis', label: '内部 Redis', maintainer: 'internal', category: 'middleware', description: 'Redis 封装', version: null, required: false, requires: [], hidden: false },
 ]
 
 beforeEach(() => {
@@ -107,6 +107,24 @@ describe('StepStarters 搜索与分类（M3.4）', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('没有匹配的依赖')
     expect(wrapper.find('.starter-list').exists()).toBe(false)
+  })
+
+  it('隐藏条目默认不渲染，被已选组件依赖时展示（M3.8）', async () => {
+    const wrapper = mountWithPinia(StepStarters)
+    const wizard = useWizardStore()
+    const list: Starter[] = [
+      { id: 'app', label: '应用', maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires: [['ghost']], hidden: false },
+      { id: 'ghost', label: '幽灵依赖', maintainer: 'internal', category: 'tool', description: null, version: null, required: false, requires: [], hidden: true },
+    ]
+    wizard.starters = list
+    wizard.registerStarters(list)
+    await wrapper.vm.$nextTick()
+    const labels = () => wrapper.findAll('.starter-label').map((node) => node.text())
+    expect(labels()).toEqual(['app'])
+    // 选中依赖方后隐藏条目被强制展示
+    wizard.toggleStarter('app')
+    await wrapper.vm.$nextTick()
+    expect(labels().sort()).toEqual(['app', 'ghost'])
   })
 })
 

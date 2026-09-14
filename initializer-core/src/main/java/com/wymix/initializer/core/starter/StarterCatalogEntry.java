@@ -28,8 +28,16 @@ import java.util.List;
  * requires: [[B, C], [D]]       // (B 或 C) 且 D
  * }</pre>
  *
- * <p>前端不再自动勾选/锁定依赖引入项；用户需显式选择，发布期校验每个分组至少有一项被选中。
- * 若 A 与 B/C 互斥或 B/C 互斥，由冲突规则（{@code catalog/conflict-rules.yml}）另作处理。
+ * <p>前端依赖联动（发布期由冲突规则 {@code catalog/conflict-rules.yml} 协同）：
+ * <ul>
+ *   <li>单元素分组（无 OR）视为**强制依赖**：选中本 starter 时其依赖自动被选中并锁定，
+ *       取消本 starter 后若该依赖不再被其他已选 starter 需要则自动移除</li>
+ *   <li>多元素分组（OR）仍不自动勾选，仅提示「需要 B 或 C」，由用户显式选择</li>
+ *   <li>若强制依赖与已选组件互斥，则互斥双方都不锁定，前端标记互斥供用户二选一切换</li>
+ * </ul>
+ *
+ * <p>**hidden**：为 {@code true} 时前端依赖选择列表默认不展示该条目；但若被已选组件的
+ * {@code requires} 引用则强制展示。隐藏仅影响前端展示，后端检索/生成逻辑不受影响。
  *
  * <p>线程安全性：不可变对象，线程安全。
  */
@@ -51,7 +59,9 @@ public record StarterCatalogEntry(
         /** 依赖联动分组：每项为 OR-group，组之间为 AND（详见类 Javadoc） */
         List<List<String>> requires,
         /** 关联的 Boot 版本 ID 清单（空 = 全部版本可用） */
-        List<String> bootVersions) {
+        List<String> bootVersions,
+        /** 是否在前端依赖选择列表中默认隐藏（依赖引用时强制展示） */
+        boolean hidden) {
 
     public StarterCatalogEntry {
         dependencies = dependencies == null ? List.of() : List.copyOf(dependencies);
@@ -68,6 +78,25 @@ public record StarterCatalogEntry(
             copy.add(List.copyOf(g));
         }
         return List.copyOf(copy);
+    }
+
+    /**
+     * 兼容构造（旧 canonical 签名，无 hidden 组件）：默认不隐藏。
+     *
+     * @param id           starter ID
+     * @param category     分类
+     * @param maintainer   维护方
+     * @param description  展示描述
+     * @param dependencies 依赖坐标清单
+     * @param linkages     联动规则
+     * @param required     是否必选
+     * @param requires     依赖联动分组（AND-of-OR-groups）
+     * @param bootVersions 关联的 Boot 版本 ID 清单
+     */
+    public StarterCatalogEntry(String id, String category, Maintainer maintainer, String description,
+                               List<DependencyCoord> dependencies, LinkageSpec linkages,
+                               boolean required, List<List<String>> requires, List<String> bootVersions) {
+        this(id, category, maintainer, description, dependencies, linkages, required, requires, bootVersions, false);
     }
 
     /**

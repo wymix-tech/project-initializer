@@ -2,6 +2,7 @@ package com.wymix.initializer.app.admin.controller;
 
 import com.wymix.initializer.app.InitializerApplication;
 import com.wymix.initializer.app.admin.security.AdminAuthFilter;
+import com.wymix.initializer.app.generator.TestTemplates;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -52,6 +53,13 @@ class AdminApiControllerIntegrationTest {
             linkages: {}
             """;
 
+    /**
+     * 模板草稿（T5：模板集为 DB 唯一数据源，发布快照里没有的模板生成即 3001）。
+     *
+     * <p>只登记生成链路用到的 6 个基础模板；starter 联动模板本用例不涉及。
+     */
+    private static final String VALID_TEMPLATES = TestTemplates.templateYaml();
+
     /** 非法草稿：Boot 引用未定义的 Java 版本（验收标准：发布被拒 + 旧快照继续服务）。 */
     private static final String INVALID_METADATA = VALID_METADATA.replace(
             "supportedJavaVersions: [\"17\"]", "supportedJavaVersions: [\"ghost\"]");
@@ -78,9 +86,11 @@ class AdminApiControllerIntegrationTest {
 
     private ResponseEntity<String> publish(String yaml) {
         // 发布前确保草稿为指定内容；冲突规则草稿重置为空规则（M3.5 后发布链路会消费并校验该草稿）
+        // T5：模板草稿必须显式准备 —— 发布快照即生成期的唯一模板来源
         putDraft("conflict-rule", "rules: []", null);
         putDraft("metadata", yaml, null);
         putDraft("starter", VALID_STARTER, null);
+        putDraft("template", VALID_TEMPLATES, null);
         String body = "{\"operator\":\"tester\",\"remark\":\"M3.1 集成测试\"}";
         return rest.exchange("/api/admin/config/publish", HttpMethod.POST,
                 new HttpEntity<>(body, adminHeaders()), String.class);
@@ -113,6 +123,112 @@ class AdminApiControllerIntegrationTest {
                 HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
         assertThat(resp.getStatusCode().value()).isEqualTo(422);
         assertThat(resp.getBody()).contains("4001");
+    }
+
+    /** 结构化 PUT 辅助：携带可选 If-Match 与 X-Admin-Token。 */
+    private ResponseEntity<String> putStructured(String path, String json, Integer ifMatch) {
+        HttpHeaders headers = adminHeaders();
+        if (ifMatch != null) {
+            headers.set(AdminApiController.IF_MATCH_HEADER, String.valueOf(ifMatch));
+        }
+        return rest.exchange(path, HttpMethod.PUT, new HttpEntity<>(json, headers), String.class);
+    }
+
+    @Test
+    void structuredApi_endToEnd_writeModules_thenPublishAndReadBack() {
+        // 1) 结构化写入元数据（Java + Boot + 兼容矩阵 + starter 白名单）
+        String metadata = """
+                {
+                  "javaVersions": [{"id": "17", "label": "Java 17", "recommendedBootVersion": "3.2.5"}],
+                  "bootVersions": [{"id": "3.2.5", "label": "Spring Boot 3.2.5", "official": true,
+                                    "supportedJavaVersions": ["17"], "starters": ["web"]}],
+                  "operator": "tester"
+                }
+                """;
+        assertThat(putStructured("/api/admin/metadata", metadata, null).getStatusCode().value()).isEqualTo(200);
+
+        // 2) 结构化写入 starter（含 hidden，直落 cfg_starter.hidden）
+        String starters = """
+                {
+                  "starters": [{
+                    "id": "web", "category": "web", "maintainer": "official",
+                    "description": "Spring Web", "required": true, "hidden": true,
+                    "dependencies": [{"groupId": "org.springframework.boot", "artifactId": "spring-boot-starter-web"}],
+                    "requires": [], "bootVersions": ["3.2.5"], "linkages": {}
+                  }],
+                  "operator": "tester"
+                }
+                """;
+        assertThat(putStructured("/api/admin/starters", starters, null).getStatusCode().value()).isEqualTo(200);
+
+        // 3) 结构化写入模板（content 全文）
+        //    T5：模板集是生成期唯一模板来源，故除本用例自建的探测模板外，
+        //    还需带上生成链路必需的 6 个基础模板，否则发布后生成即 3001
+        String templates = TestTemplates.structuredTemplatesJson(
+                "{\"name\": \"probe.ftl\", \"content\": \"<project>${'$'}{groupId}</project>\"}");
+        ResponseEntity<String> savedTemplates = putStructured("/api/admin/templates", templates, null);
+        assertThat(savedTemplates.getStatusCode().value()).isEqualTo(200);
+
+        // 4) 模板列表不含 content CLOB，详情才返回全文
+        ResponseEntity<String> list = rest.exchange("/api/admin/templates",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(list.getStatusCode().value()).isEqualTo(200);
+        assertThat(list.getBody()).contains("probe.ftl").doesNotContain("<project>");
+        ResponseEntity<String> detail = rest.exchange("/api/admin/templates/probe.ftl",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(detail.getBody()).contains("<project>");
+
+        // 5) 结构化读回：hidden 保留
+        ResponseEntity<String> readStarters = rest.exchange("/api/admin/starters",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(readStarters.getBody()).contains("\"hidden\":true");
+
+        // 6) 发布：结构化草稿直接装表生效（两套契约同源，发布链路零改动）
+        putDraft("conflict-rule", "rules: []", null);
+        ResponseEntity<String> published = rest.exchange("/api/admin/config/publish", HttpMethod.POST,
+                new HttpEntity<>("{\"operator\":\"tester\",\"remark\":\"T3 结构化端到端\"}", adminHeaders()),
+                String.class);
+        assertThat(published.getStatusCode().value()).isEqualTo(200);
+        assertThat(published.getBody()).contains("\"javaVersionCount\":1");
+        assertThat(published.getBody()).contains("\"starterCount\":1");
+
+        // 7) 生成读路径即时反映新快照
+        HttpHeaders jsonHeaders = new HttpHeaders();
+        jsonHeaders.setContentType(MediaType.APPLICATION_JSON);
+        String generateBody = """
+                {
+                  "group": "com.example", "artifact": "t3-app", "packageName": "com.example.t3",
+                  "javaVersion": "17", "bootVersion": "3.2.5", "starters": ["web"]
+                }
+                """;
+        ResponseEntity<String> generate = rest.exchange("/api/generate", HttpMethod.POST,
+                new HttpEntity<>(generateBody, jsonHeaders), String.class);
+        assertThat(generate.getStatusCode().value()).as("generate: %s", generate.getBody()).isEqualTo(200);
+
+        // 8) 审计留痕：结构化变更 + 发布
+        ResponseEntity<String> audits = rest.exchange("/api/admin/audits",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(audits.getBody()).contains("UPDATE_STRUCTURED");
+    }
+
+    @Test
+    void structuredApi_validationFailure_returns4002() {
+        // 缺 operator → 4002（结构校验）
+        ResponseEntity<String> missingOperator = putStructured("/api/admin/starters",
+                "{\"starters\":[]}", null);
+        assertThat(missingOperator.getStatusCode().value()).isEqualTo(422);
+        assertThat(missingOperator.getBody()).contains("4002");
+
+        // 重复 starter ID → 4002
+        String dup = """
+                {"starters": [
+                  {"id": "dup", "category": "web", "maintainer": "official"},
+                  {"id": "dup", "category": "web", "maintainer": "official"}],
+                 "operator": "tester"}
+                """;
+        ResponseEntity<String> duplicated = putStructured("/api/admin/starters", dup, null);
+        assertThat(duplicated.getStatusCode().value()).isEqualTo(422);
+        assertThat(duplicated.getBody()).contains("4002");
     }
 
     @Test
@@ -257,6 +373,112 @@ class AdminApiControllerIntegrationTest {
         if (!resp.getStatusCode().is2xxSuccessful()) {
             assertThat(resp.getStatusCode().value()).isEqualTo(422);
             assertThat(resp.getBody()).contains("4002");
+        }
+    }
+
+    @Test
+    void importExport_endpoints_roundTripThroughHttp_andPublishImportedDraft() {
+        // 1. 编排草稿（发布准备）→ 导出归档
+        putDraft("conflict-rule", "rules: []", null);
+        putDraft("metadata", VALID_METADATA, null);
+        putDraft("starter", VALID_STARTER, null);
+        ResponseEntity<byte[]> exported = download("/api/admin/config/export");
+        assertThat(exported.getStatusCode().value()).isEqualTo(200);
+        assertThat(exported.getHeaders().getFirst("Content-Disposition"))
+                .contains("initializer-config.zip");
+        assertThat(exported.getBody()).isNotEmpty();
+
+        // 2. 用导出内容重新导入（multipart）→ 草稿整体替换、返回规模摘要
+        ResponseEntity<String> imported = upload("/api/admin/config/import?operator=tester",
+                exported.getBody(), null);
+        assertThat(imported.getStatusCode().value())
+                .as("import 响应: %s", imported.getBody())
+                .isEqualTo(200);
+        assertThat(imported.getBody()).contains("rows").contains("java=1");
+
+        // 3. 导入的草稿可直接发布（导入只写草稿，发布仍走完整校验通道）
+        String publishBody = "{\"operator\":\"tester\",\"remark\":\"T4 导入后发布\"}";
+        ResponseEntity<String> published = rest.exchange("/api/admin/config/publish", HttpMethod.POST,
+                new HttpEntity<>(publishBody, adminHeaders()), String.class);
+        assertThat(published.getStatusCode().value())
+                .as("publish 响应: %s", published.getBody())
+                .isEqualTo(200);
+
+        // 4. 导入的 starter 对生成链路生效
+        String generateBody = """
+                {
+                  "group": "com.example",
+                  "artifact": "imported-app",
+                  "packageName": "com.example.imported",
+                  "javaVersion": "17",
+                  "bootVersion": "3.2.5",
+                  "starters": ["web"]
+                }
+                """;
+        ResponseEntity<String> generate = rest.exchange("/api/generate", HttpMethod.POST,
+                new HttpEntity<>(generateBody, adminHeaders()), String.class);
+        assertThat(generate.getStatusCode().value()).isEqualTo(200);
+    }
+
+    @Test
+    void importEndpoint_pathTraversalArchive_returns4008AndKeepsDraft() {
+        // 前置一份可辨识的草稿（导入失败后必须仍在）
+        putDraft("metadata", VALID_METADATA, null);
+
+        byte[] evil = zipWithTraversalEntry();
+        ResponseEntity<String> resp = upload("/api/admin/config/import?operator=tester", evil, null);
+        assertThat(resp.getStatusCode().value()).isEqualTo(422);
+        assertThat(resp.getBody()).contains("4008").contains("路径穿越");
+
+        // 草稿未被污染
+        ResponseEntity<String> draft = rest.exchange("/api/admin/config/metadata",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(draft.getBody()).contains("3.2.5");
+    }
+
+    /** 下载二进制（导出归档）。 */
+    private ResponseEntity<byte[]> download(String path) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(AdminAuthFilter.TOKEN_HEADER, "intg-admin-token");
+        return rest.exchange(path, HttpMethod.GET, new HttpEntity<>(headers), byte[].class);
+    }
+
+    /** 上传 multipart 归档（导入）。 */
+    private ResponseEntity<String> upload(String path, byte[] archive, Integer ifMatch) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        headers.set(AdminAuthFilter.TOKEN_HEADER, "intg-admin-token");
+        if (ifMatch != null) {
+            headers.set(AdminApiController.IF_MATCH_HEADER, String.valueOf(ifMatch));
+        }
+        org.springframework.util.LinkedMultiValueMap<String, Object> parts =
+                new org.springframework.util.LinkedMultiValueMap<>();
+        parts.add("file", new org.springframework.core.io.ByteArrayResource(archive) {
+            @Override
+            public String getFilename() {
+                return "config.zip";
+            }
+        });
+        return rest.exchange(path, HttpMethod.POST, new HttpEntity<>(parts, headers), String.class);
+    }
+
+    /** 构造含路径穿越条目的 ZIP（用于安全加固 HTTP 层验证）。 */
+    private static byte[] zipWithTraversalEntry() {
+        try {
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(
+                    buffer, java.nio.charset.StandardCharsets.UTF_8)) {
+                for (String[] entry : new String[][] {
+                        {"metadata.yml", "javaVersions:\n  - id: \"17\"\n    label: Java 17\n"},
+                        {"templates/../../escape.ftl", "boom"}}) {
+                    zip.putNextEntry(new java.util.zip.ZipEntry(entry[0]));
+                    zip.write(entry[1].getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    zip.closeEntry();
+                }
+            }
+            return buffer.toByteArray();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
         }
     }
 }
