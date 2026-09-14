@@ -51,8 +51,8 @@ import java.util.Set;
  *
  * <p><b>与发布链路的关系</b>：导入只写草稿，<b>不发布、不触碰快照</b>；
  * 导入完成后仍需人工核对并发布（发布期才做跨模块引用与图合法性的强校验）。
- * 导入前会对归档整体自洽性做一次严格校验（{@code allowDangling = false}），
- * 避免把明显残缺的归档灌进草稿。
+ * 导入期采用草稿模式（{@code allowDangling = true}），只校验 YAML 格式与必填字段，
+ * 不做 requires 依赖关系、metadata 白名单引用等依赖相关校验，格式正确即可导入草稿。
  *
  * <p>线程安全性：无状态单例（全部状态在入参与局部变量中），线程安全。
  */
@@ -148,11 +148,11 @@ public class ConfigImportExportService {
                         "归档缺少必需文件: metadata.yml");
             }
 
-            // 严格模式解析：归档内部必须自洽（悬空引用/重复 ID 在导入期即拒绝，避免半残配置进草稿）
-            // 先解析 starter 清单取得「归档内已声明的 starter ID」，再据此校验 metadata 白名单引用，
-            // 避免把「白名单引用不存在条目」的残缺归档灌进草稿
-            StructuredSnapshot starters = snapshotCodec.parseStarters(starterYaml, SOURCE_MANUAL, false);
-            StructuredSnapshot metadata = snapshotCodec.parseMetadata(metadataYaml, false,
+            // 草稿模式解析：导入期只校验格式与必填字段，不校验 requires 依赖关系、
+            // 不校验 metadata 白名单引用是否已登记；这些依赖相关的强一致性统一留到发布期处理。
+            // 先解析 starter 清单取得「归档内已声明的 starter ID」，再原样解析 metadata。
+            StructuredSnapshot starters = snapshotCodec.parseStarters(starterYaml, SOURCE_MANUAL, true);
+            StructuredSnapshot metadata = snapshotCodec.parseMetadata(metadataYaml, true,
                     declaredStarterIds(starters));
             StructuredSnapshot rules = snapshotCodec.parseConflictRules(conflictYaml, false);
             StructuredSnapshot templates = snapshotCodec.parseTemplates(templateYaml);

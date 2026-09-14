@@ -170,27 +170,46 @@ class ConfigImportExportServiceTest {
     // ==================== 导入失败：整体回滚 ====================
 
     @Test
-    void import_invalidStarterDocument_rollsBackWholeDraft() {
+    void import_danglingRequires_isAccepted_draftModeSkipsDependencyValidation() {
         seedFullDraft();
         ConfigImportExportService.ExportResult exported = service.export("tester");
         var originalEntries = unzip(exported.content());
 
-        // 构造坏归档：metadata.yml 合法，starters/bad 的 require 引用了不存在条目（严格模式必拒）
-        byte[] broken = zip(java.util.Map.of(
+        // 构造归档：metadata.yml 合法，starters/bad 的 require 引用了不存在条目
+        // 导入期不再校验 requires 依赖关系，应成功写入草稿
+        byte[] archive = zip(java.util.Map.of(
                 "metadata.yml", originalEntries.get("metadata.yml"),
                 "starters/bad", "id: bad\ncategory: web\nmaintainer: official\ndescription: d\n"
                         + "dependencies:\n  - groupId: g\n    artifactId: a\n"
                         + "requires: [ghost-starter]\n"));
 
-        assertThatThrownBy(() -> service.importArchive(new ByteArrayInputStream(broken), "tester", null))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("starter 清单非法");
+        ConfigImportExportService.ImportResult result = service.importArchive(
+                new ByteArrayInputStream(archive), "tester", null);
 
-        // 草稿保持导入前状态（整体回滚，未被半途清空）
+        assertThat(result.rows()).isPositive();
+        // 草稿被整体替换为归档内容（含 dangling requires 的 bad starter 已写入）
         assertThat(repository.readDraftScope(ConfigKind.STARTER).starters()).extracting("starterId")
-                .containsExactlyInAnyOrder("web", "xxx-redis-spring-boot-starter");
-        assertThat(draftService.getMetadata().javaVersions()).hasSize(2);
-        assertThat(draftService.getTemplate("pom.xml.ftl").content()).isEqualTo("<project/>");
+                .containsExactlyInAnyOrder("bad");
+    }
+
+    @Test
+    void import_selfReferencingRequires_isAccepted_draftModeSkipsDependencyValidation() {
+        // 对应截图场景：starter requires 引用了自身
+        byte[] archive = zip(java.util.Map.of(
+                "metadata.yml", "javaVersions:\n  - id: \"17\"\n    label: Java 17\n"
+                        + "bootVersions:\n  - id: \"3.2.5\"\n    label: Boot\n    official: true\n"
+                        + "    supportedJavaVersions: [\"17\"]\n    starters: [travelsky_dev_jpa_repository]\n",
+                "starters/travelsky_dev_jpa_repository",
+                "id: travelsky_dev_jpa_repository\ncategory: data\nmaintainer: official\ndescription: d\n"
+                        + "dependencies:\n  - groupId: g\n    artifactId: a\n"
+                        + "requires: [travelsky_dev_jpa_repository]\n"));
+
+        ConfigImportExportService.ImportResult result = service.importArchive(
+                new ByteArrayInputStream(archive), "tester", null);
+
+        assertThat(result.rows()).isPositive();
+        assertThat(repository.readDraftScope(ConfigKind.STARTER).starters()).extracting("starterId")
+                .containsExactly("travelsky_dev_jpa_repository");
     }
 
     @Test
@@ -204,32 +223,38 @@ class ConfigImportExportServiceTest {
     }
 
     @Test
-    void import_danglingReferenceInStrictMode_rejected() {
+    void import_danglingMetadataReference_isAccepted_draftModeSkipsReferenceValidation() {
         byte[] archive = zip(java.util.Map.of(
                 "metadata.yml", "javaVersions:\n  - id: \"17\"\n    label: Java 17\n"
                         + "bootVersions:\n  - id: \"3.2.5\"\n    label: Boot\n    official: true\n"
                         + "    supportedJavaVersions: [\"99\"]\n    starters: [web]\n",
                 "starters/web", "id: web\ncategory: web\nmaintainer: official\ndescription: d\n"
                         + "dependencies:\n  - groupId: g\n    artifactId: a\n"));
-        assertThatThrownBy(() -> service.importArchive(new ByteArrayInputStream(archive), "tester", null))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_IMPORT_VALIDATION_FAILED))
-                .hasMessageContaining("未定义的 Java 版本");
+        ConfigImportExportService.ImportResult result = service.importArchive(
+                new ByteArrayInputStream(archive), "tester", null);
+
+        assertThat(result.rows()).isPositive();
+        // metadata 中引用了未定义的 Java 版本或 starter，导入期不再校验，直接写入草稿
+        assertThat(draftService.getMetadata().bootVersions().get(0).supportedJavaVersions()).containsExactly("99");
+        assertThat(repository.readDraftScope(ConfigKind.STARTER).starters()).extracting("starterId")
+                .containsExactly("web");
     }
 
     @Test
-    void import_metadataWhitelistReferencesUnknownStarter_rejected() {
-        // metadata 白名单写了 starters: [ghost]，归档内并没有 ghost 条目 → 导入期即拒绝
+    void import_metadataWhitelistReferencesUnknownStarter_isAccepted_draftModeSkipsWhitelistValidation() {
+        // metadata 白名单写了 starters: [ghost]，归档内并没有 ghost 条目
+        // 导入期不再校验白名单引用，应成功写入草稿
         byte[] archive = zip(java.util.Map.of(
                 "metadata.yml", "javaVersions:\n  - id: \"17\"\n    label: Java 17\n"
                         + "bootVersions:\n  - id: \"3.2.5\"\n    label: Boot\n    official: true\n"
                         + "    supportedJavaVersions: [\"17\"]\n    starters: [ghost]\n",
                 "starters/web", "id: web\ncategory: web\nmaintainer: official\ndescription: d\n"
                         + "dependencies:\n  - groupId: g\n    artifactId: a\n"));
-        assertThatThrownBy(() -> service.importArchive(new ByteArrayInputStream(archive), "tester", null))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_IMPORT_VALIDATION_FAILED))
-                .hasMessageContaining("白名单引用了归档内不存在的 starter");
+        ConfigImportExportService.ImportResult result = service.importArchive(
+                new ByteArrayInputStream(archive), "tester", null);
+
+        assertThat(result.rows()).isPositive();
+        assertThat(draftService.getMetadata().bootVersions().get(0).starters()).containsExactly("ghost");
     }
 
     @Test
