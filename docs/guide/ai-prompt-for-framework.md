@@ -1,6 +1,12 @@
-# AI Agent 指导提示词：分析框架项目并生成脚手架平台配置（v4）
+# AI Agent 指导提示词：分析框架项目并生成脚手架平台配置（v5）
 
-> 用途：将本提示词交给 AI Agent，让其通读一个框架项目代码库，产出可接入本脚手架平台的四段 YAML 配置（metadata / starter / conflict-rule / template）。
+> 用途：将本提示词交给 AI Agent，让其通读一个框架项目代码库，产出可接入本脚手架平台的四段配置（metadata / starter / conflict-rule / template），并**打包成可直接导入平台的归档产物**。
+>
+> 两种交付形态，**默认走 A**：
+> - **A. 导入产物（推荐，Agent 在代码库中有写权限时）**：在框架仓库内落盘成一套目录并打包为 **ZIP 归档**，到平台管理端「导入导出 → 导入到草稿 → 发布台发布」一次导入即可（布局与字段见**第五节**）
+> - **B. 粘贴到管理端**：把四段 YAML 分别复制到管理后台对应草稿页发布（见第一～四节的多文档写法）
+>
+> 两种形态**字段相同、文件组织不同**（尤其模板：导入产物里模板是**纯模板全文**，不是 `name/content` 的 YAML），动手前先确认走哪条。
 
 ## 任务背景
 
@@ -32,7 +38,7 @@
 6. 提供 `application.yml` / `additional-spring-configuration-metadata.json` 约定的默认配置
 7. 存在 `provide` / `requires` 式 SPI 文件（`META-INF/services/`）
 
-对每个候选提取：GAV 坐标、版本、分类、功能描述、需要用户编写的配置类、需追加进 application.yml 的配置片段、可继承的抽象类、**是否必选**。识别结果先列一张"候选清单"（模块/能力 → 子模块 `<artifactId>` → **清单 id（= artifactId）** → GAV → 判定依据 → **是否必选 + 必选依据** → **依赖哪些能力（requires）**），确认无遗漏再产出 YAML。
+对每个候选提取：GAV 坐标、版本、分类、功能描述、需要用户编写的配置类、需追加进 application.yml 的配置片段、可继承的抽象类、**是否必选**、**是否被其他模块隐式依赖（决定是否隐藏）**。识别结果先列一张"候选清单"（模块/能力 → 子模块 `<artifactId>` → **清单 id（= artifactId）** → GAV → 判定依据 → **是否必选 + 必选依据** → **是否被上层模块隐式依赖 + 依据（决定 `hidden`）** → **依赖哪些能力（requires）**），确认无遗漏再产出配置。
 
 ### starter id 取值规则（**一律取模块 artifactId**）
 
@@ -78,6 +84,43 @@ id: acme-dynamic-datasource     # ✅ 与 <artifactId> 字面完全一致
 - 在代码里找不到明确依据的能力
 
 产出时：先在候选清单标注每个能力是否必选**及依据**，再据此在**第二节 starter 清单**对应文档上写 `required: true`（默认省略即为可选；metadata 已无 `starters` 节，不要写在那边）。
+
+### 隐藏能力判定（`hidden: true`）——被上层模块隐式依赖的模块一律隐藏
+
+**背景**：框架里常见"内部基座 / 公共模块"，它并不打算让用户主动勾选——用户选中上层能力后，Maven 会把它**传递依赖**进来。这类模块若出现在前端依赖选择列表里，勾了是重复（坐标已由上层带入），不勾又可能触发"缺少依赖"告警，纯属噪音。
+**规则：凡是已被其他 starter 隐式依赖（传递引入）、且用户不会单独选择的模块，一律标 `hidden: true`。**
+
+#### 判定为 `hidden: true`（满足任一，须能在代码/POM 中指明依据）
+
+1. **传递依赖引入**：该模块出现在**其他候选 starter 的 POM `<dependencies>`** 中（compile / runtime 作用域），选中上层 starter 后 Maven 自动带入——用户无需也无法单独决定是否引入
+2. **纯内部基座**：只为其他模块提供公共类型、工具类、SPI 或常量，自身**没有独立可用的自动装配**（无 `AutoConfiguration.imports`、无 `@ConfigurationProperties`、无对外 Bean），单独选中不产生任何效果
+3. **已被必选项覆盖**：某个 `required: true` 的 starter 已直接依赖它（等价于"所有生成的项目一定会有"）
+
+判定方法（**优先读 POM，不要靠猜**）：
+
+- 逐个读候选模块的 POM `<dependencies>`，把其中指向**框架内部其他候选模块**的 `<artifactId>` 记为"被依赖方"
+- 对每个"被依赖方"，若**没有**"用户会主动单独使用"的证据（独立自动装配入口、独立 `@ConfigurationProperties` 前缀、文档中作为独立能力介绍），即标 `hidden: true`
+- 可用依赖树交叉验证：`mvn -q dependency:tree -Dincludes=<框架 groupId>`，看它是否总是挂在别的模块下面
+
+#### 不应标 hidden
+
+- 用户可能**单独**使用它的能力（有独立自动装配入口与独立配置项）→ 保持可见
+- 它虽被某上层模块依赖，但**上层是可选的**——用户不选上层时可能想直接选它 → 保持可见，用 `requires` 表达关系即可
+- 拿不准 → **不标**。`hidden` 只是"默认不展示"，漏标最多列表长一点；错标会让用户彻底找不到该能力
+
+#### `hidden` / `required` / `requires` 三者区别（**不要混用**）
+
+| 字段 | 语义 | 用户感知 |
+|---|---|---|
+| `hidden: true` | 依赖选择列表**默认不展示**；后端检索仍返回，正常参与依赖 / 互斥 / 生成校验 | 看不见；**被已选项 `requires` 引用时前端强制展示** |
+| `required: true` | 默认勾选且**禁止取消**，后端生成兜底补齐 | 看得见且去不掉 |
+| `requires: [...]` | 选中本项时还依赖哪些能力 | 前端高亮 / 自动锁定 |
+
+- `hidden` **不影响联动生效**：被隐藏的 starter 仍可被 `requires` 引用，被引用时前端会强制展示它
+- 二者可叠加：框架核心基座常写成 `required: true` + `hidden: true`（默默带上、用户无感、也不占列表位置）
+- 只写 `hidden: true` 而**不**写 `required` 时，它不会自动被选——只有上层被选中并通过 `requires` / 传递依赖引入它时才生效
+
+产出时：在候选清单标注每个能力**是否被隐式依赖及依据**，再据此在**第二节 starter 清单**写 `hidden: true`（默认省略即展示）。
 
 ### 依赖联动判定（`requires`）
 
@@ -184,7 +227,7 @@ linkages: {}                       # 无联动时写 {}
 
 - `id`（**必填**）：取承载本能力的子模块 `<artifactId>` 原文，**不缩写、不翻译、不自造**（理由与例外见第〇步「starter id 取值规则」）。同一 id 必须在 `metadata.bootVersions[].starters`、`requires`、`conflict-rule.starters`、模板 `name` 的 `starters/{id}/` 路径中**字面一致**
 - `required`（可选，默认 false）：设为 `true` 即**必选依赖**——前端默认勾选且禁止取消，后端生成时兜底自动补齐（绕过前端直调 API 也会加上）。框架中"不选就跑不起来"的能力（如核心包、统一配置/鉴权基础模块）应标为必选；其余能力保持可选
-- `hidden`（可选，默认 false）：设为 `true` 时该 starter 在**前端依赖选择列表**默认隐藏；后端检索接口仍返回并正常参与依赖/互斥/生成校验。若被已选组件通过 `requires` 引用，前端强制展示。适用于"不直接对外开放、只作为其他能力内部依赖"的 starter
+- `hidden`（可选，默认 false）：设为 `true` 时该 starter 在**前端依赖选择列表**默认隐藏；后端检索接口仍返回并正常参与依赖/互斥/生成校验。若被已选组件通过 `requires` 引用，前端强制展示。适用于"不直接对外开放、只作为其他能力内部依赖"的 starter——**凡被其他 starter 通过 POM 传递依赖隐式引入、且用户不会单独选择的模块，都应标 `hidden: true`**（判定标准见第〇步「隐藏能力判定」，可与 `required: true` 叠加）
 - `requires`（可选，默认 `[]`）：**依赖联动（AND-of-OR-groups）**——分组内任一被选即满足该分组，全部分组满足才算依赖满足。前端联动：单元素分组为**强制依赖**（选中父组件时自动选中并锁定、取消后自动释放），多元素分组为 **OR**（不自动勾选，未被满足时组内各候选条目整行淡黄底 + 红色 `*` 高亮）；若强制依赖与已选组件互斥则双方都不锁定、标记互斥并可二选一切换。未满足时告警，后端生成期兜底拒绝（`2004 缺少必需的依赖 starter`）。校验规则：引用的 id 必须在**本清单**中登记（悬空即拒绝）、不得引用自身、不得成环（多选项分组可换分支打破环，不判环；单选项成环发布期报`循环依赖`并拒绝）。方向为「上层能力 → 基础能力」，如 `acme-dal.requires: [acme-framework-core]`
 - `bootVersions`（**Boot 版本关联**）：声明本条目属于哪些 Boot 版本（值取 metadata 的 `bootVersions[].id`）。**不写即对全部 Boot 版本可用**。
   框架对多个 Boot 线（如 2.x / 3.x）提供不同坐标或版本的能力模块时，**用同一个 id 写多条文档、各自声明 `bootVersions`**——
@@ -315,22 +358,105 @@ content: |
 
 ## 输出格式要求
 
-按以下顺序输出，每段用一级标题分隔（既可直接落盘到外部清单目录，也可分别复制到管理后台对应草稿页发布）：
+按以下顺序输出，每段用一级标题分隔。
 
-0. `## 候选清单`（必须给出：模块/能力 → 子模块 `<artifactId>` → **清单 id（= artifactId）** → GAV → 判定依据 → **必选标记与依据** → **依赖的能力（requires，注明是"和"还是"或"）**，供人工复核）
-1. `## metadata`
-2. `## starter`（多文档）
-3. `## conflict-rule`
-4. `## template`（多文档）
+**走 A（导入产物）时**：第 1～4 段的内容按**第五节**的目录布局落盘成文件并打包 ZIP；
+**走 B（粘贴到管理端）时**：第 2～4 段分别复制到管理后台对应草稿页发布（`starter` 与 `template` 用 `---` 多文档）。
+
+0. `## 候选清单`（必须给出：模块/能力 → 子模块 `<artifactId>` → **清单 id（= artifactId）** → GAV → 判定依据 → **必选标记与依据** → **是否被隐式依赖 + 依据（决定 `hidden`）** → **依赖的能力（requires，注明是"和"还是"或"）**，供人工复核）
+1. `## metadata` → A 形态落盘为 `metadata.yml`
+2. `## starter`（B 形态为 `---` 多文档；A 形态为 `starters/<id>.yml`，一 starter 一文件）
+3. `## conflict-rule` → A 形态落盘为 `conflict-rules.yml`
+4. `## template`（B 形态为 `{name, content}` 多文档；A 形态为 `templates/<模板名>` **纯全文**）
+5. `## 导入产物`（A 形态必给：目录树 + 打包命令 + `unzip -l` 自检结果）
+
+## 第五节：导入产物（ZIP 归档，推荐交付形态）
+
+Agent 在框架代码库中运行时（有文件写权限），**优先产出可导入的 ZIP 归档**：比粘贴 YAML 快、可复核、可随框架一起版本化。
+
+### 目录布局（**ZIP 根下直接是这些文件，不要多包一层目录**）
+
+```
+initializer-catalog/              ← 工作目录（名字随意；打包时 cd 进去）
+├── metadata.yml                  # 必填：第一节内容
+├── conflict-rules.yml            # 可选：第三节内容（无冲突规则可省略）
+├── starters/                     # 一 starter 一文件
+│   ├── acme-framework-core.yml
+│   ├── acme-dynamic-datasource.yml
+│   └── ...
+└── templates/                    # 模板全文；路径即模板名
+    └── starters/
+        └── acme-dynamic-datasource/
+            ├── DynamicDataSourceConfig.java.ftl
+            └── application-dynamic-datasource.yml
+```
+
+打包后 ZIP 内的条目名必须是：
+
+```
+metadata.yml
+starters/acme-framework-core.yml
+conflict-rules.yml
+templates/starters/acme-dynamic-datasource/DynamicDataSourceConfig.java.ftl
+```
+
+**不要**打成 `initializer-catalog/metadata.yml`——多一层目录会让平台找不到 `metadata.yml`（报 `配置导入包非法`）。
+
+### 与"粘贴到管理端"的三个关键差异（**最容易写错**）
+
+| 项 | B 粘贴到管理端 | A 导入产物 |
+|---|---|---|
+| starter | 一份**多文档** YAML，`---` 分隔 | **一 starter 一文件**，文件内**不写 `---`** |
+| 模板 | `{name, content}` 的**多文档 YAML** | `templates/<模板名>` 里就是**模板全文**（纯 `.ftl` / 纯 yml，**不做 YAML 包装**） |
+| metadata / 冲突规则 | `metadata.yml` / `conflict-rules.yml` | 同左，内容一致 |
+
+即：导入产物里的 `templates/starters/xxx/Xxx.java.ftl` 内容就是 Java + FreeMarker 源码本身，**不要再套一层 `name:` / `content:`**。
+
+### 文件命名
+
+- **starter 文件**：建议 `starters/<id>.yml`（`<id>` = 该 starter 的 id = artifactId）。文件名**不参与校验**——`starters/` 下任意层级、任意扩展名平台都接受（平台自己**导出**时写的是 `starters/<id>`，无扩展名，两种都能导入，推荐带 `.yml` 便于本地编辑器高亮与 diff）
+- **模板文件**：`templates/` 下的相对路径**就是模板名**，必须与 starter `linkages` 里声明的 `source` **逐字一致**：`linkages.templates[].source` 写 `starters/xxx/Xxx.java.ftl`，文件就放 `templates/starters/xxx/Xxx.java.ftl`
+
+### 打包与自检命令
+
+```bash
+# Linux / macOS：cd 进工作目录再打包（保证条目名是相对路径），排除系统垃圾文件
+cd initializer-catalog
+zip -X -r ../initializer-catalog.zip . -x '.*' -x '__MACOSX*' -x '.DS_Store'
+unzip -l ../initializer-catalog.zip     # 自检：根下应直接看到 metadata.yml
+```
+
+```powershell
+# Windows PowerShell
+Compress-Archive -Path .\initializer-catalog\* -DestinationPath initializer-catalog.zip -Force
+```
+
+### 平台侧导入步骤（写进交付说明）
+
+1. 管理端 → **导入导出** → 选择 ZIP → **导入到草稿**
+2. 导入**只写草稿、不发布**；校验失败整体回滚（不污染草稿），明细直接展示
+3. 到**发布台**核对四段 → **发布**：快照原子切换，生成接口立即可用
+
+同一套目录也可直接放进**外部清单目录**（配置项 `initializer.catalog.dir`，默认 jar 同级 `catalog/`）重启生效，完全不走管理端。两条路径字段完全相同。
+
+### 导入侧硬性约束（违反直接报 4008 / 4009，**打包前自查**）
+
+- 条目名必须是**相对路径**：禁止绝对路径（`/x`、`C:\x`）、禁止 `..` 段、禁止重复条目
+- **UTF-8 无 BOM**：非法字节序列直接拒绝（中文注释没问题，但别存成 GBK）
+- 容量上限：条目数 ≤ 2048、单文件 ≤ 2 MiB、解压总量 ≤ 32 MiB、目录层级 ≤ 16、条目名长度 ≤ 512
+- 排除 `__MACOSX/`、`.DS_Store`、`.idea/`、`.git/` 等无关文件
+- 内容校验仍按前四节执行：id 悬空引用、`requires` 成环、模板与 `linkages` 声明不对齐、FreeMarker 语法（含 `%24` 转义）在**发布期**拒绝
 
 ## 平台行为约定（影响产出写法）
 
-- **两条生效路径（任选其一）**：
-  1. **外部清单目录（推荐给运维）**：把 `metadata.yml`、`starters/*.yml`、`conflict-rules.yml`、`templates/**` 直接放进清单目录
+- **三条生效路径（任选其一）**：
+  1. **ZIP 归档导入（推荐给 AI Agent / 跨环境迁移）**：把第五节的目录打包上传 → 导入到草稿 → 发布台发布一次即可；
+     **导入只写草稿、不发布、失败整体回滚**，适合机器产出后人工复核一遍再发布
+  2. **外部清单目录（推荐给运维）**：把 `metadata.yml`、`starters/*.yml`、`conflict-rules.yml`、`templates/**` 直接放进清单目录
      （配置项 `initializer.catalog.dir`，未配置时默认 **jar 同级的 `catalog/`**），**重启即生效**——
      不需要在管理端保存草稿、不需要点发布、不与内置 metadata.yml 做一致性校验，格式正确即可用
-  2. **管理端发布（热生效）**：发布后快照原子切换，生成接口立即可用；重启服务时会从数据库还原最近一次发布，无需重新发布
-  （两者同时存在时，**外部清单目录优先级更高**；管理端再次发布会覆盖内存快照）
+  3. **管理端发布（热生效）**：发布后快照原子切换，生成接口立即可用；重启服务时会从数据库还原最近一次发布，无需重新发布
+  （后两者同时存在时，**外部清单目录优先级更高**；管理端再次发布会覆盖内存快照）
 - **`.ftl` 与配置文件均可在管理端维护**：发布后覆盖 classpath 同名模板/片段，新增或修改模板不需要改代码、不需要重新打 jar
 - **配置文件必须 `%24` 转义 `$`**：否则发布期 FreeMarker 预校验拒绝（详见第四节）
 - **必选项（`required: true`）双重保障**：前端默认勾选且禁止取消，后端生成时兜底自动补齐，绕过前端直调 API 也会带上；仅当该 starter 属于当前 Boot 版本可选清单时才强制
@@ -354,8 +480,11 @@ content: |
 - [ ] **③ 模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（数量 + 路径双一致）
 - [ ] **互斥判定无误判**：每条冲突规则都有「同名 Bean / 同类型 Bean」依据，且 `message` 写明 Bean 名或类型 + 源码位置；不存在"仅共用底层资源"却被判为冲突的规则
 - [ ] **必选项保守且有依据**：标了 `required: true` 的 starter 都能指出核心包/缺了起不来/父 POM 直接依赖之一的证据，并已在候选清单注明；不存在"只是推荐搭配"却被标成必选项（必选无法取消，宁少勿多）
+- [ ] **隐式依赖已隐藏**：被其他 starter 通过 POM 传递依赖引入、且用户不会单独选择的模块都标了 `hidden: true`，并在候选清单注明依据；不存在"用户会主动单独使用"却被隐藏的条目（hidden 只是默认不展示，宁少勿多）
 - [ ] **依赖联动闭环**：`requires` 引用的 id 均已登记（无悬空）、无自引用、单选项分组无循环；方向为「上层能力 → 基础能力」；不存在"通常一起用"的伪依赖
 - [ ] **`requires` 的"和/或"表达正确**：确为二选一/互斥的能力写成了单分组 `[[a, b]]`，而非拆成 `[[a], [b]]`（后者含义是"两个都要"）
 - [ ] **配置文件模板（`application-*.yml`）中的 `$` 已全部写成 `%24`**，无裸写 `${`
 - [ ] YAML 可被 SnakeYAML SafeConstructor 解析（禁止锚点/自定义 tag/任意类实例化）
 - [ ] 所有 GAV 坐标、抽象类 fqcn 均取自框架仓库真实代码，未编造
+- [ ] **A 形态（导入产物）布局正确**：ZIP 根下直接是 `metadata.yml` / `starters/*.yml` / `conflict-rules.yml` / `templates/**`（**未多包一层目录**）；模板文件是**纯全文**、未套 `name/content`；starter 文件内**未写 `---`**；模板相对路径与各 starter `linkages` 的 `source` 逐字一致
+- [ ] **归档可读且合规**：`unzip -l` 条目名均为相对路径（无 `..`、无绝对路径、无 `__MACOSX`/`.DS_Store`），UTF-8 无 BOM，单文件 ≤ 2 MiB、条目数 ≤ 2048
