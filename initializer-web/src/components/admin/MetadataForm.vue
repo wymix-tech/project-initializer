@@ -111,7 +111,7 @@ async function load(): Promise<void> {
  */
 async function loadVersion(): Promise<void> {
   const draft = await props.session.run(
-    () => adminStructuredApi.readDraftVersion(props.session.token.value),
+    () => adminStructuredApi.readDraftVersion(props.session.token.value, 'metadata'),
     undefined,
     '草稿版本读取失败',
   )

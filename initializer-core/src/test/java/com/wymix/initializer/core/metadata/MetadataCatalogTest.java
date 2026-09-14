@@ -428,9 +428,20 @@ class MetadataCatalogTest {
             assertThat(result).extracting(BootVersion::id).containsExactly("2.7.18");
         }
 
+        /**
+         * Java 17 兼容遍历不过滤官方：用户自定义内部 Boot（{@code 3.3.0-internal}，{@code official=false}）
+         * 同样出现在兼容清单里，由 {@code supportedJavaVersions} 声明驱动。
+         */
         @Test
-        void java17_excludesInternalVersions() {
+        void java17_includesBothOfficialAndInternal() {
             List<BootVersion> result = catalog(VALID_YAML).compatibleBootVersions("17");
+            assertThat(result).extracting(BootVersion::id).containsExactly("3.2.5", "3.3.0-internal");
+        }
+
+        @Test
+        void java21_onlyOfficial() {
+            // VALID_YAML 中 21 仅被 3.2.5 声明兼容，不被 3.3.0-internal 声明兼容
+            List<BootVersion> result = catalog(VALID_YAML).compatibleBootVersions("21");
             assertThat(result).extracting(BootVersion::id).containsExactly("3.2.5");
         }
 

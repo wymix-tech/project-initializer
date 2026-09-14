@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { adminStructuredApi } from '@/api/client'
 import type { ConflictRuleDto, ConflictRuleView } from '@/types/admin'
 import { useAdminSession } from '@/composables/useAdminSession'
+import MultiSelect from './MultiSelect.vue'
 
 /**
  * 冲突规则表单（T6.2）：starter 互斥约束的结构化维护。
@@ -21,6 +22,12 @@ const saving = ref(false)
 const version = ref<number | null>(null)
 const rules = ref<ConflictRuleDto[]>([])
 const summary = ref('')
+
+/**
+ * starter 候选清单（来自 starter 草稿 `GET /api/admin/starters` 的 name 集合）。
+ * 草稿为空时下拉候选空，MultiSelect 仍允许手输未登记 starter 名（向后兼容）。
+ */
+const starterOptions = ref<string[]>([])
 
 /** 新建一条空白规则（默认 pair 类型 + 两个空 starter 占位）。 */
 function addRule(): void {
@@ -54,14 +61,18 @@ function changeType(rule: ConflictRuleDto, type: string): void {
   }
 }
 
-/** 逗号 / 空白分隔文本 → 字符串数组。 */
-function splitIds(text: string): string[] {
-  return [...new Set(text.split(/[\s,，]+/).map((s) => s.trim()).filter((s) => s !== ''))]
-}
-
-/** 数组 → 逗号分隔文本。 */
-function joinIds(ids: string[]): string {
-  return ids.join(', ')
+/** 静默加载 starter 候选清单：取 starter 草稿 name 集合去重排序。 */
+async function loadStarterOptions(): Promise<void> {
+  const view = await props.session.run(
+    () => adminStructuredApi.getStarters(props.session.token.value),
+    undefined,
+    'starter 候选清单读取失败',
+  )
+  if (view?.starters) {
+    starterOptions.value = [...new Set(view.starters.map((s) => s.id).filter((n) => n !== ''))].sort()
+  } else {
+    starterOptions.value = []
+  }
 }
 
 /** 读取冲突规则草稿。 */
@@ -74,11 +85,12 @@ async function load(): Promise<void> {
   )
   if (view) rules.value = view.rules
   const draft = await props.session.run(
-    () => adminStructuredApi.readDraftVersion(props.session.token.value),
+    () => adminStructuredApi.readDraftVersion(props.session.token.value, 'conflict-rule'),
     undefined,
     '草稿版本读取失败',
   )
   if (draft !== null) version.value = draft
+  await loadStarterOptions()
   loading.value = false
 }
 
@@ -151,12 +163,12 @@ defineExpose({ load })
       </div>
 
       <label class="field">
-        <span>涉及 starter（逗号分隔；pair 恰好 2 个，group 至少 2 个）</span>
-        <input
-          :value="joinIds(rule.starters)"
-          type="text"
-          placeholder="如 web, webflux"
-          @input="rule.starters = splitIds(($event.target as HTMLInputElement).value)"
+        <span>涉及 starter（多选；pair 恰好 2 个，group 至少 2 个）</span>
+        <MultiSelect
+          :model-value="rule.starters"
+          :options="starterOptions"
+          placeholder="勾选或输入 starter 名…"
+          @update:model-value="rule.starters = $event"
         />
       </label>
 

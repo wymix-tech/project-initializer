@@ -60,7 +60,7 @@ async function load(): Promise<void> {
   )
   if (view) templates.value = view.templates
   const draft = await props.session.run(
-    () => adminStructuredApi.readDraftVersion(props.session.token.value),
+    () => adminStructuredApi.readDraftVersion(props.session.token.value, 'template'),
     undefined,
     '草稿版本读取失败',
   )

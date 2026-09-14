@@ -195,18 +195,22 @@ public class MetadataCatalog {
     }
 
     /**
-     * 兼容矩阵图遍历：返回指定 Java 版本可用的 Boot 版本（仅官方版本）。
+     * 兼容矩阵图遍历：返回指定 Java 版本可用的 Boot 版本。
      *
      * <p>遍历方向：Java → Boot 的反向边（Boot.supportedJavaVersions 引用 Java ID）。
      *
+     * <p><b>不过滤 {@code official}</b>：该字段仅作为「是否为 Spring 官方」语义提示，
+     * 决定 badge 显示与排序推荐，不参与下拉可用性门控。自定义内部 Boot 框架
+     * （如 {@code travelsky_dev_framework_v3}）未勾选官方也会出现在兼容下拉里，
+     * 用户的 {@code supportedJavaVersions} 声明才是兼容性的唯一事实来源。
+     *
      * @param javaVersionId Java 版本 ID
-     * @return 兼容的官方 Boot 版本清单（按配置顺序，不可变）
+     * @return 兼容的 Boot 版本清单（按配置顺序，不可变）
      * @throws BusinessException Java 版本不存在（错误码 {@link ErrorCode#METADATA_NOT_FOUND}）
      */
     public List<BootVersion> compatibleBootVersions(String javaVersionId) {
         javaVersion(javaVersionId);
         return bootVersions.values().stream()
-                .filter(BootVersion::official)
                 .filter(bv -> bv.supportsJava(javaVersionId))
                 .toList();
     }

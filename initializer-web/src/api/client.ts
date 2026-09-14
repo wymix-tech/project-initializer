@@ -244,11 +244,16 @@ export const adminStructuredApi = {
    * 两套契约共享同一 `config_draft_meta.version`，故走 YAML 契约的轻量 GET 即可；
    * 草稿不存在（首次维护）时返回 {@code null}，等价于「无 If-Match」。
    *
+   * <p><b>版本是 kind 级的</b>（{@code config_draft_meta} 一 kind 一行），必须按目标模块取：
+   * 跨 kind 复用会把 metadata 的版本当作 starter / template / conflict-rule 的期望版本，
+   * 导致这些模块在 metadata 保存过之后首次保存即 4003（服务端 0 vs 请求 N）。
+   *
    * @param token 管理端 token
+   * @param kind  目标配置种类（版本按 kind 独立计数，不可跨模块复用）
    * @returns 当前 version，未保存过时为 null
    */
-  async readDraftVersion(token: string): Promise<number | null> {
-    const view = await adminApi.getDraft('metadata', token)
+  async readDraftVersion(token: string, kind: AdminConfigKind): Promise<number | null> {
+    const view = await adminApi.getDraft(kind, token)
     return view.version ?? null
   },
 

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import MetadataForm from '@/components/admin/MetadataForm.vue'
 import StarterForm from '@/components/admin/StarterForm.vue'
 import ConflictRuleForm from '@/components/admin/ConflictRuleForm.vue'
+import MultiSelect from '@/components/admin/MultiSelect.vue'
 import TemplateForm from '@/components/admin/TemplateForm.vue'
 import PublishConsole from '@/components/admin/PublishConsole.vue'
 import ImportExportPanel from '@/components/admin/ImportExportPanel.vue'
@@ -268,7 +269,7 @@ describe('StarterForm starter 清单表单', () => {
   it('渲染清单条目并保留 hidden / required 开关状态', async () => {
     const wrapper = await mountForm(StarterForm, {
       '/api/admin/starters': { starters: [starter] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: 2, updatedAt: null },
+      '/api/admin/config/starter': { kind: 'starter', contentYaml: null, version: 2, updatedAt: null },
     })
     const toggles = wrapper.findAll('.starter-head input[type="checkbox"]')
     expect((toggles[0]!.element as HTMLInputElement).checked).toBe(true) // required
@@ -278,7 +279,7 @@ describe('StarterForm starter 清单表单', () => {
   it('保存时提交 hidden 字段（PR #40 语义不丢）', async () => {
     const wrapper = await mountForm(StarterForm, {
       '/api/admin/starters': { starters: [starter] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: 2, updatedAt: null },
+      '/api/admin/config/starter': { kind: 'starter', contentYaml: null, version: 2, updatedAt: null },
       'PUT /api/admin/starters': { kind: 'starter', rows: 3, version: 3, summary: 'starter 1 项 / 依赖 1 条' },
     })
     await wrapper.findAll('button').find((b) => b.text().includes('保存草稿'))!.trigger('click')
@@ -292,7 +293,7 @@ describe('StarterForm starter 清单表单', () => {
   it('requires 文本可编辑并解析为 AND-of-OR 分组', async () => {
     const wrapper = await mountForm(StarterForm, {
       '/api/admin/starters': { starters: [starter] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/config/starter': { kind: 'starter', contentYaml: null, version: null, updatedAt: null },
       'PUT /api/admin/starters': { kind: 'starter', rows: 1, version: 1, summary: 's' },
     })
     const textarea = wrapper.find('textarea')
@@ -307,7 +308,7 @@ describe('StarterForm starter 清单表单', () => {
   it('空白 id 条目在保存成功后被剔除', async () => {
     const wrapper = await mountForm(StarterForm, {
       '/api/admin/starters': { starters: [] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/config/starter': { kind: 'starter', contentYaml: null, version: null, updatedAt: null },
       'PUT /api/admin/starters': { kind: 'starter', rows: 0, version: 1, summary: 's' },
     })
     await wrapper.findAll('button').find((b) => b.text().includes('新增 starter 条目'))!.trigger('click')
@@ -320,7 +321,7 @@ describe('StarterForm starter 清单表单', () => {
   it('切到新增向导模式渲染 StarterConfigWizard', async () => {
     const wrapper = await mountForm(StarterForm, {
       '/api/admin/starters': { starters: [] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/config/starter': { kind: 'starter', contentYaml: null, version: null, updatedAt: null },
     })
     const wizardBtn = wrapper.findAll('button.mode-btn').find((b) => b.text().includes('新增向导'))
     await wizardBtn!.trigger('click')
@@ -331,7 +332,7 @@ describe('StarterForm starter 清单表单', () => {
   it('增删依赖行与联动行', async () => {
     const wrapper = await mountForm(StarterForm, {
       '/api/admin/starters': { starters: [starter] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/config/starter': { kind: 'starter', contentYaml: null, version: null, updatedAt: null },
     })
     expect(wrapper.findAll('.pair-row')).toHaveLength(1) // 依赖 1 条，联动为空
     const addDep = wrapper.findAll('button').find((b) => b.text().includes('+ 增加依赖'))
@@ -353,7 +354,8 @@ describe('ConflictRuleForm 冲突规则表单', () => {
   it('渲染规则并保存', async () => {
     const wrapper = await mountForm(ConflictRuleForm, {
       '/api/admin/conflict-rules': { rules: [rule] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: 1, updatedAt: null },
+      '/api/admin/config/conflict-rule': { kind: 'conflict-rule', contentYaml: null, version: 1, updatedAt: null },
+      '/api/admin/starters': { starters: [{ id: 'web' }, { id: 'webflux' }] },
       'PUT /api/admin/conflict-rules': { kind: 'conflict-rule', rows: 3, version: 2, summary: '规则 1 条 / 涉及 starter 2 项' },
     })
     // 规则 ID + starter 列表 + 提示文案
@@ -368,29 +370,56 @@ describe('ConflictRuleForm 冲突规则表单', () => {
   it('切换 pair/group 时调整 starter 槽位数', async () => {
     const wrapper = await mountForm(ConflictRuleForm, {
       '/api/admin/conflict-rules': { rules: [] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/config/conflict-rule': { kind: 'conflict-rule', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/starters': { starters: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] },
     })
     await wrapper.findAll('button').find((b) => b.text().includes('新增规则'))!.trigger('click')
     const select = wrapper.find('.rule-card select')
     expect((select.element as HTMLSelectElement).value).toBe('pair')
 
-    // 三个文本输入依次是：规则 ID / starter 列表 / 提示文案
-    const startersInput = wrapper.findAll('.rule-card input[type="text"]')[1]!
-    expect((startersInput.element as HTMLInputElement).value).toBe(', ') // 两个空槽位
+    // 涉及 starter 改由 MultiSelect 承载：断言其 modelValue 而非逗号分隔文本
+    expect(wrapper.findComponent(MultiSelect).props('modelValue')).toEqual(['', '']) // 两个空槽位
 
-    // 填 3 个 starter 后切 group 保留全部；切回 pair 收敛为恰好 2 个
-    await startersInput.setValue('a, b, c')
+    // 选 3 个后切 group 保留全部；切回 pair 收敛为恰好 2 个
+    await wrapper.findComponent(MultiSelect).vm.$emit('update:modelValue', ['a', 'b', 'c'])
     await select.setValue('group')
-    expect((wrapper.findAll('.rule-card input[type="text"]')[1]!.element as HTMLInputElement).value).toBe('a, b, c')
+    expect(wrapper.findComponent(MultiSelect).props('modelValue')).toEqual(['a', 'b', 'c'])
 
     await select.setValue('pair')
-    expect((wrapper.findAll('.rule-card input[type="text"]')[1]!.element as HTMLInputElement).value).toBe('a, b')
+    expect(wrapper.findComponent(MultiSelect).props('modelValue')).toEqual(['a', 'b'])
+  })
+
+  it('涉及 starter 可从候选清单勾选，也可手输未登记项', async () => {
+    const wrapper = await mountForm(ConflictRuleForm, {
+      '/api/admin/conflict-rules': { rules: [] },
+      '/api/admin/config/conflict-rule': { kind: 'conflict-rule', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/starters': { starters: [{ id: 'web' }, { id: 'webflux' }] },
+    })
+    await wrapper.findAll('button').find((b) => b.text().includes('新增规则'))!.trigger('click')
+
+    // 候选清单来自 starter 草稿 id 集合（去重排序）
+    const ms = wrapper.findComponent(MultiSelect)
+    expect(ms.props('options')).toEqual(['web', 'webflux'])
+
+    // 弹层按 ▾ 打开，勾选「web」→ 追加到 modelValue（首槽位为空串需先清掉）
+    await ms.find('.ms-caret').trigger('click')
+    expect(wrapper.find('.ms-menu').exists()).toBe(true)
+    const boxes = wrapper.findAll('.ms-menu input[type="checkbox"]')
+    expect(boxes).toHaveLength(2)
+    await boxes[0]!.setValue(true)
+    // 勾选优先填掉第一个空槽位：['', ''] → ['web', '']（pair 仍恰好 2 个）
+    expect(wrapper.findComponent(MultiSelect).props('modelValue')).toEqual(['web', ''])
+
+    // 手输未登记 starter：Enter 提交 draft，填掉剩余空槽位
+    await ms.find('.ms-input').setValue('custom-x')
+    await ms.find('.ms-input').trigger('keydown.enter')
+    expect(wrapper.findComponent(MultiSelect).props('modelValue')).toEqual(['web', 'custom-x'])
   })
 
   it('删除规则行', async () => {
     const wrapper = await mountForm(ConflictRuleForm, {
       '/api/admin/conflict-rules': { rules: [rule] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/config/conflict-rule': { kind: 'conflict-rule', contentYaml: null, version: null, updatedAt: null },
     })
     await wrapper.find('.rule-card .btn-icon').trigger('click')
     expect(wrapper.findAll('.rule-card')).toHaveLength(0)
@@ -401,7 +430,7 @@ describe('TemplateForm 模板表单', () => {
   it('列表只取 name/updatedAt（不含 content）', async () => {
     const wrapper = await mountForm(TemplateForm, {
       '/api/admin/templates': { templates: [{ name: 'pom.xml.ftl', updatedAt: '2026-09-12T00:00:00Z', sort: 0 }] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: 2, updatedAt: null },
+      '/api/admin/config/template': { kind: 'template', contentYaml: null, version: 2, updatedAt: null },
     })
     const items = wrapper.findAll('.tpl-list li')
     expect(items).toHaveLength(1)
@@ -413,7 +442,7 @@ describe('TemplateForm 模板表单', () => {
     const wrapper = await mountForm(TemplateForm, {
       '/api/admin/templates': { templates: [{ name: 'pom.xml.ftl', updatedAt: null, sort: 0 }] },
       '/api/admin/templates/pom.xml.ftl': { name: 'pom.xml.ftl', content: '<project/>', updatedAt: null, sort: 0 },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: 2, updatedAt: null },
+      '/api/admin/config/template': { kind: 'template', contentYaml: null, version: 2, updatedAt: null },
     })
     await wrapper.find('.tpl-list li').trigger('click')
     await settle()
@@ -427,7 +456,7 @@ describe('TemplateForm 模板表单', () => {
       '/api/admin/templates/starters%2Fx%2Fapplication-x.yml': {
         name: 'starters/x/application-x.yml', content: 'host: ${REDIS_HOST:localhost}', updatedAt: null, sort: 0,
       },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/config/template': { kind: 'template', contentYaml: null, version: null, updatedAt: null },
     })
     await wrapper.find('.tpl-list li').trigger('click')
     await settle()
@@ -439,7 +468,7 @@ describe('TemplateForm 模板表单', () => {
     const wrapper = await mountForm(TemplateForm, {
       '/api/admin/templates': { templates: [{ name: 'a.ftl', updatedAt: null, sort: 0 }] },
       '/api/admin/templates/a.ftl': { name: 'a.ftl', content: 'old', updatedAt: null, sort: 0 },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: 3, updatedAt: null },
+      '/api/admin/config/template': { kind: 'template', contentYaml: null, version: 3, updatedAt: null },
       'PUT /api/admin/templates/a.ftl': { kind: 'template', rows: 1, version: 4, summary: '模板 1 个' },
     })
     await wrapper.find('.tpl-list li').trigger('click')
@@ -455,7 +484,7 @@ describe('TemplateForm 模板表单', () => {
   it('新建模板名后可编辑，保存时按名 upsert', async () => {
     const wrapper = await mountForm(TemplateForm, {
       '/api/admin/templates': { templates: [] },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/config/template': { kind: 'template', contentYaml: null, version: null, updatedAt: null },
       'PUT /api/admin/templates/new.ftl': { kind: 'template', rows: 1, version: 1, summary: 's' },
     })
     await wrapper.find('.new-row input').setValue('new.ftl')
@@ -472,7 +501,7 @@ describe('TemplateForm 模板表单', () => {
     const wrapper = await mountForm(TemplateForm, {
       '/api/admin/templates': { templates: [{ name: 'a.ftl', updatedAt: null, sort: 0 }] },
       '/api/admin/templates/a.ftl': { name: 'a.ftl', content: 'x', updatedAt: null, sort: 0 },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      '/api/admin/config/template': { kind: 'template', contentYaml: null, version: null, updatedAt: null },
     })
     await wrapper.find('.tpl-list li').trigger('click')
     await settle()
@@ -487,7 +516,7 @@ describe('TemplateForm 模板表单', () => {
     const wrapper = await mountForm(TemplateForm, {
       '/api/admin/templates': { templates: [{ name: 'a.ftl', updatedAt: null, sort: 0 }] },
       '/api/admin/templates/a.ftl': { name: 'a.ftl', content: 'x', updatedAt: null, sort: 0 },
-      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: 5, updatedAt: null },
+      '/api/admin/config/template': { kind: 'template', contentYaml: null, version: 5, updatedAt: null },
       'DELETE /api/admin/templates/a.ftl?operator=admin': { kind: 'template', rows: 0, version: 6, summary: 's' },
       'DELETE /api/admin/templates/a.ftl': { kind: 'template', rows: 0, version: 6, summary: 's' },
     })

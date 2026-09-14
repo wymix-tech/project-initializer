@@ -341,14 +341,15 @@ describe('adminStructuredApi 结构化接口', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/templates')
   })
 
-  it('readDraftVersion 取自 YAML 契约草稿 version', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ kind: 'metadata', contentYaml: null, version: 9, updatedAt: null }))
-    await expect(adminStructuredApi.readDraftVersion('tk')).resolves.toBe(9)
+  it('readDraftVersion 取自 YAML 契约草稿 version（按 kind 取，不串味）', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ kind: 'starter', contentYaml: null, version: 9, updatedAt: null }))
+    await expect(adminStructuredApi.readDraftVersion('tk', 'starter')).resolves.toBe(9)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/config/starter')
   })
 
   it('readDraftVersion 草稿不存在时返回 null', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ kind: 'metadata', contentYaml: null, version: null, updatedAt: null }))
-    await expect(adminStructuredApi.readDraftVersion('tk')).resolves.toBeNull()
+    await expect(adminStructuredApi.readDraftVersion('tk', 'metadata')).resolves.toBeNull()
   })
 
   it('结构化失败时抛 ApiError 含 4002 明细', async () => {

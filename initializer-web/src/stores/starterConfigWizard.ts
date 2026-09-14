@@ -171,7 +171,7 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
       try {
         const view = await adminStructuredApi.getStarters(this.token)
         this.existingIds = view.starters.map((s) => s.id)
-        const version = await adminStructuredApi.readDraftVersion(this.token)
+        const version = await adminStructuredApi.readDraftVersion(this.token, 'starter')
         this.draftVersion = version
       } catch {
         this.existingIds = []
