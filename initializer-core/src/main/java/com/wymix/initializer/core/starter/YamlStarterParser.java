@@ -88,8 +88,9 @@ public final class YamlStarterParser {
         boolean required = Boolean.TRUE.equals(map.get("required"));
         List<List<String>> requires = parseRequires(map.get("requires"), id);
         List<String> bootVersions = parseBootVersions(map, id);
+        boolean hidden = Boolean.TRUE.equals(map.get("hidden"));
         return new StarterCatalogEntry(id, category, maintainer, description, dependencies, linkages,
-                required, requires, bootVersions);
+                required, requires, bootVersions, hidden);
     }
 
     /**

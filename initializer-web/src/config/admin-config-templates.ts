@@ -1,18 +1,24 @@
 import type { AdminConfigKind } from '@/types/api'
 
 /**
- * 管理端各配置草稿的示例模板与字段释义（降低 YAML 手写门槛）。
+ * 管理端各配置模块的**字段释义与占位示例**（T6 表单化后的角色收敛）。
  *
- * <p>设计要点：
+ * <p><b>角色变化（T6.4）</b>：T6 之前管理端以「YAML 文本框」维护配置，本文件提供
+ * 可直接保存的示例 YAML + 字段释义，帮用户降低手写门槛；T6 起管理后台改为**表单化维护**
+ * （`components/admin/*Form.vue`），表单字段自带标签与提示，不再需要贴示例 YAML。
+ *
+ * <p>因此本文件退化为「字段说明与示例数据的唯一出处」，保留两块能力：
  * <ul>
- *   <li>示例内容与后端解析器同构，逐字段带中文注释，可直接保存并发布
- *       （各 kind 示例的 starter ID 互相自洽，避免悬空引用被发布期拒绝）</li>
- *   <li>字段释义与示例同源维护，避免文档漂移；纯常量导出，无副作用</li>
+ *   <li>{@code fields} / {@code notes}：字段释义与发布注意事项，表单页可作补充说明与
+ *       「字段说明」面板的数据源（保持与后端解析口径同源，避免文档漂移）；</li>
+ *   <li>{@code sample}：**占位示例**（不再是「可直接发布的完整配置」），仅用于说明字段形态；
+ *       表单化后不再写入草稿，导出/导入请走 ZIP 归档通道（T4）。</li>
  * </ul>
  *
- * <p>各 kind 结构依据：
- * metadata → {@code catalog/metadata.yml}；starter → {@code catalog/starters/*.yml}（多文档）；
- * conflict-rule → {@code rules} 节；template → 多文档 {@code {name, content}}。
+ * <p>各 kind 结构依据（与后端解析器同构）：
+ * metadata → {@code cfg_java_version} / {@code cfg_boot_version} 等表；
+ * starter → {@code cfg_starter} 及其子表；conflict-rule → {@code cfg_conflict_rule}；
+ * template → {@code cfg_template}。
  */
 
 /** 单个字段的用途释义。 */
@@ -25,11 +31,11 @@ export interface ConfigFieldDoc {
   purpose: string
 }
 
-/** 一个配置种类的示例 + 字段释义 + 校验注意事项。 */
+/** 一个配置模块的占位示例 + 字段释义 + 校验注意事项。 */
 export interface AdminConfigTemplate {
-  /** 该配置种类的一句话定位 */
+  /** 该配置模块的一句话定位 */
   summary: string
-  /** 带逐字段注释的示例 YAML（可直接发布） */
+  /** 带逐字段注释的占位示例（T6 起仅作字段形态说明，不再直接写草稿） */
   sample: string
   /** 字段用途释义表 */
   fields: ConfigFieldDoc[]
@@ -111,7 +117,7 @@ bootVersions:
   ],
 }
 
-/** starter 清单（与 catalog/starters/*.yml 同构，多文档）：依赖坐标 + 选中后的联动生成规则。 */
+/** starter 清单：依赖坐标 + 选中后的联动生成规则。 */
 const STARTER_TEMPLATE: AdminConfigTemplate = {
   summary: 'starter 的权威数据源：依赖坐标（含版本）、展示名、分类、维护方与「选中后自动生成」的联动规则；多个 starter 用 --- 分隔成多文档。发布后自动合并进元数据，无需在 metadata 里重复登记。',
   sample: `# ===== starter 清单（与 catalog/starters/*.yml 同构）=====
@@ -123,11 +129,14 @@ category: web                       # 必填。分类，用于前端分组浏览
 maintainer: official                # 必填。维护方：official（Spring 官方）/ internal（公司内部）
 description: Spring MVC + 内嵌 Tomcat # 可选。一句话说明；同时作为前端展示名（推荐填写）
 required: false                     # 可选。true = 必选：前端默认勾选且禁止取消，生成时后端兜底补齐
+hidden: false                       # 可选。true = 前端依赖选择列表默认隐藏；被已选组件通过 requires 引用时强制展示
 requires: []                        # 可选。依赖联动（AND-of-OR-groups）：
                                     #       requires: [b, c]      → 需要 b 和 c（扁平写法，历史语义）
-                                    #       requires: [[b, c]]    → 需要 b 或 c（b、c 互斥时只选其一即可）
+                                    #       requires: [[b, c]]    → 需要 b 或 c（OR 分组，仅提示，不自动勾选）
                                     #       requires: [[b, c], d] → 需要 (b 或 c) 且 d
-                                    #       前端不自动勾选也不锁定这些项，仅提示「需要 …」，未满足时生成期拒绝
+                                    #       单元素分组 = 强制依赖：选中本 starter 时自动勾选并锁定，取消本 starter
+                                    #       后自动释放；若与已选组件直接互斥则双方都不锁定，前端标记互斥供二选一切换
+                                    #       OR 分组仍不自动勾选，仅提示「需要 …」，未满足时生成期拒绝
 bootVersions: []                    # 可选。本条目关联的 Boot 版本（值取 metadata 的 bootVersions[].id）；
                                     #       不写/为空 = 对全部 Boot 版本可用；同一 Boot 版本内 ID 不允许重复，
                                     #       不同 Boot 版本允许重复（同一 id 可在不同版本声明不同坐标/版本）
@@ -165,7 +174,8 @@ linkages:                           # 联动规则：选中该 starter 后自动
     { path: 'maintainer', required: true, purpose: '维护方：official（Spring 官方）/ internal（公司内部）' },
     { path: 'description', required: false, purpose: '一句话说明；同时作为前端展示名与检索关键字' },
     { path: 'required', required: false, purpose: '是否必选（原 metadata starters 节能力，已迁移到清单）：true 时前端默认勾选且禁止取消，生成时后端兜底补齐' },
-    { path: 'requires', required: false, purpose: '依赖联动（AND-of-OR-groups）：分组内任一被选即满足该分组，全部分组满足才算依赖满足。扁平写法 [b, c] 表示需要 b 和 c；嵌套写法 [[b, c]] 表示需要 b 或 c（适合 b、c 互斥场景）。引用的 ID 必须在本清单登记，不得自引用；仅单选项分组参与成环判定（多选项分组可换分支打破环）' },
+    { path: 'hidden', required: false, purpose: '是否在前端依赖选择列表中默认隐藏：true 时列表不展示，但被已选组件通过 requires 引用时强制展示；仅影响前端展示，后端检索与生成逻辑不受影响' },
+    { path: 'requires', required: false, purpose: '依赖联动（AND-of-OR-groups）：分组内任一被选即满足该分组，全部分组满足才算依赖满足。扁平写法 [b, c] 表示需要 b 和 c；嵌套写法 [[b, c]] 表示需要 b 或 c。单元素分组为强制依赖，前端选中父组件时自动勾选并锁定、取消父组件后自动释放；若强制依赖与已选组件直接互斥，则互斥双方都不锁定并标记互斥供二选一切换。引用的 ID 必须在本清单登记，不得自引用；仅单选项分组参与成环判定（多选项分组可换分支打破环）' },
     { path: 'bootVersions', required: false, purpose: 'Boot 版本关联：值取 metadata 的 bootVersions[].id；不写即对全部版本可用。同一 Boot 版本内 ID 不允许重复（重复发布即拒），不同 Boot 版本允许重复（同一 id 可在不同版本声明不同坐标/版本/联动）' },
     { path: 'dependencies[].groupId', required: true, purpose: 'Maven groupId，选中后写入生成项目构建脚本' },
     { path: 'dependencies[].artifactId', required: true, purpose: 'Maven artifactId，选中后写入生成项目构建脚本' },
@@ -184,6 +194,7 @@ linkages:                           # 联动规则：选中该 starter 后自动
     '占位符仅允许 {basePackage} {packagePath} {artifact} {group} {bootVersion} {javaVersion}，越界占位符在装载期被拒绝。',
     '含占位符的值务必加引号（如 "{basePackage}.config"），否则会被 YAML 解析为流式映射。',
     'starter ID 重复即装载失败；制品库同步通道同名条目会被手工配置覆盖。',
+    'hidden 仅隐藏前端依赖选择列表：当被已选组件通过 requires 引用（单元素分组自动锁定或 OR 分组提示）时强制展示。',
   ],
 }
 
@@ -264,11 +275,34 @@ export const ADMIN_CONFIG_TEMPLATES: Record<AdminConfigKind, AdminConfigTemplate
 }
 
 /**
- * 取指定配置种类的示例 YAML。
+ * 取指定配置模块的占位示例文本。
  *
- * @param kind 配置种类
+ * <p>T6 起表单化维护，示例仅作字段形态说明（不再写入草稿）；未登记模块返回空串，
+ * 便于调用方降级（如后端新增 kind 而前端未同步）。
+ *
+ * @param kind 配置模块键
  * @returns 带逐字段注释的示例全文（未登记种类返回空串）
  */
 export function sampleOf(kind: AdminConfigKind): string {
   return ADMIN_CONFIG_TEMPLATES[kind]?.sample ?? ''
+}
+
+/**
+ * 取指定配置模块的字段释义表。
+ *
+ * @param kind 配置模块键
+ * @returns 字段释义清单（未登记种类返回空数组）
+ */
+export function fieldsOf(kind: AdminConfigKind): ConfigFieldDoc[] {
+  return ADMIN_CONFIG_TEMPLATES[kind]?.fields ?? []
+}
+
+/**
+ * 取指定配置模块的发布注意事项。
+ *
+ * @param kind 配置模块键
+ * @returns 注意事项清单（未登记种类返回空数组）
+ */
+export function notesOf(kind: AdminConfigKind): string[] {
+  return ADMIN_CONFIG_TEMPLATES[kind]?.notes ?? []
 }

@@ -2,10 +2,13 @@ package com.wymix.initializer.app.admin.sync;
 
 import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
-import com.wymix.initializer.app.admin.entity.ConfigDraftEntity;
+import com.wymix.initializer.app.admin.dto.CatalogDtos.DependencyDto;
+import com.wymix.initializer.app.admin.dto.CatalogDtos.StarterCatalogUpsertRequest;
+import com.wymix.initializer.app.admin.dto.CatalogDtos.StarterDto;
+import com.wymix.initializer.app.admin.dto.CatalogDtos.StarterUpsertDto;
 import com.wymix.initializer.app.admin.entity.ConfigKind;
-import com.wymix.initializer.app.admin.refresh.CatalogRefresher;
 import com.wymix.initializer.app.admin.repository.ConfigRepository;
+import com.wymix.initializer.app.admin.service.StructuredDraftService;
 import com.wymix.initializer.core.sync.CatalogMerger;
 import com.wymix.initializer.core.sync.CatalogSyncProvider;
 import com.wymix.initializer.core.sync.SyncedStarter;
@@ -19,13 +22,15 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * 制品库同步应用服务（M3.3）：拉取 → 归一化 → 合并 → 同步层草稿重建。
  *
- * <p>同步 = 只读贡献者（概要设计决策 3）：同步结果写入 STARTER_SYNC 草稿（多文档 yml），
- * 不触碰手工 STARTER/METADATA 草稿；合并语义为同名条目手工配置优先（合并发生在
- * {@link #syncChannel}，同名条目不写同步层草稿）。
+ * <p>同步 = 只读贡献者（概要设计决策 3）：同步结果**直写结构化 starter 草稿行**
+ * （{@code cfg_starter} 等表、{@code release_id = 0}、{@code source = 'SYNC'}，
+ * T3 起不再拼 YAML），不触碰手工 STARTER/METADATA 草稿；合并语义为同名条目手工配置优先
+ * （合并发生在 {@link #syncChannel}，同名条目不写同步层草稿）。
  *
  * <p>生效通道与手工配置一致：同步层草稿写入后，管理端发布时
  * {@code CatalogRefresher.validateAndBuild} 三通道归并（classpath 内置 → 同步层 → 手工，
@@ -53,18 +58,22 @@ public class CatalogSyncService {
 
     private final List<CatalogSyncProvider> providers;
     private final ConfigRepository repository;
-    private final CatalogRefresher refresher;
+    /**
+     * 结构化草稿服务（T3）：同步层 starter 行以结构化 DTO 直写
+     * （{@code source = 'SYNC'}，不经 YAML 文本往返）。
+     */
+    private final StructuredDraftService structuredDraftService;
 
     /**
-     * @param providers  同步通道清单（Bean 注入，按装配顺序；空清单时同步禁用）
-     * @param repository 配置存储仓库
-     * @param refresher  清单校验器（宽松 ID 解析与发布链路同源，保证保留集口径一致）
+     * @param providers              同步通道清单（Bean 注入，按装配顺序；空清单时同步禁用）
+     * @param repository             配置存储仓库（结构化 cfg_* 表读写）
+     * @param structuredDraftService 结构化草稿服务（同步层 starter 结构化读写）
      */
     public CatalogSyncService(List<CatalogSyncProvider> providers, ConfigRepository repository,
-                              CatalogRefresher refresher) {
+                              StructuredDraftService structuredDraftService) {
         this.providers = providers.stream().filter(CatalogSyncProvider::enabled).toList();
         this.repository = repository;
-        this.refresher = refresher;
+        this.structuredDraftService = structuredDraftService;
     }
 
     /**
@@ -121,37 +130,62 @@ public class CatalogSyncService {
     private ChannelOutcome syncChannel(CatalogSyncProvider provider) {
         SyncResult fetched = provider.fetch();
 
-        Set<String> reservedIds = new LinkedHashSet<>();
-        ConfigDraftEntity starterDraft = repository.findDraft(ConfigKind.STARTER);
-        if (starterDraft != null && starterDraft.getContentYaml() != null) {
-            reservedIds.addAll(refresher.parseStarterIds(starterDraft.getContentYaml()));
-        }
+        // 保留集 = 手工 starter 草稿条目 ID + 当前同步层草稿条目 ID
+        Set<String> reservedIds = new LinkedHashSet<>(structuredDraftService.getStarters().starters().stream()
+                .map(StarterDto::id).toList());
 
         CatalogMerger.MergeOutcome merged = CatalogMerger.merge(reservedIds, fetched.starters());
 
-        // 同步层草稿全量重建：本轮采纳条目多文档 yml（制品库为权威源，下架条目自然移除）。
-        // 文档间必须以 "---" 分隔（toYaml 不自带头部分隔符），否则多文档粘连为单文档，
-        // SnakeYAML 重复键后者覆盖前者，除首个外全部条目静默丢失。
-        String syncYaml = merged.adopted().isEmpty()
-                ? "" : merged.adopted().stream().map(SyncedStarter::toYaml).collect(Collectors.joining("\n---\n"));
-        upsertSyncDraft(syncYaml, provider.providerId());
+        // 同步层草稿全量重建：本轮采纳条目直接以结构化 starter 行落库
+        // （制品库为权威源，下架条目自然随整体替换移除）。
+        upsertSyncDraft(merged.adopted(), provider.providerId());
         return new ChannelOutcome(provider.providerId(), merged.adopted().size(),
                 merged.overridden().size(), null);
     }
 
     /**
-     * 同步层草稿写入：存在则覆盖，不存在则插入。
+     * 同步层草稿写入（结构化，T3）：清空旧 {@code source = SYNC} 结构行后整体重写为
+     * 本轮采纳条目，并推进 {@code config_draft_meta} 的 kind 级乐观锁与修改人。
      *
-     * @param yaml     同步层草稿全文（多文档，空串表示清空）
+     * <p>草稿载体已是 {@code cfg_starter} 等表的结构行（T3 起不再拼 YAML），
+     * {@link ConfigKind#STARTER_SYNC} 取值与审计语义不变；
+     * 同名手工优先由上游 {@code CatalogMerger} 的保留集过滤保证，本方法不做二次去重。
+     *
+     * @param adopted  本轮采纳的同步条目（制品库权威源；空列表表示清空同步层草稿）
      * @param operator 操作人（provider 标识）
      */
-    private void upsertSyncDraft(String yaml, String operator) {
-        ConfigDraftEntity entity = repository.findDraft(ConfigKind.STARTER_SYNC);
-        if (entity == null) {
-            repository.insertDraft(ConfigKind.STARTER_SYNC, yaml, operator);
-        } else {
-            repository.updateDraft(entity, yaml);
-        }
+    private void upsertSyncDraft(List<SyncedStarter> adopted, String operator) {
+        List<StarterUpsertDto> dtos = IntStream.range(0, adopted.size())
+                .mapToObj(i -> toStarterDto(adopted.get(i), i))
+                .toList();
+        structuredDraftService.saveStarters(new StarterCatalogUpsertRequest(dtos, operator),
+                null, ConfigKind.STARTER_SYNC);
+    }
+
+    /**
+     * 同步条目 → 结构化 starter DTO（{@code source} 由写入通道固定为 SYNC）。
+     *
+     * <p>制品库只提供「ID + 分类 + 描述 + 单个 GAV 坐标」，因此坐标按单依赖项落库，
+     * 联动与 requires 为空；{@code maintainer} 归一为制品库默认（{@code INTERNAL}）。
+     *
+     * @param synced 同步条目
+     * @param sort   展示顺序
+     * @return starter 结构 DTO
+     */
+    private static StarterUpsertDto toStarterDto(SyncedStarter synced, int sort) {
+        return new StarterUpsertDto(
+                synced.id(),
+                synced.category() == null || synced.category().isBlank() ? "middleware" : synced.category(),
+                "INTERNAL",
+                synced.description(),
+                false,
+                false,
+                null,
+                List.of(new DependencyDto(synced.groupId(), synced.artifactId(), synced.version())),
+                List.of(),
+                List.of(),
+                null,
+                sort);
     }
 
     /**

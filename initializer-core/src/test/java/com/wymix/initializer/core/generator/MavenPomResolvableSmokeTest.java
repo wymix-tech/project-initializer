@@ -49,7 +49,7 @@ class MavenPomResolvableSmokeTest {
                     entries.add(com.wymix.initializer.core.starter.YamlStarterParser.parse(starterIn));
                 }
             }
-            generator = new ProjectGenerator(catalog, new TemplateRenderer(), StarterCatalog.of(entries));
+            generator = new ProjectGenerator(catalog, ClasspathTemplates.renderer(), StarterCatalog.of(entries));
         } catch (Exception e) {
             throw new IllegalStateException("冒烟门禁测试环境初始化失败", e);
         }

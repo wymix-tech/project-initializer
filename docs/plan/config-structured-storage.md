@@ -1,6 +1,37 @@
 # 配置结构化入库与表单化维护（规划稿）
 
-> 状态：**方案固化，暂不实施**
+> 状态：**T1（db-schema）、T2（snapshot-assembler）、T3（admin-structured-api）、
+> T4（yaml-import-export）、T5（template-db-source）、T6（web-forms）、T7（docs-tests）、
+> T8（migration-cutover）已实施**——本规划稿全部任务组完成
+> T1 交付：`initializer-app/src/main/resources/db/{schema,data}.sql` + 16 个实体/Mapper +
+> `ConfigRepository` 结构化读写 + `StructuredSnapshot`/`StructuredYamlCodec`/`StructuredDraftWriter`/
+> `LegacyYamlMigration`（T1→T2 过渡桥）+ 升级文档（`docs/guide/configuration.md` §6）
+> T2 交付：`initializer-core` 的 `MetadataCatalog.of(...)` 公共工厂 +
+> `StructuredCatalogAssembler`（表行直装快照）+ `ConfigService` 发布/回滚改结构化装配 +
+> `CatalogSnapshotBootstrap` 启动直装 + `CatalogSnapshot` 模板语义改「DB 全量模板集」
+> + 装配文档（`docs/guide/configuration.md` §7）
+> T3 交付：管理端分模块结构化 API（`CatalogDtos` + `StructuredDraftService` +
+> `AdminApiController` 结构化端点）+ `CatalogSyncService` 直写结构化 starter 行
+> + `ConfigRepository` 按 kind 替换与模板轻量查询
+> + 结构化 API 文档（`docs/guide/configuration.md` §8）
+> T4 交付：ZIP 导入导出（`ConfigArchiveCodec` + `StructuredSnapshotCodec` +
+> `ConfigImportExportService` + `AdminApiController` 的 `/config/export`、`/config/import`）
+> + 导入侧安全加固（路径穿越 / 条目数 / 单文件与总量 / 严格 UTF-8）
+> + `ErrorCode` 40xx 导入导出错误码 + `cfg_starter` 唯一约束补 `source` 通道维度
+> + 文档（`docs/guide/configuration.md` §9）
+> T5 交付：模板改为 DB 唯一数据源（`TemplateRenderer` 摘除 `ClassTemplateLoader` 兜底、
+> `LinkageRenderer` 摘除 yml 片段 classpath 兜底并暴露 `validateRequirements` 模板可达性校验、
+> `ProjectGenerator.validate(...)` 前置校验、`GeneratorService`/`GeneratorConfig` 适配「DB 全量模板集」、
+> `DemoCatalogSeeder` + `DemoCatalogWriter` 实现「内置清单与模板入库 → 自动发布一版」、
+> `CatalogSnapshotBootstrap` demo 分支改走 DB 发布装表
+> + 文档（`docs/guide/configuration.md` §10）
+> T6 交付：前端表单化工作台（`AdminPanel.vue` 改左导航 + 卡片表单外壳；
+> 新增 `components/admin/{MetadataForm,StarterForm,ConflictRuleForm,TemplateForm,PublishConsole,ImportExportPanel}.vue`；
+> `api/client.ts` 补 `adminStructuredApi` / `adminArchiveApi` / `adminApi.sync`；
+> `types/admin.ts` 对齐 `CatalogDtos` + `ConfigArchiveDtos`；`stores/starterConfigWizard.ts` 改结构化提交；
+> 删除 `starter-yaml-builder.ts`，`config/admin-config-templates.ts` 退化为字段释义与占位示例）
+> + 文档（`docs/guide/configuration.md` §11，验证清单顺延 §12 并加 T6 冒烟 3 条）
+> 勘误：§12 的 ER 图实为 **15 张 `cfg_*` 表**（非 17）；实体为 15 张 + `ConfigDraftMetaEntity` = 16
 > 来源：需求「元数据/starter清单/冲突规则/模板 改为表单维护 + 关系表存储 + YAML 导入导出」
 > 关联：M3 里程碑（`docs/design/m3-overview.md`、`docs/design/m3-detail.md`）
 > 归档日期：2026-09-11
@@ -62,7 +93,7 @@
 ## 7. 数据模型（关系与约束）
 
 - **元数据**：`cfg_java_version(release_id, version_id, label, deprecated, recommended_boot_version, sort)`；`cfg_boot_version(release_id, version_id, label, official, fp_group, fp_artifact, fp_version, sort)`；`cfg_boot_java(release_id, boot_pk, java_pk)` 兼容矩阵多对多；`cfg_boot_starter_ref(release_id, boot_pk, starter_id, sort)` 可选 starter 白名单。
-- **starter**：`cfg_starter(release_id, starter_id, category, maintainer, description, required, config_package, source, sort)`；`cfg_starter_dependency(release_id, starter_pk, group_id, artifact_id, version, sort)`；`cfg_starter_require_group(release_id, starter_pk, group_index)` + `cfg_starter_require_item(release_id, group_pk, required_starter_id, sort)` 表达 AND-of-OR；`cfg_starter_boot_version(release_id, starter_pk, boot_version_id)`；`cfg_starter_linkage_template / _yml / _abstract` 分别存三类联动。
+- **starter**：`cfg_starter(release_id, starter_id, category, maintainer, description, required, hidden, config_package, source, sort)`；`cfg_starter_dependency(release_id, starter_pk, group_id, artifact_id, version, sort)`；`cfg_starter_require_group(release_id, starter_pk, group_index)` + `cfg_starter_require_item(release_id, group_pk, required_starter_id, sort)` 表达 AND-of-OR；`cfg_starter_boot_version(release_id, starter_pk, boot_version_id)`；`cfg_starter_linkage_template / _yml / _abstract` 分别存三类联动。
 - **冲突规则**：`cfg_conflict_rule(release_id, rule_id, type, message, sort)` + `cfg_conflict_rule_starter(release_id, rule_pk, starter_id, sort)`。
 - **模板**：`cfg_template(release_id, name, content CLOB, sort, updated_at)`。
 - **版本与元信息**：保留 `config_release(id, released_by, released_at, remark, source)` 头表与 `config_audit`；新增 `config_draft_meta(kind, version, updated_by, updated_at)` 承载 kind 级乐观锁（替代原 `config_draft.content_yaml`）。
@@ -119,6 +150,9 @@ initializer-app/
 │   │                                 #       CfgTemplateEntity/ConfigDraftMetaEntity
 │   ├── mapper/                       # [NEW] 上列实体对应 MyBatis-Plus Mapper（批量插入/按 release_id 分组查询）
 │   ├── repository/ConfigRepository.java  # [MODIFY] 收口结构化表的按 release_id 读写、草稿复制为发布、发布行读取、草稿乐观锁
+│   ├── repository/ConfigArchiveCodec.java        # [DONE-T4] ZIP 打包/解包 + 路径穿越/上限/UTF-8 安全加固
+│   ├── repository/StructuredSnapshotCodec.java   # [DONE-T4] 归档 YAML 文档 → 结构行（复用 core 解析器）
+│   ├── dto/ConfigArchiveDtos.java                # [DONE-T4] 导入/导出响应 DTO
 │   ├── refresh/
 │   │   ├── StructuredCatalogAssembler.java  # [NEW] 表行 -> 核心模型 -> CatalogSnapshot，复用 core 校验
 │   │   ├── CatalogRefresher.java            # [MODIFY] 保留 YAML 解析供导入导出；新增结构化装配委托
@@ -126,7 +160,7 @@ initializer-app/
 │   │   └── CatalogSnapshotBootstrap.java    # [MODIFY] 启动从最新 release 装表；demo 模式播种入库后统一走表
 │   ├── service/
 │   │   ├── ConfigService.java               # [MODIFY] 草稿/发布/回滚改为结构化读写；发布=复制行为新 release_id
-│   │   └── ConfigImportExportService.java   # [NEW] ZIP 导入解析入库 / 导出 DB 为 ZIP
+│   │   └── ConfigImportExportService.java   # [DONE-T4] ZIP 导入解析入库 / 导出 DB 为 ZIP
 │   ├── controller/AdminApiController.java   # [MODIFY] 分模块结构化 CRUD + 导入导出端点（multipart/下载）
 │   └── sync/                                # [MODIFY] 同步结果改写结构化 starter 草稿（source=SYNC）
 ├── src/main/java/com/wymix/initializer/app/generator/GeneratorService.java  # [MODIFY] 适配全量模板集渲染
@@ -134,7 +168,7 @@ initializer-core/
 ├── src/main/java/com/wymix/initializer/core/metadata/MetadataCatalog.java   # [MODIFY] 新增公共工厂 of(...)
 └── src/main/java/com/wymix/initializer/core/generator/TemplateRenderer.java # [MODIFY] 仅 StringTemplateLoader（无 classpath 兜底）
 initializer-api/
-└── src/main/java/com/wymix/initializer/api/error/ErrorCode.java  # [MODIFY] 新增导入/导出错误码（40xx 段）
+└── src/main/java/com/wymix/initializer/api/error/ErrorCode.java  # [DONE-T4] 40xx 段补 4008/4009/4010
 initializer-web/
 ├── src/api/client.ts                  # [MODIFY] 结构化 CRUD、导入导出、发布/回滚/审计接口
 ├── src/types/api.ts                   # [MODIFY] 结构化 DTO 与导入导出响应类型
@@ -167,13 +201,143 @@ docs/
 
 | # | id | 任务 | 依赖 |
 |---|---|---|---|
-| 1 | `db-schema` | 建元数据/starter/冲突规则/模板关系表 DDL 及实体、Mapper、按 `release_id` 作用域的 Repository | — |
-| 2 | `snapshot-assembler` | 用 LSP 定位发布/回滚/启动调用点，新增表行装配器并改造快照构建链路 | 1 |
-| 3 | `admin-structured-api` | 改造管理端为分模块结构化读写 API，制品库同步改写结构化 starter 草稿（source 标记） | 2 |
-| 4 | `yaml-import-export` | 实现 ZIP 导入解析入库与导出下载，复用 core 解析器并补充导入导出错误码 | 2 |
-| 5 | `template-db-source` | 模板渲染改为只读数据库全量模板集，仅 demo 模式以 classpath 内置作初始种子 | 2 |
-| 6 | `web-forms` | 梳理前端结构后，将管理后台改为 TDesign 表单化维护与导入导出页 | 3, 4, 5 |
+| 1 | `db-schema` | ✅ 建元数据/starter/冲突规则/模板关系表 DDL（15 张）及实体、Mapper、按 `release_id` 作用域的 Repository | — |
+| 2 | `snapshot-assembler` | ✅ 新增 `StructuredCatalogAssembler`（表行直装），发布/回滚/启动三条链路改结构化装配，`MetadataCatalog.of` 公共工厂 | 1 |
+| 3 | `admin-structured-api` | ✅ 改造管理端为分模块结构化读写 API，制品库同步改写结构化 starter 草稿（source 标记） | 2 |
+| 4 | `yaml-import-export` | ✅ 实现 ZIP 导入解析入库与导出下载，复用 core 解析器并补充导入导出错误码 | 2 |
+| 5 | `template-db-source` | ✅ 模板渲染改为只读数据库全量模板集，仅 demo 模式以 classpath 内置作初始种子 | 2 |
+| 6 | `web-forms` | ✅ 管理后台改为表单化维护工作台（左导航 + 卡片表单 + 导入导出页） | 3, 4, 5 |
 | 7 | `docs-tests` | 更新配置与关系表文档，适配并补充装配器、导入导出、发布回滚相关测试 | 6 |
+| 8 | `migration-cutover` | ✅ 存量 YAML 迁移演练（预检 + 直迁端点 + 回退预案）、`initializer.catalog.dir` 下线收口、`validation.yml` 边界标注 | 7 |
+
+## 12.1 T4 实施说明（导入导出）
+
+- **导出**：`ConfigRepository.readScope(0)` 一次取 15 表全量行 → `ConfigArchiveCodec.renderMetadata`
+  （结构行 → `metadata.yml`）/ `StructuredYamlCodec.renderStarters`（一 starter 一文档）/
+  `renderConflictRules` / 模板全文直取 → `ConfigArchiveCodec.writeArchive` 打包 ZIP。
+  **只导出手工通道（`source = MANUAL`）**：同步层可重建、非人工资产，混入会污染手工清单。
+- **导入**：`readArchive`（安全加固）→ `StructuredSnapshotCodec.parseXxx(严格模式)` →
+  跨档白名单一致性断言 → 同一事务内「抢占四类 kind 乐观锁 → 按 kind 清空草稿 → 写入结构行」。
+  失败整体回滚；`noRollbackFor = BusinessException` 保证 `IMPORT_FAILED` 审计落库。
+- **幂等锚点**：`hidden` 列往返不丢 + 「导出 → 导入 → 再导出」内容一致（测试锁定）。
+- **发现的既有缺陷**：`parseMetadata` 曾用 `Map` 收敛 Boot 父行做重复 ID 校验，
+  重复业务 ID 会在建映射时静默折叠而漏检；已改为保留 `List` 行清单做校验、映射只用于子行父键定位。
+- **schema 变更**：`cfg_starter` 唯一约束补 `source` 维度（`(release_id, source, starter_id)`），
+  与「两通道并存、同名手工优先」语义对齐；`schema.sql` 末尾幂等 `ALTER`。
+
+
+## 12.2 T5 实施说明（模板 DB 唯一数据源）
+
+### 核心决策
+
+1. **渲染器只认模板集**：`TemplateRenderer(Map<String,String> templates)` 内部仅装配
+   `StringTemplateLoader`；`templates()` 访问器让 `ProjectGenerator`/`LinkageRenderer` 共用同一份模板集，
+   不再出现「渲染器有模板、联动器没有」的口径漂移。
+2. **`--demo` 种子 = classpath 快照**：`DemoCatalogSeeder.loadClasspathTemplates()`（生产）与
+   `ClasspathTemplates`/`TestTemplates`（测试）以同一 `classpath*:/templates/**` 扫描模式装载，
+   目录条目按「文件名末段含 `.`」排除（jar 与目录两种协议下目录 URL 都不带尾斜杠）。
+3. **`--demo` 入库是确定性全量替换**：模板 / starter（MANUAL）/ metadata 三块各自整体替换，
+   不读库内既有状态 —— 否则同进程残留草稿会让种子「看起来已存在」而被跳过。
+   **`SYNC` 通道与冲突规则草稿不在种子范围内**。
+4. **yml 片段不做 FreeMarker 语法校验**：模板集同时承载 `.ftl` 与 `application-*.yml` 片段；
+   片段内容含 Spring 占位符 `${VAR:default}`，若按 FreeMarker 解析会被误判语法错误。
+   `StructuredCatalogAssembler.assembleTemplates` 与
+   `StructuredSnapshotCodec.parseTemplates` 均只对 `*.ftl` 做语法校验。
+5. **「缺模板」前移**：`LinkageRenderer.validateRequirements` 在渲染前汇总全部缺失项并以 3001 失败，
+   取代「渲染到一半才炸」；生成与发布/导入共用这一口径。
+
+### 遗留与后续
+
+- `StructuredYamlCodec`/`StructuredDraftWriter`/`MetadataDoc` 仍服务 YAML 契约与导入通道，
+  T6 表单化后**仍未摘除**（T6 只接前端，未动后端通道），后续评估见 §12.3。
+- `initializer.catalog.dir` 外部清单目录通道保留（其 `templates/**` 即该次启动的模板集），
+  下线说明由 T8 收口。
+
+## 12.3 T6 实施说明（前端表单化工作台）
+
+### 交付范围
+
+- **外壳**：`AdminPanel.vue` 改为「左侧分区导航 + 右侧卡片表单」；六分区
+  （发布台 / 元数据 / starter 清单 / 冲突规则 / 模板 / 导入导出）。
+- **表单组件**：`components/admin/` 下 6 个分区组件 + 共用样式 `admin-form.css`。
+- **会话**：`composables/useAdminSession.ts` 收敛 token / 登录态 / 忙碌态 / 提示条，
+  各分区共享同一会话（不再各自持有一份）。
+- **接口层**：`api/client.ts` 新增 `adminStructuredApi`（结构化 CRUD + `readDraftVersion`）、
+  `adminArchiveApi`（ZIP 导入导出 + `fileNameOf`）、`adminApi.sync`。
+- **类型层**：新增 `types/admin.ts`，与后端 `CatalogDtos` / `ConfigArchiveDtos` 一一对应。
+- **向导**：`stores/starterConfigWizard.ts` 改结构化提交（读清单 → 合并 → 整体 PUT）；
+  预览区展示提交体 JSON。**删除 `starter-yaml-builder.ts`**。
+
+### 关键决策
+
+1. **不引入 TDesign**：计划 §5 原打算引入 TDesign Vue Next。实施时评估后未引入——
+   本次表单是「列表 + 行内编辑 + 文本域」的轻量形态，现有原生控件 + 统一样式即可覆盖，
+   引入组件库会新增依赖体积、主题变量与大量无用组件的维护面（收益 < 成本）。
+   样式统一在 `admin-form.css`（含深色顶栏 + Spring 绿 `#6DB33F` 选中态）。
+   **若后续表单复杂度上来（级联选择、树形、虚拟滚动），可再评估引入。**
+
+2. **表单只提交完整结构**：与 T3「整体提交」契约一致，天然无孤儿行、无增删改 diff；
+   删除行 = 从数组移除后保存。
+
+3. **版本取自 YAML 契约**：结构化 GET 不回版本，`readDraftVersion()` 走
+   `GET /api/admin/config/metadata`（轻量）取 `config_draft_meta.version`；
+   结构化与 YAML 端点共享同一 version 口径，`If-Match` 可混用。
+
+4. **向导不再渲染 YAML**：T1 起「向导拼 YAML → 后端反解析」的往返路径会让
+   `hidden` / `required` 等列语义有丢失风险（见 PR #44）；T6 直接把表单映射为结构化 DTO，
+   **预览即提交体**，「所见即所存」。
+
+5. **测试夹具必须是工厂**：表单把响应对象直接挂进响应式 ref 并就地编辑，
+   共享同一个字面量夹具会让后序用例看到前序用例的修改。`admin-forms.spec.ts` 的
+   `view()` 因此是函数而非常量（这是个真实踩到的坑）。
+
+### 遗留与后续（T7 收口）
+
+- `config/admin-config-templates.ts` 仍保留四类模块的 `sample`（占位示例）与 `fields`/`notes`；
+  当前表单未直接渲染 `fields`，可作为后续「字段说明」抽屉的数据源，或由 T7 决定摘除。
+- `starter-yaml-builder.ts` 已删除；若 T7 发现仍有引用需一并清理测试与文档。
+- `StructuredYamlCodec` / `StructuredDraftWriter` / `MetadataDoc` 仍服务 YAML 契约与导入通道，
+  T7 之后可评估摘除（T6 未动，避免与前端改造耦合）。
+
+## 12.4 T7 实施说明（文档与测试收口）
+
+- 文档：`docs/guide/configuration.md` 补 §13、`docs/design/m3-detail.md` 补 M3.6~M3.9 并改数据模型口径。
+- 门禁修复：前端突变门禁 FAIL 的真因是 **Vite 拒绝加载被变异的动态 `import()` 说明符**，
+  而非 runner 归因失效；以仓库内 `patch-package` 补丁（`isValidParent` 排除 `import()`）修复，
+  详见 `docs/guide/configuration.md` §13.3。
+
+## 12.5 T8 实施说明（迁移与切换）
+
+### 交付范围
+
+1. **存量迁移运行期入口**：新增 `GET /api/admin/config/migrate-legacy`（预检）与
+   `POST /api/admin/config/migrate-legacy?operator=`（执行）。此前 `LegacyYamlMigration`
+   只有 Java 调用入口，运维需重编译才能执行；T8 把它收敛为管理端端点，
+   并补「各 kind 有效行数 / 是否需要迁移 / 提示」的预检报告。
+2. **迁移留痕**：直迁成功与失败都写审计（动作 `MIGRATE_LEGACY`），
+   沿用导入通道的 `noRollbackFor = BusinessException` 策略（失败明细落库、草稿保持原状）。
+3. **演练测试**：`LegacyCutoverDrillTest` 端到端复现「旧库 → 预检 → 直迁 → 发布 →
+   归档往返 → 再发布 → 回滚」，并锁定「回滚基线 = 迁移后发布的版本」口径。
+4. **外部目录收口**：`initializer.catalog.dir` 保留为兼容通道，启动打印 WARN
+   提示它已被 ZIP 导入取代且会在启动期遮蔽 DB 快照（**不删代码**，仅告警 + 文档标注下线）。
+5. **`validation.yml` 边界**：明确留在 classpath、不入库、不参与归档导入导出（本次不动）。
+6. 文档：`docs/guide/configuration.md` 新增 §14（迁移与切换）+ §12 追加 4 条 T8 冒烟项。
+
+### 关键决策
+
+1. **直迁端点与导入端点职责不重叠**：直迁读旧库表（停机窗口、无需旧版 jar 导出），
+   导入读 ZIP（跨版本、可编辑后再灌）。两者都只写草稿、不发布、失败整体回滚。
+2. **预检只读**：`probe()` 不校验 YAML 内容、不写库，只回答「需不需要迁」，
+   避免运维在未备份时误触发写操作。
+3. **历史发布仍不可回滚**：T1 的取舍（旧 `*_yaml` 无行级作用域，无法逐行还原）在 T8 维持，
+   回退预案统一为「留档 YAML → 通道 A 重新发布」，已在 §14.3 与教程 §6.3 对齐口径。
+
+### 遗留与后续
+
+- `StructuredYamlCodec` / `StructuredDraftWriter` / `MetadataDoc` 仍服务 YAML 契约与导入通道，
+  摘除需单独立项（教程 §11.3 已标注）。
+- `initializer.catalog.dir` 通道代码保留，下线需另开任务（含 `ExternalCatalogLoader`、
+  `CatalogSnapshotBootstrap` 外部目录分支、`ValidationRulesConfig` 外部优先逻辑的清理）。
 
 ## 13. 现状基线（改造前）
 

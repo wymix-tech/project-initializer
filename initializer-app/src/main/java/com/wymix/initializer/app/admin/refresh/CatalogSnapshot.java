@@ -10,11 +10,15 @@ import java.util.Objects;
 /**
  * 配置快照（M3.1/M3.2）：聚合元数据目录、starter 清单与模板覆盖的不可变视图。
  *
- * <p>快照由 {@link CatalogRefresher} 在发布期构建：装载期校验全部通过后原子切换，
+ * <p>快照由 {@link StructuredCatalogAssembler}（发布/回滚/启动装表）或
+ * {@link CatalogRefresher}（YAML 通道，保留给导入导出）构建：装载期校验全部通过后原子切换，
  * 生成/元数据读路径只依赖快照，刷新失败时旧快照继续服务。
  *
- * <p>模板覆盖（M3.2）：快照持有「模板名 → 模板全文」映射，生成期以覆盖模板优先、
- * classpath 内置模板兜底（未覆盖的模板照常从 {@code templates/} 加载）。
+ * <p>模板集（M3.2 → T2 结构化 → T5 唯一数据源）：快照持有「模板名 → 模板全文」映射。
+ * **T2 起语义收敛为「数据库全量模板集」，T5 起为唯一数据源**——快照里的模板即全部可用模板，
+ * 没有「覆盖 + classpath 兜底」之分；生成期以本映射渲染，<b>缺失即 3001 失败</b>。
+ * 唯一例外是「外部清单目录」这一显式运维通道（{@code initializer.catalog.dir}），
+ * 其 {@code templates/**} 作为该次启动的模板集。
  *
  * <p>冲突规则（M3.5）：快照持有配置化的 starter 互斥规则目录，前端提示与生成兜底校验
  * 均以快照中的规则为准——发布后即时热生效。
@@ -25,7 +29,9 @@ public class CatalogSnapshot {
 
     private final MetadataCatalog metadataCatalog;
     private final StarterCatalog starterCatalog;
-    /** 模板覆盖映射（M3.2）：键为模板名（相对 templates/），值为模板全文；无覆盖时为空映射 */
+    /**
+     * 模板集映射（T2 起语义为「数据库全量模板集」）：键为模板名（相对 templates/），值为模板全文
+     */
     private final Map<String, String> templateOverrides;
     /** 冲突规则目录（M3.5）：无规则时为空目录 */
     private final ConflictCatalog conflictCatalog;
@@ -45,7 +51,7 @@ public class CatalogSnapshot {
      *
      * @param metadataCatalog   元数据目录（禁 null）
      * @param starterCatalog    starter 清单（禁 null）
-     * @param templateOverrides 模板覆盖映射（禁 null，可为空映射）
+     * @param templateOverrides 模板集映射（禁 null，可为空映射；T2 起语义为 DB 全量模板集）
      */
     public CatalogSnapshot(MetadataCatalog metadataCatalog, StarterCatalog starterCatalog,
                            Map<String, String> templateOverrides) {
@@ -57,7 +63,7 @@ public class CatalogSnapshot {
      *
      * @param metadataCatalog   元数据目录（禁 null）
      * @param starterCatalog    starter 清单（禁 null）
-     * @param templateOverrides 模板覆盖映射（禁 null，可为空映射）
+     * @param templateOverrides 模板集映射（禁 null，可为空映射；T2 起语义为 DB 全量模板集）
      * @param conflictCatalog   冲突规则目录（禁 null，可为空目录）
      */
     public CatalogSnapshot(MetadataCatalog metadataCatalog, StarterCatalog starterCatalog,
@@ -78,7 +84,9 @@ public class CatalogSnapshot {
         return starterCatalog;
     }
 
-    /** @return 模板覆盖映射（不可变，无覆盖时为空映射） */
+    /**
+     * @return 模板集映射（不可变；T2 起语义为「数据库全量模板集」，为空表示无 DB 模板）
+     */
     public Map<String, String> templateOverrides() {
         return templateOverrides;
     }

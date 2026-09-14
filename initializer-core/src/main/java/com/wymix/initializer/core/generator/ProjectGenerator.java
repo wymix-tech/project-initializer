@@ -36,6 +36,9 @@ import java.util.Set;
  * M2.3 起接入联动渲染管线（{@link LinkageRenderer}）：starter yml 声明的模板联动、
  * application.yml 片段合并、抽象类引用随选中 starter 自动生成。
  *
+ * <p><b>T5 模板改为 DB 唯一数据源</b>：渲染器持有的模板集即数据库全量模板集，
+ * 无 classpath 兜底——任一必需模板缺失即 3001 失败（{@link #validateRequirements} 前置汇总明细）。
+ *
  * <p>线程安全性：无状态单例（Renderer 与 Catalog 均不可变），线程安全。
  */
 public class ProjectGenerator {
@@ -56,7 +59,8 @@ public class ProjectGenerator {
      * @param starterCatalog starter 清单（联动规则来源；M2.3 新增，禁 null）
      */
     public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, StarterCatalog starterCatalog) {
-        this(catalog, renderer, starterCatalog, new MavenRenderer(), new GradleRenderer(), Map.of());
+        this(catalog, renderer, starterCatalog, new MavenRenderer(), new GradleRenderer(),
+                renderer.templates());
     }
 
     /**
@@ -70,26 +74,27 @@ public class ProjectGenerator {
      */
     public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, StarterCatalog starterCatalog,
                             BuildScriptRenderer mavenRenderer, BuildScriptRenderer gradleRenderer) {
-        this(catalog, renderer, starterCatalog, mavenRenderer, gradleRenderer, Map.of());
+        this(catalog, renderer, starterCatalog, mavenRenderer, gradleRenderer, renderer.templates());
     }
 
     /**
-     * M3.5 扩展全参构造：传入模板覆盖映射，覆盖同时驱动 .ftl 渲染与 yml 片段合并。
+     * T5 全参构造：传入**唯一模板集**（DB 全量模板集），同时驱动 .ftl 渲染、yml 片段合并与
+     * 「模板可达性」校验。
      *
      * @param catalog            元数据目录
      * @param renderer           模板渲染器
      * @param starterCatalog     starter 清单（联动规则来源）
      * @param mavenRenderer      Maven 渲染实现
      * @param gradleRenderer     Gradle 渲染实现
-     * @param templateOverrides  模板覆盖映射（null 视为空映射）
+     * @param templateSet  模板集（T5：DB 全量模板集，唯一数据源；null 时取渲染器自带模板集）
      */
     public ProjectGenerator(MetadataCatalog catalog, TemplateRenderer renderer, StarterCatalog starterCatalog,
                             BuildScriptRenderer mavenRenderer, BuildScriptRenderer gradleRenderer,
-                            Map<String, String> templateOverrides) {
+                            Map<String, String> templateSet) {
         this.catalog = catalog;
         this.renderer = renderer;
-        Map<String, String> overrides = templateOverrides == null ? Map.of() : templateOverrides;
-        this.linkageRenderer = new LinkageRenderer(starterCatalog, renderer, overrides);
+        Map<String, String> templates = templateSet == null ? renderer.templates() : templateSet;
+        this.linkageRenderer = new LinkageRenderer(starterCatalog, renderer, templates);
         this.mavenRenderer = mavenRenderer;
         this.gradleRenderer = gradleRenderer;
     }
@@ -111,6 +116,7 @@ public class ProjectGenerator {
     public byte[] generate(GenerateRequest request) {
         GenerateRequest effective = withRequiredStarters(request);
         validateRequest(effective);
+        linkageRenderer.validateRequirements(effective.bootVersion(), effective.starters());
         Map<String, byte[]> files = renderAll(effective);
         return packZip(files);
     }
@@ -155,8 +161,27 @@ public class ProjectGenerator {
     public void generate(GenerateRequest request, OutputStream out) {
         GenerateRequest effective = withRequiredStarters(request);
         validateRequest(effective);
+        linkageRenderer.validateRequirements(effective.bootVersion(), effective.starters());
         Map<String, byte[]> files = renderAll(effective);
         writeZip(files, out);
+    }
+
+    /**
+     * 生成前置校验（T5）：解析生效请求（补齐必选 starter）后校验
+     * ①元信息/版本组合 ②starter 可达性 ③模板集可达性 ④冲突规则，
+     * 全部通过才允许进入渲染。
+     *
+     * <p>对外暴露给 {@code GeneratorService}，让「模板缺失」在写任何字节之前就以
+     * 明确明细失败（不输出半成品）。
+     *
+     * @param request 生成请求
+     * @throws BusinessException 版本组合非法（2001/2002）、starter 不支持（2003）、
+     *         模板缺失（3001）
+     */
+    public void validate(GenerateRequest request) {
+        GenerateRequest effective = withRequiredStarters(request);
+        validateRequest(effective);
+        linkageRenderer.validateRequirements(effective.bootVersion(), effective.starters());
     }
 
     /**

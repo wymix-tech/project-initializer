@@ -27,9 +27,9 @@ vi.mock('@/api/client', () => ({
 }))
 
 const starters: Starter[] = [
-  { id: 'web', label: 'Spring Web', maintainer: 'official', category: 'web', description: 'Spring MVC', version: null, required: false, requires: [] },
-  { id: 'data-redis', label: 'Spring Data Redis', maintainer: 'official', category: 'data', description: 'Redis', version: null, required: false, requires: [] },
-  { id: 'xxx-redis', label: '内部 Redis', maintainer: 'internal', category: 'middleware', description: 'Redis 封装', version: null, required: false, requires: [] },
+  { id: 'web', label: 'Spring Web', maintainer: 'official', category: 'web', description: 'Spring MVC', version: null, required: false, requires: [], hidden: false },
+  { id: 'data-redis', label: 'Spring Data Redis', maintainer: 'official', category: 'data', description: 'Redis', version: null, required: false, requires: [], hidden: false },
+  { id: 'xxx-redis', label: '内部 Redis', maintainer: 'internal', category: 'middleware', description: 'Redis 封装', version: null, required: false, requires: [], hidden: false },
 ]
 
 const rules: ConflictRule[] = [
@@ -105,6 +105,45 @@ describe('StepStarters 依赖冲突提示（M3.5）', () => {
   })
 })
 
+describe('StepStarters 待选候选项标识（M3.9）', () => {
+  function st(id: string, requires: string[][] = []): Starter {
+    return { id, label: id, maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires, hidden: false }
+  }
+
+  it('OR 候选项渲染 pending 高亮与红色 *，行内不再渲染任何依赖文案', async () => {
+    const wrapper = mountWithPinia()
+    const wizard = useWizardStore()
+    const list = [st('dal', [['core'], ['jpa', 'mybatis']]), st('core'), st('jpa'), st('mybatis')]
+    wizard.starters = list
+    wizard.registerStarters(list)
+    wizard.toggleStarter('dal')
+    await wrapper.vm.$nextTick()
+    const rows = wrapper.findAll('.starter')
+    const rowOf = (id: string) => rows[list.findIndex((s) => s.id === id)]
+    expect(rowOf('jpa').classes()).toContain('pending')
+    expect(rowOf('mybatis').classes()).toContain('pending')
+    expect(wrapper.findAll('.pending-mark')).toHaveLength(2)
+    expect(rowOf('core').classes()).not.toContain('pending')
+    // M3.9：行内不再渲染 `需 xxx` 依赖标签（无论单元素还是 OR 分组）
+    expect(wrapper.findAll('.depends-tag')).toHaveLength(0)
+  })
+
+  it('候选项被选中后高亮与星标撤销', async () => {
+    const wrapper = mountWithPinia()
+    const wizard = useWizardStore()
+    const list = [st('dal', [['jpa', 'mybatis']]), st('jpa'), st('mybatis')]
+    wizard.starters = list
+    wizard.registerStarters(list)
+    wizard.toggleStarter('dal')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.pending-mark')).toHaveLength(2)
+    wizard.toggleStarter('jpa')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.pending-mark')).toHaveLength(0)
+    expect(wrapper.findAll('.starter.pending')).toHaveLength(0)
+  })
+})
+
 describe('wizard store 冲突求值（M3.5）', () => {
   it('selectBoot 并行拉取冲突规则并回填', async () => {
     const { api } = await import('@/api/client')
@@ -140,5 +179,45 @@ describe('wizard store 冲突求值（M3.5）', () => {
     const wizard = useWizardStore()
     await wizard.selectBoot('3.2.5')
     expect(wizard.conflictRules).toEqual([])
+  })
+})
+
+describe('StepStarters 依赖锁定与互斥标识（M3.8）', () => {
+  function st(id: string, requires: string[][] = []): Starter {
+    return { id, label: id, maintainer: 'internal', category: 'data', description: null, version: null, required: false, requires, hidden: false }
+  }
+
+  it('强制依赖渲染「依赖锁定」标签且勾选框禁用', async () => {
+    const wrapper = mountWithPinia()
+    const wizard = useWizardStore()
+    const list = [st('app', [['core'], ['log']]), st('core'), st('log')]
+    wizard.starters = list
+    wizard.registerStarters(list)
+    wizard.toggleStarter('app')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.dep-locked-tag')).toHaveLength(2)
+    const disabled = wrapper
+      .findAll('input[type="checkbox"]')
+      .filter((box) => (box.element as HTMLInputElement).disabled)
+    expect(disabled).toHaveLength(2)
+  })
+
+  it('互斥的强制依赖仅做整行高亮（不再渲染行内互斥文案），勾选另一方即切换', async () => {
+    const wrapper = mountWithPinia()
+    const wizard = useWizardStore()
+    const list = [st('app', [['b'], ['c']]), st('b'), st('c')]
+    wizard.starters = list
+    wizard.registerStarters(list)
+    wizard.conflictRules = [{ id: 'b-c', type: 'pair', starters: ['b', 'c'], message: 'b 与 c 互斥' }]
+    wizard.toggleStarter('app')
+    await wrapper.vm.$nextTick()
+    // M3.9：互斥不再渲染行内标签，双方仅整行高亮且均不锁定
+    expect(wrapper.findAll('.mutex-tag')).toHaveLength(0)
+    expect(wrapper.findAll('.starter.mutex')).toHaveLength(2)
+    expect(wrapper.findAll('.dep-locked-tag')).toHaveLength(0)
+    const cIndex = list.findIndex((s) => s.id === 'c')
+    await wrapper.findAll('input[type="checkbox"]')[cIndex].setValue(true)
+    expect(wizard.selectedStarters.has('c')).toBe(true)
+    expect(wizard.selectedStarters.has('b')).toBe(false)
   })
 })

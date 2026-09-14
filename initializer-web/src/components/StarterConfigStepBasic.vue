@@ -64,6 +64,32 @@ const maintainers: { value: StarterMaintainer; label: string }[] = [
       />
       <p v-if="wizard.stepErrors.description" class="field-error">{{ wizard.stepErrors.description }}</p>
     </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="scw-required">
+          <input id="scw-required" v-model="wizard.form.required" type="checkbox" />
+          必选（前端默认勾选且禁止取消，生成时后端兜底补齐）
+        </label>
+      </div>
+      <div class="field">
+        <label for="scw-hidden">
+          <input id="scw-hidden" v-model="wizard.form.hidden" type="checkbox" />
+          隐藏（仅前端依赖选择列表默认隐藏，被 requires 引用时强制展示）
+        </label>
+      </div>
+    </div>
+
+    <label class="field" for="scw-boots">
+      <span class="field-label">关联 Boot 版本（逗号分隔，留空 = 全部版本可用）</span>
+      <input
+        id="scw-boots"
+        :value="wizard.form.bootVersions"
+        type="text"
+        placeholder="如 3.2.5, 2.7.18"
+        @input="wizard.setBootVersions(($event.target as HTMLInputElement).value)"
+      />
+    </label>
   </div>
 </template>
 

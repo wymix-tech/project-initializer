@@ -60,6 +60,14 @@ export interface StarterConfigForm {
   maintainer: StarterMaintainer
   /** 展示描述（可空，渲染时缺省取 id） */
   description: string
+  /** 是否必选（M3.6）：true 时前端默认勾选且禁止取消，生成时后端兜底补齐 */
+  required: boolean
+  /** 是否在前端依赖选择列表中默认隐藏（M3.8，PR #40 语义）：直落 cfg_starter.hidden */
+  hidden: boolean
+  /** 依赖联动分组（AND-of-OR）：单元素组 = 强制依赖，多元素组 = OR 提示 */
+  requires: string[][]
+  /** 关联 Boot 版本 ID 清单（空 = 全部版本可用） */
+  bootVersions: string[]
   /** 依赖坐标清单（至少一条） */
   dependencies: DependencyRow[]
   /** 联动：配置类目标包名（支持 {basePackage} 等占位符，可空） */
@@ -79,6 +87,10 @@ export function emptyStarterConfigForm(): StarterConfigForm {
     category: 'web',
     maintainer: 'official',
     description: '',
+    required: false,
+    hidden: false,
+    requires: [],
+    bootVersions: [],
     dependencies: [makeDependencyRow()],
     configPackage: '',
     templates: [],

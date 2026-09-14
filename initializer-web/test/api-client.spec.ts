@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, adminApi, ApiError } from '@/api/client'
+import { api, adminApi, adminArchiveApi, adminStructuredApi, ApiError, fileNameOf } from '@/api/client'
 import type { ErrorResponse } from '@/types/api'
 
 const fetchMock = vi.fn()
@@ -246,5 +246,212 @@ describe('adminApi admin 接口封装', () => {
   it('getDraft 失败时抛出 ApiError', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(errorBody(401, '未授权'), false, 401))
     await expect(adminApi.getDraft('starter', 'bad')).rejects.toMatchObject({ code: 401 })
+  })
+})
+
+/** 同时提供 json / text 的成功响应（结构化端点走 text + JSON.parse）。 */
+function textResponse(body: unknown, ok = true, status = 200): Response {
+  return {
+    ok,
+    status,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(body === null ? '' : JSON.stringify(body)),
+  } as unknown as Response
+}
+
+describe('adminStructuredApi 结构化接口', () => {
+  it('getMetadata 携带 token 头', async () => {
+    const view = { javaVersions: [], bootVersions: [] }
+    fetchMock.mockResolvedValueOnce(jsonResponse(view))
+    await expect(adminStructuredApi.getMetadata('tk')).resolves.toEqual(view)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/admin/metadata')
+    expect((init.headers as Record<string, string>)['X-Admin-Token']).toBe('tk')
+  })
+
+  it('putMetadata 带 If-Match 与 operator', async () => {
+    fetchMock.mockResolvedValueOnce(textResponse({ kind: 'metadata', rows: 3, version: 4, summary: 's' }))
+    await adminStructuredApi.putMetadata('tk', { javaVersions: [], bootVersions: [] }, 3)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/admin/metadata')
+    expect(init.method).toBe('PUT')
+    expect((init.headers as Record<string, string>)['If-Match']).toBe('3')
+    expect(JSON.parse(init.body as string)).toEqual({ javaVersions: [], bootVersions: [], operator: 'admin' })
+  })
+
+  it('putMetadata 无版本时不携带 If-Match', async () => {
+    fetchMock.mockResolvedValueOnce(textResponse({ kind: 'metadata', rows: 0, version: 1, summary: 's' }))
+    await adminStructuredApi.putMetadata('tk', { javaVersions: [], bootVersions: [] }, null)
+    const [, init] = fetchMock.mock.calls[0]
+    expect((init.headers as Record<string, string>)['If-Match']).toBeUndefined()
+  })
+
+  it('getStarters / putStarters 走 /starters', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ starters: [] }))
+    await expect(adminStructuredApi.getStarters('tk')).resolves.toEqual({ starters: [] })
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/starters')
+
+    fetchMock.mockResolvedValueOnce(textResponse({ kind: 'starter', rows: 1, version: 2, summary: 's' }))
+    await adminStructuredApi.putStarters('tk', { starters: [] }, null)
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/starters')
+  })
+
+  it('getConflictRules / putConflictRules 走 /conflict-rules', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ rules: [] }))
+    await expect(adminStructuredApi.getConflictRules('tk')).resolves.toEqual({ rules: [] })
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/conflict-rules')
+
+    fetchMock.mockResolvedValueOnce(textResponse({ kind: 'conflict-rule', rows: 0, version: 2, summary: 's' }))
+    await adminStructuredApi.putConflictRules('tk', { rules: [] }, 2)
+    expect((fetchMock.mock.calls[1][1].headers as Record<string, string>)['If-Match']).toBe('2')
+  })
+
+  it('listTemplates / getTemplate 名称做 URL 编码', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ templates: [] }))
+    await adminStructuredApi.listTemplates('tk')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/templates')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ name: 'a/b.ftl', content: 'x', updatedAt: null, sort: 0 }))
+    await adminStructuredApi.getTemplate('tk', 'a/b.ftl')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/templates/a%2Fb.ftl')
+  })
+
+  it('putTemplate 提交 name/content/sort', async () => {
+    fetchMock.mockResolvedValueOnce(textResponse({ kind: 'template', rows: 1, version: 5, summary: 's' }))
+    await adminStructuredApi.putTemplate('tk', 'pom.xml.ftl', '<x/>', 4, 7)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/admin/templates/pom.xml.ftl')
+    expect(JSON.parse(init.body as string)).toEqual({
+      name: 'pom.xml.ftl', content: '<x/>', operator: 'admin', sort: 7,
+    })
+  })
+
+  it('deleteTemplate 走 DELETE 并带 operator 查询参数', async () => {
+    fetchMock.mockResolvedValueOnce(textResponse({ kind: 'template', rows: 0, version: 6, summary: 's' }))
+    await adminStructuredApi.deleteTemplate('tk', 'a.ftl', 5, 'bob')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/admin/templates/a.ftl?operator=bob')
+    expect(init.method).toBe('DELETE')
+    expect((init.headers as Record<string, string>)['If-Match']).toBe('5')
+  })
+
+  it('putTemplates 整体替换走 /templates', async () => {
+    fetchMock.mockResolvedValueOnce(textResponse({ kind: 'template', rows: 2, version: 8, summary: 's' }))
+    await adminStructuredApi.putTemplates('tk', { templates: [] }, null)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/templates')
+  })
+
+  it('readDraftVersion 取自 YAML 契约草稿 version（按 kind 取，不串味）', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ kind: 'starter', contentYaml: null, version: 9, updatedAt: null }))
+    await expect(adminStructuredApi.readDraftVersion('tk', 'starter')).resolves.toBe(9)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/config/starter')
+  })
+
+  it('readDraftVersion 草稿不存在时返回 null', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ kind: 'metadata', contentYaml: null, version: null, updatedAt: null }))
+    await expect(adminStructuredApi.readDraftVersion('tk', 'metadata')).resolves.toBeNull()
+  })
+
+  it('结构化失败时抛 ApiError 含 4002 明细', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve(errorBody(4002, '校验失败明细')),
+    } as unknown as Response)
+    await expect(adminStructuredApi.putStarters('tk', { starters: [] }, null)).rejects.toMatchObject({
+      code: 4002, detail: '校验失败明细',
+    })
+  })
+
+  it('结构化失败且错误体非 JSON 时用 HTTP 状态兜底', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.reject(new SyntaxError('bad')),
+    } as unknown as Response)
+    await expect(adminStructuredApi.getStarters('tk')).rejects.toMatchObject({
+      code: 500, detail: '请求失败（HTTP 500）',
+    })
+  })
+})
+
+describe('adminArchiveApi 归档接口', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('importArchive 以 multipart 提交并返回导入摘要', async () => {
+    const view = { rows: 12, versions: { metadata: 3 }, summary: '元数据 2 项' }
+    fetchMock.mockResolvedValueOnce(textResponse(view))
+    const file = new File(['zip'], 'a.zip', { type: 'application/zip' })
+    await expect(adminArchiveApi.importArchive('tk', file, 4, 'bob')).resolves.toEqual(view)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/admin/config/import?operator=bob')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBeInstanceOf(FormData)
+    expect((init.headers as Record<string, string>)['If-Match']).toBe('4')
+    // 文件字段名与后端 IMPORT_FILE_FIELD 一致
+    expect((init.body as FormData).get('file')).toBeInstanceOf(File)
+  })
+
+  it('importArchive 无版本时不携带 If-Match', async () => {
+    fetchMock.mockResolvedValueOnce(textResponse({ rows: 0, versions: {}, summary: '' }))
+    await adminArchiveApi.importArchive('tk', new File(['x'], 'a.zip'))
+    expect((fetchMock.mock.calls[0][1].headers as Record<string, string>)['If-Match']).toBeUndefined()
+  })
+
+  it('importArchive 失败抛 ApiError（4008 路径穿越明细）', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve(errorBody(4008, '归档非法: 路径穿越')),
+    } as unknown as Response)
+    await expect(adminArchiveApi.importArchive('tk', new File(['x'], 'a.zip'))).rejects.toMatchObject({
+      code: 4008, detail: '归档非法: 路径穿越',
+    })
+  })
+
+  it('exportArchive 下载并返回附件名', async () => {
+    const blob = new Blob(['zip'])
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      blob: () => Promise.resolve(blob),
+      headers: { get: () => 'attachment; filename="initializer-config.zip"' },
+    } as unknown as Response)
+    URL.createObjectURL = vi.fn(() => 'blob:mock')
+    URL.revokeObjectURL = vi.fn()
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    await expect(adminArchiveApi.exportArchive('tk')).resolves.toBe('initializer-config.zip')
+    expect(anchorClick).toHaveBeenCalled()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock')
+  })
+
+  it('exportArchive 失败抛 ApiError', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve(errorBody(4010, '导出失败')),
+    } as unknown as Response)
+    await expect(adminArchiveApi.exportArchive('tk')).rejects.toMatchObject({ code: 4010, detail: '导出失败' })
+  })
+
+  it('fileNameOf 无 Content-Disposition 时回退默认名', () => {
+    expect(fileNameOf({ headers: { get: () => null } } as unknown as Response, 'fallback.zip')).toBe('fallback.zip')
+    expect(
+      fileNameOf({ headers: { get: () => 'attachment; filename=raw.zip' } } as unknown as Response, 'f.zip'),
+    ).toBe('raw.zip')
+  })
+})
+
+describe('adminApi.sync 制品库同步', () => {
+  it('POST /sync 携带 operator 与 token', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ accepted: 3, summary: '同步完成' }))
+    await expect(adminApi.sync('tk', 'bob')).resolves.toEqual({ accepted: 3, summary: '同步完成' })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/admin/sync')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({ operator: 'bob' })
+    expect((init.headers as Record<string, string>)['X-Admin-Token']).toBe('tk')
   })
 })

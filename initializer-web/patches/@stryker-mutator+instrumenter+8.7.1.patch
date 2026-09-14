@@ -1,0 +1,14 @@
+diff --git a/node_modules/@stryker-mutator/instrumenter/dist/src/mutators/string-literal-mutator.js b/node_modules/@stryker-mutator/instrumenter/dist/src/mutators/string-literal-mutator.js
+index a843623..3e79785 100644
+--- a/node_modules/@stryker-mutator/instrumenter/dist/src/mutators/string-literal-mutator.js
++++ b/node_modules/@stryker-mutator/instrumenter/dist/src/mutators/string-literal-mutator.js
+@@ -25,6 +25,7 @@ function isValidParent(child) {
+         (types.isObjectProperty(parent) && parent.key === child.node) ||
+         (types.isClassProperty(parent) && parent.key === child.node) ||
+         (types.isCallExpression(parent) && types.isIdentifier(parent.callee, { name: 'require' })) ||
+-        (types.isCallExpression(parent) && types.isIdentifier(parent.callee, { name: 'Symbol' })));
++        (types.isCallExpression(parent) && types.isIdentifier(parent.callee, { name: 'Symbol' })) ||
++        (types.isCallExpression(parent) && parent.callee.type === 'Import'));
+ }
+ //# sourceMappingURL=string-literal-mutator.js.map
+\ No newline at end of file

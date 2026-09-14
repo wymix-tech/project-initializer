@@ -35,12 +35,18 @@ export interface Starter {
    * 依赖联动（M3.7）：AND-of-OR-groups。每项为一个分组，分组内任一被选即满足该分组，
    * 全部分组满足才算本 starter 的依赖被满足。
    *
-   * - `[['B', 'C']]` —— 需要 B **或** C（B、C 互斥时可只选其一）
-   * - `[['B'], ['C']]` —— 需要 B **和** C
+   * - `[['B', 'C']]` —— 需要 B **或** C（OR 分组，不自动勾选，仅提示）
+   * - `[['B'], ['C']]` —— 需要 B **和** C（单元素分组 = 强制依赖，前端自动选中并锁定）
    *
-   * 前端不自动勾选、不锁定这些依赖项，由用户显式选择；未满足时给出提示，生成期后端兜底拒绝。
+   * 单元素分组的依赖在前端自动选中且不可取消；若其与已选组件互斥，则互斥双方
+   * 都不锁定并标记互斥，由用户二选一切换。未满足时给出提示，生成期后端兜底拒绝。
    */
   requires: string[][]
+  /**
+   * 是否在前端依赖选择列表中默认隐藏（M3.8）：true 时列表不展示，但若被已选组件的
+   * requires 引用则强制展示。隐藏仅影响前端展示，不参与后端生成逻辑。
+   */
+  hidden: boolean
 }
 
 /** 冲突规则清单项：GET /api/metadata/conflict-rules（M3.5） */
@@ -135,3 +141,21 @@ export interface AdminAudit {
 
 /** 管理端配置草稿种类 */
 export type AdminConfigKind = 'metadata' | 'starter' | 'conflict-rule' | 'template'
+
+/**
+ * 制品库同步结果概况（POST /api/admin/sync，M3.3）。
+ *
+ * 各通道字段为同步链路的计数摘要；仅用于管理端提示条展示。
+ */
+export interface AdminSyncOutcome {
+  /** 采纳的同步条目总数 */
+  accepted?: number
+  /** 被手工同名配置覆盖的条目数 */
+  overridden?: number
+  /** 同步后同步层 starter 条目数 */
+  syncedStarters?: number
+  /** 摘要文案（后端给出的可读概况，存在时优先展示） */
+  summary?: string
+  /** 其余通道计数（原样透传，前端不解读） */
+  [key: string]: unknown
+}

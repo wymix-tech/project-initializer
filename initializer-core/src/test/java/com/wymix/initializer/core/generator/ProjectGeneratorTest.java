@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -27,7 +28,7 @@ class ProjectGeneratorTest {
         try (InputStream in = ProjectGeneratorTest.class.getResourceAsStream("/catalog/metadata.yml")) {
             // starter 元信息来自清单：装载 metadata 后联动合并
             MetadataCatalog catalog = MetadataCatalog.load(in).merge(testStarterCatalog());
-            generator = new ProjectGenerator(catalog, new TemplateRenderer(), testStarterCatalog());
+            generator = new ProjectGenerator(catalog, ClasspathTemplates.renderer(), testStarterCatalog());
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -329,7 +330,7 @@ class ProjectGeneratorTest {
         MetadataCatalog catalog = MetadataCatalog.load(
                 new java.io.ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)))
                 .merge(syntheticCatalog());
-        ProjectGenerator gen = new ProjectGenerator(catalog, new TemplateRenderer(), syntheticCatalog());
+        ProjectGenerator gen = new ProjectGenerator(catalog, ClasspathTemplates.renderer(), syntheticCatalog());
         assertThat(catalog.requiredStarters("3.2.5")).containsExactly("framework-core");
 
         byte[] zip = gen.generate(new GenerateRequest("com.example", "demo-app", "com.example.demo",
@@ -356,7 +357,7 @@ class ProjectGeneratorTest {
         MetadataCatalog catalog = MetadataCatalog.load(
                 new java.io.ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)))
                 .merge(syntheticCatalog());
-        ProjectGenerator gen = new ProjectGenerator(catalog, new TemplateRenderer(), syntheticCatalog());
+        ProjectGenerator gen = new ProjectGenerator(catalog, ClasspathTemplates.renderer(), syntheticCatalog());
 
         // 只选 dal：依赖联动自动带出 core
         String pomWithDal = readEntry(gen.generate(new GenerateRequest("com.example", "demo-app",
@@ -368,6 +369,90 @@ class ProjectGeneratorTest {
                 "com.example.demo", "17", "3.2.5", List.of("web"))), "demo-app/pom.xml");
         assertThat(pomWebOnly).contains("spring-boot-starter-web").contains("framework-core")
                 .doesNotContain("framework-dal");
+    }
+
+    // ==================== T5：模板 DB 唯一数据源 ====================
+
+    @Test
+    void validate_withMissingLinkageTemplate_throws3001BeforeWritingAnyByte() {
+        // T5：starter 声明了联动模板而模板集缺失时，validate 必须在渲染前失败（不产出半成品）
+        ProjectGenerator incomplete = new ProjectGenerator(
+                catalogForValidation(), new TemplateRenderer(Map.of("application.yml.ftl", "x")),
+                validationStarters());
+        assertThatThrownBy(() -> incomplete.validate(new GenerateRequest("com.example", "demo-app",
+                "com.example.demo", "17", "3.2.5", List.of("xxx-redis-spring-boot-starter"))))
+                .isInstanceOfSatisfying(com.wymix.initializer.api.error.BusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(com.wymix.initializer.api.error.ErrorCode.TEMPLATE_RENDER_FAILED);
+                    assertThat(e.getMessage()).contains("starters/xxx-redis/RedisConfig.java.ftl");
+                });
+    }
+
+    @Test
+    void validate_withCompleteTemplateSet_passes() {
+        // 完整模板集 → 校验通过（与生成共用同一口径）
+        ProjectGenerator complete = new ProjectGenerator(catalogForValidation(),
+                ClasspathTemplates.renderer(), validationStarters());
+        complete.validate(new GenerateRequest("com.example", "demo-app",
+                "com.example.demo", "17", "3.2.5", List.of("web")));
+    }
+
+    @Test
+    void validate_unknownStarter_throws2002BeforeTemplateCheck() {
+        // 版本/清单校验先于模板可达性：未知 starter 报 2002 而非 3001
+        ProjectGenerator generator = new ProjectGenerator(catalogForValidation(),
+                ClasspathTemplates.renderer(), validationStarters());
+        assertThatThrownBy(() -> generator.validate(new GenerateRequest("com.example", "demo-app",
+                "com.example.demo", "17", "3.2.5", List.of("ghost-starter"))))
+                .isInstanceOfSatisfying(com.wymix.initializer.api.error.BusinessException.class,
+                        e -> assertThat(e.getErrorCode())
+                                .isEqualTo(com.wymix.initializer.api.error.ErrorCode.UNKNOWN_STARTER));
+    }
+
+    @Test
+    void validate_incompatibleJavaVersion_throws2001BeforeTemplateCheck() {
+        ProjectGenerator generator = new ProjectGenerator(catalogForValidation(),
+                ClasspathTemplates.renderer(), validationStarters());
+        assertThatThrownBy(() -> generator.validate(new GenerateRequest("com.example", "demo-app",
+                "com.example.demo", "17", "2.7.18", List.of("web"))))
+                .isInstanceOfSatisfying(com.wymix.initializer.api.error.BusinessException.class,
+                        e -> assertThat(e.getErrorCode())
+                                .isEqualTo(com.wymix.initializer.api.error.ErrorCode.INCOMPATIBLE_VERSION));
+    }
+
+    @Test
+    void rendererTemplateSetAndLinkageTemplateSet_shouldStaySameInstance() {
+        // T5：ProjectGenerator 未显式传模板集时，必须与渲染器共用同一份（否则联动渲染会漏模板）
+        TemplateRenderer renderer = ClasspathTemplates.renderer();
+        ProjectGenerator generator = new ProjectGenerator(catalogForValidation(), renderer,
+                validationStarters());
+        // 通过「缺模板的渲染器」反向验证共用关系：删掉 starter 联动模板后生成必失败
+        assertThat(renderer.templates()).containsKey("starters/xxx-redis/RedisConfig.java.ftl");
+        generator.validate(new GenerateRequest("com.example", "demo-app", "com.example.demo",
+                "17", "3.2.5", List.of("web")));
+    }
+
+    private static MetadataCatalog catalogForValidation() {
+        try (InputStream in = ProjectGeneratorTest.class.getResourceAsStream("/catalog/metadata.yml")) {
+            return MetadataCatalog.load(in).merge(validationStarters());
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static com.wymix.initializer.core.starter.StarterCatalog validationStarters() {
+        try (InputStream in = ProjectGeneratorTest.class.getResourceAsStream(
+                "/catalog/starters/xxx-redis-spring-boot-starter.yml")) {
+            return com.wymix.initializer.core.starter.StarterCatalog.of(List.of(
+                    new com.wymix.initializer.core.starter.StarterCatalogEntry("web", "web",
+                            com.wymix.initializer.core.starter.Maintainer.OFFICIAL, "Spring Web",
+                            List.of(new com.wymix.initializer.core.starter.DependencyCoord(
+                                    "org.springframework.boot", "spring-boot-starter-web", null)),
+                            new com.wymix.initializer.core.starter.LinkageSpec(null, List.of(), List.of(), List.of()),
+                            false, List.of()),
+                    com.wymix.initializer.core.starter.YamlStarterParser.parse(in)));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static String readEntry(byte[] zipBytes, String entryName) throws Exception {
