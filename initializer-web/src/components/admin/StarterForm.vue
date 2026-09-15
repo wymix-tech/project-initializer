@@ -45,6 +45,7 @@ const loading = ref(false)
 const saving = ref(false)
 const version = ref<number | null>(null)
 const starters = ref<StarterDto[]>([])
+const requiresDrafts = ref<string[]>([])
 const summary = ref('')
 
 const categories = ['web', 'data', 'middleware', 'tool']
@@ -151,11 +152,13 @@ function addStarter(): void {
     linkages: emptyLinkage(),
     sort: starters.value.length,
   })
+  requiresDrafts.value.push('')
 }
 
 /** 删除指定 starter 行。 */
 function removeStarter(index: number): void {
   starters.value.splice(index, 1)
+  requiresDrafts.value.splice(index, 1)
 }
 
 /** @returns 一条空白依赖坐标行 */
@@ -211,6 +214,19 @@ function parseRequires(text: string): string[][] {
     .filter((group) => group.length > 0)
 }
 
+/**
+ * 将 requires 编辑草稿写回 starter 模型。
+ *
+ * <p>仅在 change / blur 时提交，避免输入过程中按回车产生的空行被立即吞掉。
+ *
+ * @param index starter 在列表中的索引
+ */
+function commitRequiresDraft(index: number): void {
+  const st = starters.value[index]
+  if (!st) return
+  st.requires = parseRequires(requiresDrafts.value[index] ?? '')
+}
+
 /** 读取 starter 清单草稿。 */
 async function load(): Promise<void> {
   loading.value = true
@@ -219,7 +235,10 @@ async function load(): Promise<void> {
     undefined,
     'starter 清单读取失败',
   )
-  if (view) starters.value = view.starters
+  if (view) {
+    starters.value = view.starters
+    requiresDrafts.value = view.starters.map((s) => requiresText(s))
+  }
   const draft = await props.session.run(
     () => adminStructuredApi.readDraftVersion(props.session.token.value, 'starter'),
     undefined,
@@ -385,10 +404,11 @@ defineExpose({ load })
         <label class="field">
           <span>requires 依赖联动（一行一组，组内逗号分隔；单元素行 = 强制依赖）</span>
           <textarea
-            :value="requiresText(st)"
+            v-model="requiresDrafts[i]"
             rows="2"
             placeholder="b, c&#10;d"
-            @input="st.requires = parseRequires(($event.target as HTMLTextAreaElement).value)"
+            @change="commitRequiresDraft(i)"
+            @blur="commitRequiresDraft(i)"
           ></textarea>
         </label>
 
