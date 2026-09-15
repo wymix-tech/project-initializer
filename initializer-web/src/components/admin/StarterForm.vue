@@ -494,7 +494,12 @@ defineExpose({ load })
   padding: 6px 8px; border: 1px solid #d0d7de; border-radius: 4px; font-size: 13px;
   background: #fff; font-family: inherit;
 }
-.starter-card .field textarea { resize: vertical; }
+.starter-card .field textarea {
+  width: 100%;
+  resize: vertical;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
 .two-col { display: grid; gap: 10px; grid-template-columns: 1fr; }
 @media (min-width: 900px) { .two-col { grid-template-columns: 1fr 1fr; } }
 .field-note { font-style: normal; font-size: 11px; color: #6a737d; margin-left: 4px; }

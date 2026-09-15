@@ -119,6 +119,8 @@ h3 { font-size: 15px; margin-bottom: 8px; }
 .requires-input {
   width: 100%; padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px;
   font-size: 14px; font-family: inherit; resize: vertical;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 .block { margin-bottom: 16px; }
 .block-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; color: #24292f; }
