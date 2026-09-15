@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="initializer-web/public/logo-full.svg" alt="PI · Project Initializer" width="300" />
+</p>
+
 # project-initializer
 
 Java 项目脚手架生成平台（配置驱动型，对标 [Spring Initializr](https://start.spring.io/)）。

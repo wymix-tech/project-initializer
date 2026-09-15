@@ -13,7 +13,40 @@ const view = ref<'wizard' | 'admin'>('wizard')
     <header class="app-header">
       <div class="header-inner">
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true"></span>
+          <!-- 品牌 Logo：一体式 PI 字标——P 竖笔向下转折成基座，基座右端升起 I -->
+          <svg
+            class="brand-mark"
+            width="22"
+            height="22"
+            viewBox="0 0 64 64"
+            role="img"
+            aria-hidden="true"
+          >
+            <defs>
+              <linearGradient id="piBrandGrad" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#6db33f" />
+                <stop offset="1" stop-color="#12a37f" />
+              </linearGradient>
+            </defs>
+            <rect
+              x="5"
+              y="5"
+              width="54"
+              height="54"
+              rx="17"
+              fill="none"
+              stroke="url(#piBrandGrad)"
+              stroke-width="3.2"
+            />
+            <path
+              d="M19 19V39q0 6 6 6h14q6 0 6-6V19M19 19h6a7 7 0 0 1 0 14H19"
+              fill="none"
+              stroke="url(#piBrandGrad)"
+              stroke-width="7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
           <span class="brand-name">项目初始化向导</span>
         </div>
         <nav class="app-nav">
@@ -71,10 +104,7 @@ body { min-height: 100vh; background: #fff; }
   justify-content: space-between;
 }
 .brand { display: flex; align-items: center; gap: 10px; color: #fff; }
-.brand-mark {
-  width: 18px; height: 18px; border-radius: 4px; background: #6db33f;
-  display: inline-block;
-}
+.brand-mark { display: block; border-radius: 5px; }
 .brand-name { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
 .app-nav { display: flex; gap: 4px; }
 .nav-btn {

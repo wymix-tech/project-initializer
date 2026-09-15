@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 264 64" width="264" height="64" role="img" aria-labelledby="piWordmarkTitle">
+  <title id="piWordmarkTitle">PI · Project Initializer</title>
+  <defs>
+    <linearGradient id="piGradW" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6db33f" />
+      <stop offset="1" stop-color="#12a37f" />
+    </linearGradient>
+  </defs>
+  <rect x="5" y="5" width="54" height="54" rx="17" fill="none" stroke="url(#piGradW)" stroke-width="3.2" />
+  <path
+    d="M19 19V39q0 6 6 6h14q6 0 6-6V19M19 19h6a7 7 0 0 1 0 14H19"
+    fill="none"
+    stroke="url(#piGradW)"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <g font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+    <text x="84" y="31" font-size="30" font-weight="700" fill="#1b1f23" letter-spacing="1">PI</text>
+    <text x="84" y="50" font-size="14" font-weight="500" fill="#5c666f" letter-spacing="1.2">Project Initializer</text>
+  </g>
+</svg>

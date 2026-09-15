@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="piLogoTitle">
+  <title id="piLogoTitle">PI · Project Initializer</title>
+  <desc>一体式 PI 字标：P 的竖笔向下转折成基座，基座右端升起 I；碗自竖笔顶端分出</desc>
+  <defs>
+    <linearGradient id="piGrad" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6db33f" />
+      <stop offset="1" stop-color="#12a37f" />
+    </linearGradient>
+  </defs>
+  <rect x="5" y="5" width="54" height="54" rx="17" fill="none" stroke="url(#piGrad)" stroke-width="3.2" />
+  <path
+    d="M19 19V39q0 6 6 6h14q6 0 6-6V19M19 19h6a7 7 0 0 1 0 14H19"
+    fill="none"
+    stroke="url(#piGrad)"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

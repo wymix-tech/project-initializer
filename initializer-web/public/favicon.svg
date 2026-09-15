@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="piFaviconTitle">
+  <title id="piFaviconTitle">PI</title>
+  <defs>
+    <linearGradient id="piTile" x1="4" y1="4" x2="60" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#57a832" />
+      <stop offset="1" stop-color="#0f8168" />
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#piTile)" />
+  <g transform="translate(32 32) scale(1.15) translate(-32 -32)">
+    <path
+      d="M19 19V39q0 6 6 6h14q6 0 6-6V19M19 19h6a7 7 0 0 1 0 14H19"
+      fill="none"
+      stroke="#ffffff"
+      stroke-width="7"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </g>
+</svg>
