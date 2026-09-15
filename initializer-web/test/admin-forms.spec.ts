@@ -305,6 +305,22 @@ describe('StarterForm starter 清单表单', () => {
     expect(body.starters[0].requires).toEqual([['x', 'y'], ['z']])
   })
 
+  it('requires 编辑时末尾换行保留，保存时才规范化', async () => {
+    const wrapper = await mountForm(StarterForm, {
+      '/api/admin/starters': { starters: [starter] },
+      '/api/admin/config/starter': { kind: 'starter', contentYaml: null, version: null, updatedAt: null },
+      'PUT /api/admin/starters': { kind: 'starter', rows: 1, version: 1, summary: 's' },
+    })
+    const textarea = wrapper.find('textarea')
+    await textarea.setValue('x\n')
+    // setValue 会触发 change，模型会过滤掉末尾空组，但编辑态草稿仍保留换行
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('x\n')
+    await wrapper.findAll('button').find((b) => b.text().includes('保存草稿'))!.trigger('click')
+    await settle()
+    const body = JSON.parse(lastCall('PUT', '/api/admin/starters')!.body as string)
+    expect(body.starters[0].requires).toEqual([['x']])
+  })
+
   it('空白 id 条目在保存成功后被剔除', async () => {
     const wrapper = await mountForm(StarterForm, {
       '/api/admin/starters': { starters: [] },
