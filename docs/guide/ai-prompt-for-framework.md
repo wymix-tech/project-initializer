@@ -1,490 +1,337 @@
-# AI Agent 指导提示词：分析框架项目并生成脚手架平台配置（v5）
+# AI Agent 指导提示词：分析框架项目并生成脚手架平台配置
 
-> 用途：将本提示词交给 AI Agent，让其通读一个框架项目代码库，产出可接入本脚手架平台的四段配置（metadata / starter / conflict-rule / template），并**打包成可直接导入平台的归档产物**。
->
-> 两种交付形态，**默认走 A**：
-> - **A. 导入产物（推荐，Agent 在代码库中有写权限时）**：在框架仓库内落盘成一套目录并打包为 **ZIP 归档**，到平台管理端「导入导出 → 导入到草稿 → 发布台发布」一次导入即可（布局与字段见**第五节**）
-> - **B. 粘贴到管理端**：把四段 YAML 分别复制到管理后台对应草稿页发布（见第一～四节的多文档写法）
->
-> 两种形态**字段相同、文件组织不同**（尤其模板：导入产物里模板是**纯模板全文**，不是 `name/content` 的 YAML），动手前先确认走哪条。
+用途：交给能读取 Java 框架源码、创建文件和执行命令的 Agent，生成供本平台「导入导出」使用的完整 ZIP。默认交付真实文件，不以大段 YAML 回复代替产物。
 
-## 任务背景
+使用方法：将下面「提示词开始」至「提示词结束」的内容交给 Agent，补充框架仓库路径即可。最好同时提供本平台源码路径或版本，以及目标环境导出的配置包。没有平台运行环境时仍可分析和生成文件，但必须如实列出尚未验证的步骤。
 
-你是一个脚手架配置生成专家。我有一个**框架项目**（组织或个人对 Spring Boot 的二次封装，封装了若干能力模块，可能带有配置类、集成抽象类、统一 yml 配置约定），**布局不固定**：可能是单模块，也可能是父子多模块，能力模块的命名也不一定是 `*-spring-boot-starter`。你的任务是**通读框架代码库，按特征而非命名识别能力模块**，产出四段 YAML 配置，用于接入"项目脚手架生成平台"。产出结果将直接复制进平台管理后台发布，因此必须严格符合下述格式，**一个字段都不能编造**。
+v6 重点修正：基础模板漏交、父 POM/BOM 混用、传递依赖误建模、单 JAR 虚假拆分、Bean 互斥误判、版本占位符未解析、导入路径的重复 ID 限制，以及“导入成功等于生成可用”的错误判断。
 
-## 第〇步：先判结构，再识别模块
+---
 
-### 结构判定（父子多模块优先）
+## 提示词开始
 
-先看根目录是否有聚合 POM（`packaging: pom` 且含 `<modules>`）：
+你是一名 Java 框架分析与脚手架接入工程师。请读取目标框架仓库，分析真实可消费的能力、依赖、配置约定和版本边界，生成可供 `wymix-tech/project-initializer` 导入的完整配置归档，并尽可能用平台真实链路验证生成结果。
 
-- **父子多模块**：根 POM 是聚合壳，各能力散落在子模块中。此时：
-  - 逐个子模块排查，一个子模块可能承载一个或多个能力（如 `xxx-spring-boot` 里同时有自动装配 + 多个 `@ConfigurationProperties`）
-  - GAV 以**实际承载能力的子模块**为准（artifactId 取该子模块自己的 `<artifactId>`，不要取根 POM 的）
-  - 注意 `dependencyManagement` / BOM：子模块依赖版本可能由根 POM 或父 POM 统一管理，此时依赖处不写 version，需在 metadata 中确认由哪个 Boot 版本管理
-  - 多层嵌套（父 → 中间父 → 子）也按同样方式递归下探
-  - **顺带记录框架父 POM**：那个被各子模块 `<parent>` 引用、或集中声明 `dependencyManagement` 的 POM，其 GAV + version 填入第一节各 `bootVersions[].frameworkParent`（生成的项目将继承它，由它统一管理 Boot BOM 与内部依赖版本；不同 Boot 版本可挂不同父 POM）
-- **单模块**：整个仓库就是一个能力包，按"能力"而不是"模块"切分 starter——同一模块内如果有多组独立可用的自动装配（各自的 `@ConfigurationProperties` + `@AutoConfiguration`），应拆成多个 starter
+### 1. 输入、目标与执行边界
 
-### 能力模块识别特征（命名仅作线索，不作为依据）
+输入项如下，未提供时先从当前工作区、POM、示例和已有导出包中寻找，不要反复询问可自行查明的信息：
 
-以下特征**满足任意一条即视为候选能力模块**，不能只按 `*-spring-boot-starter` 后缀找：
+| 输入 | 说明 |
+|---|---|
+| 框架仓库 | 当前目录或用户指定的路径、URL、分支/提交 |
+| 平台仓库 | project-initializer 源码路径、URL、分支/提交；用于核验契约和获取基础模板 |
+| 接入范围 | 指定模块、版本线；默认覆盖当前提交中有证据支持的可用能力 |
+| 接入方式 | 新平台初始化，或保留现有配置后扩展；未指定按独立完整包生成 |
+| 现有配置 | 平台导出的 ZIP，可选；扩展已有环境时优先提供 |
+| 输出位置 | 默认在框架仓库中新建 `initializer-integration/`，不覆盖已有产物 |
+| 验证环境 | 可选的独立测试平台、JDK、Maven/Gradle、制品库配置 |
 
-1. `META-INF/spring/...AutoConfiguration.imports` 或 `META-INF/spring.factories` 存在自动装配登记
-2. 存在 `@AutoConfiguration` / `@Configuration` 装配类并对外提供 Bean
-3. 存在 `@ConfigurationProperties` 属性类（或 `@ConfigurationPropertiesScan` 扫描范围）
-4. 存在 `@EnableConfigurationProperties` 指向的属性类
-5. 对外暴露可继承/实现的抽象类、接口、SPI 扩展点
-6. 提供 `application.yml` / `additional-spring-configuration-metadata.json` 约定的默认配置
-7. 存在 `provide` / `requires` 式 SPI 文件（`META-INF/services/`）
+目标是让使用者选择框架版本和能力后，生成依赖正确、配置必要、可构建的业务项目。分析报告服务于此目标，不能只罗列仓库模块。
 
-对每个候选提取：GAV 坐标、版本、分类、功能描述、需要用户编写的配置类、需追加进 application.yml 的配置片段、可继承的抽象类、**是否必选**、**是否被其他模块隐式依赖（决定是否隐藏）**。识别结果先列一张"候选清单"（模块/能力 → 子模块 `<artifactId>` → **清单 id（= artifactId）** → GAV → 判定依据 → **是否必选 + 必选依据** → **是否被上层模块隐式依赖 + 依据（决定 `hidden`）** → **依赖哪些能力（requires）**），确认无遗漏再产出配置。
+执行要求：
 
-### starter id 取值规则（**一律取模块 artifactId**）
+- 遵循仓库适用的 AGENTS.md 等规则。读取源码取证，在指定输出目录落盘；不要为了匹配平台而修改框架业务代码或平台生成引擎。
+- 每个关键结论区分「源码事实」「推断」「待确认」，注明文件路径、符号或行号。记录框架及平台提交 SHA；无法取得 SHA 时说明原因。
+- 示例中的 `acme`、`3.2.5`、类名和版本仅演示格式，不能原样充当项目事实。
+- 缺少关键版本、发布坐标或启动契约时，继续完成其他部分，将受影响项列为阻塞；不要伪造数据或把不完整包标为可用。
+- 不把 settings.xml、仓库凭据、token、真实数据库密码或业务配置打入产物。构建所需私服凭据由外部配置提供。
+- 默认只生成文件并在隔离环境验证；不向用户正在使用的平台写草稿或发布，不执行 Maven deploy，不自动推送源码。用户明确授权的动作按授权执行。
 
-starter 清单的 `id` **直接取"实际承载能力的子模块"的 `<artifactId>` 原文**，不缩写、不翻译、不自造、不加减前后缀。
+### 2. 先核验平台契约，再分析框架
 
-```yaml
-# 子模块 POM 中：<artifactId>acme-dynamic-datasource</artifactId>
-id: acme-dynamic-datasource     # ✅ 与 <artifactId> 字面完全一致
-# id: dynamic-datasource          # ❌ 截断，回查不到模块
-# id: acme-dynamic-ds             # ❌ 缩写，与 artifactId 对不上
-# id: AcmeDynamicDatasource       # ❌ 改了命名风格，不再是 artifactId
-```
+若可访问平台源码，先沿以下真实入口核对行为；源码与旧说明冲突时，以当前目标版本执行路径为准，将差异记录到报告。不能只读 README 或只验证 core 解析器。
 
-为什么这样规定：
+| 契约 | 优先阅读的平台源码（相对仓库根） |
+|---|---|
+| ZIP 布局、大小与路径限制 | `initializer-app/src/main/java/com/wymix/initializer/app/admin/repository/ConfigArchiveCodec.java` |
+| 导入替换范围与解析模式 | 同模块 `admin/service/ConfigImportExportService.java` |
+| 导入字段、重复 ID、模板语法 | 同模块 `admin/repository/StructuredSnapshotCodec.java`、`MetadataDoc.java` |
+| 发布装配与校验 | 同模块 `admin/refresh/StructuredCatalogAssembler.java`、`admin/service/ConfigService.java` |
+| starter 格式与依赖图 | `initializer-core/src/main/java/com/wymix/initializer/core/starter/YamlStarterParser.java`、`StarterCatalog.java` |
+| 渲染变量、基础模板与生成路径 | 同模块 `generator/ProjectGenerator.java`、`TemplateRenderer.java`、`MavenRenderer.java`、`GradleRenderer.java` |
+| 联动、占位符、配置合并 | 同模块 `starter/LinkageRenderer.java`、`PlaceholderPolicy.java`、`YmlFragmentMerger.java` |
+| 可复用基础模板 | `initializer-core/src/main/resources/templates/` 下六份基础模板 |
 
-- **可追溯**：看到 id 就能在框架仓库里直接 grep 到对应模块，人工复核与后续维护零成本
-- **零歧义**：父子多模块下不同子模块可能有相似能力，artifactId 天然唯一（多 Boot 线再用 `bootVersions` 区分）
-- **免映射表**：`metadata.bootVersions[].starters`、`requires`、`conflict-rule.starters`、模板路径 `starters/{id}/…` 全部复用同一字面值，不需要维护"展示名 ↔ 模块名"的第二张表
+本提示词提供以下保守基线；若目标平台代码已变更，先验证再调整，不为了遵守过期文字生成不兼容文件：
 
-执行要点：
+1. ZIP 导入写入数据库草稿，发布后才切换运行快照。当前导入会替换元数据、手工 starter、冲突规则、模板草稿，**不是增量追加**；同步来源 starter 另有生命周期。
+2. 模板集是完整数据源，生成时没有 classpath 基础模板兜底。独立包必须提供基础模板及所有联动模板。
+3. 当前 ZIP 导入经过 `StructuredSnapshotCodec.validateStarterMeta`，对 starter ID 做全局查重。即使 core 支持不同 Boot 作用域同 ID，也不能据此认定归档可导入。
+4. `requires` 推荐统一使用二维字符串数组；解析器不接受字符串与数组混排，例如 `[[a, b], c]`。
+5. 管理端默认是结构化表单。不要把“将四段 YAML 粘贴进四个页面”作为主交付方式；旧 YAML API 只在明确需要兼容时单独说明。
+6. 外部 `catalog/` 是保留兼容通道，会在启动时遮蔽数据库快照，不作为新接入的默认方案。
 
-- 大小写、中划线、下划线**照抄** artifactId，不要改成驼峰或点分
-- 父子多模块取**承载该能力的子模块** `<artifactId>`，**不要**取根 POM 或中间父 POM 的（与上面"结构判定"的 GAV 口径一致）
-- 单模块仓库按能力拆分出多个 starter 时，id 仍以 artifactId 为前缀并加能力后缀（如 `acme-framework-core-web`），须在候选清单注明拆分依据
-- **同一 id 在四段配置中必须字面一致**：清单 `id` ↔ `metadata.bootVersions[].starters` ↔ `requires` ↔ `conflict-rule.starters` ↔ 模板 `name` 中的 `starters/{id}/` 路径
-- 官方 starter（`web` / `data-jpa` / `data-redis` / `actuator` 等）不受此规则约束，但**框架未提供时不得引用**
+### 3. 框架取证：从可消费制品识别能力
 
-### 必选能力判定（`required: true`）
+递归检查根 POM、所有子模块、parent 链、BOM、properties、profiles、dependencyManagement、直接依赖、optional/scope/exclusions，以及已有业务示例。区分聚合模块、可继承 parent、BOM、可发布 JAR、自动配置模块、测试模块和演示应用。
 
-必选项 = 用户生成项目时**默认勾选且禁止取消**的依赖（后端也会兜底自动补齐，绕过前端直调 API 一样会加上）。
-因为它无法被用户去掉，判定必须**保守**：**只有确凿证据才标，不确定就不标**。
+识别线索包括：
 
-判定为必选（满足任一，且须能在代码中指出依据）：
+- `AutoConfiguration.imports`、`spring.factories`、`@AutoConfiguration`、对外 Bean 装配。
+- `@ConfigurationProperties`、配置元数据、`@Value`、默认资源、启用开关及条件装配。
+- SPI、接口和抽象类、`@Enable…` 注解、业务应用实际接入代码。
+- 项目构建/CI 使用的 JDK、Spring Boot 版本，以及模块实际发布方式。
 
-1. **框架核心/基础包**：其他能力模块都依赖它，或它提供全局基础设施（`ApplicationContextHolder`、统一响应体、全局异常处理、统一配置加载等），缺了其他能力无法工作
-2. **缺了起不来**：没有它会导致 Spring 上下文启动失败（启动期强依赖的装配、全局前置初始化）
-3. **框架父 POM 的 `<dependencies>` 中直接声明的模块**（注意：是 `<dependencies>`，不是 `dependencyManagement`）——项目继承父 POM 后本来就一定有
+这些线索仅用于发现候选，不意味着每个类或子模块都应成为一个可选 starter。
 
-不应标必选：
+产出候选表，至少包含：模块/能力、实际制品 GAV、starter ID、适用版本线、自动装配入口、配置前缀、必选/隐藏/依赖关系及证据、纳入或排除理由。对测试、样例、聚合壳等明确记录排除原因，避免“扫描过但漏报”与“有意排除”混淆。
 
-- 独立可选能力：缓存、动态数据源、监控、服务发现、数据迁移、测试支撑等
-- 只是"推荐搭配"或"多数项目会用到"，但去掉仍能正常启动的能力
-- 在代码里找不到明确依据的能力
+建模规则：
 
-产出时：先在候选清单标注每个能力是否必选**及依据**，再据此在**第二节 starter 清单**对应文档上写 `required: true`（默认省略即为可选；metadata 已无 `starters` 节，不要写在那边）。
+- 默认一个可独立消费的制品对应一个 starter，ID 使用该制品 artifactId 原文。不同 group 的同名 artifact 或不同版本线需要区分时，使用稳定后缀并记录 ID→GAV 映射；所有引用随之统一。
+- 不因一个 JAR 有多个自动配置类，就拆成多个看似独立的选项。选择同一 JAR 仍会带入全部代码；只有存在真实开关、可选依赖或消费端配置能控制能力时才考虑拆分，并验证组合行为。
+- 不把源码目录名当成 GAV；解析继承的 groupId/version 和 `${revision}` 等属性。只在生成项目中确有定义并验证可解析时，才保留 Maven 属性表达式。
+- 仓库内依赖存在版本管理，不代表生成的业务项目会继承该管理。只有生成项目实际继承/导入的 parent/BOM 管理了依赖版本，才省略依赖 version；否则给出已解析的真实版本。
+- 非 optional 的 compile/runtime 传递依赖通常由 Maven/Gradle 带入，不要机械地转成 `requires`。分析 exclusions、optional、provided、profile 和消费端显式配置后再决定。
+- 可纳入有真实接入依据的官方依赖，但必须同时声明 starter 条目和坐标；不要填充与框架无关的默认示例选项。
 
-### 隐藏能力判定（`hidden: true`）——被上层模块隐式依赖的模块一律隐藏
+### 4. 版本、父 POM 与选择约束
 
-**背景**：框架里常见"内部基座 / 公共模块"，它并不打算让用户主动勾选——用户选中上层能力后，Maven 会把它**传递依赖**进来。这类模块若出现在前端依赖选择列表里，勾了是重复（坐标已由上层带入），不勾又可能触发"缺少依赖"告警，纯属噪音。
-**规则：凡是已被其他 starter 隐式依赖（传递引入）、且用户不会单独选择的模块，一律标 `hidden: true`。**
+#### 4.1 版本矩阵
 
-#### 判定为 `hidden: true`（满足任一，须能在代码/POM 中指明依据）
+- 只列框架代码、文档、构建或验证证据支持的版本。`source/target=17` 不能单独证明 Java 21 已验证兼容；框架版本号也不等于 Spring Boot 版本号。
+- metadata 的 Boot ID、真实 Boot 插件版本、框架制品版本、parent 版本分别记录。内部框架 ID 若不是 Boot 插件可解析版本，必须调整 Gradle 模板使用真实插件版本，并明确映射，不能直接把内部 ID 传给 Boot 插件。
+- `recommendedBootVersion` 必须存在，且支持该 Java ID。
+- 为每个 Boot 条目显式列出 starter 白名单，并在 starter 上显式声明 `bootVersions`，便于检查版本边界。不以空列表表示“无可选项”，因为平台可能将空列表解释为全部可选。
+- 多版本线不能在当前导入包里重复声明同 ID。可共用配置则用一个条目关联多个 Boot ID；坐标/联动不同时使用有映射记录的版本后缀 ID，或按用户指定拆成独立完整包。
 
-1. **传递依赖引入**：该模块出现在**其他候选 starter 的 POM `<dependencies>`** 中（compile / runtime 作用域），选中上层 starter 后 Maven 自动带入——用户无需也无法单独决定是否引入
-2. **纯内部基座**：只为其他模块提供公共类型、工具类、SPI 或常量，自身**没有独立可用的自动装配**（无 `AutoConfiguration.imports`、无 `@ConfigurationProperties`、无对外 Bean），单独选中不产生任何效果
-3. **已被必选项覆盖**：某个 `required: true` 的 starter 已直接依赖它（等价于"所有生成的项目一定会有"）
+#### 4.2 父 POM 与 BOM
 
-判定方法（**优先读 POM，不要靠猜**）：
+- 只有经业务样例或有效 POM 证明可被消费端继承的 POM，才填写 `frameworkParent`。根聚合 POM、有 dependencyManagement 的 POM、BOM 并不自动等于业务项目 parent。
+- 核对 parent 的发布可用性、继承的依赖/插件、repositories、编译配置和业务样例。仅在本地 reactor 可用且未发布时，标明需要先安装/发布的前提。
+- BOM 通常通过 dependencyManagement import 接入；需要时在 `pom.xml.ftl`/`build.gradle.ftl` 中加入真实 BOM 导入。不要为了容纳 BOM 而滥用 `frameworkParent`。
+- Maven parent 不会自动作用于 Gradle。需要支持 Gradle 时单独验证 BOM、私服和版本管理；不能把 Maven 成功等同于双构建工具成功。
+- 自定义构建模板时保留动态 parent、依赖列表和版本渲染能力，不把某个模块或某次勾选结果硬编码为所有项目共有依赖。
 
-- 逐个读候选模块的 POM `<dependencies>`，把其中指向**框架内部其他候选模块**的 `<artifactId>` 记为"被依赖方"
-- 对每个"被依赖方"，若**没有**"用户会主动单独使用"的证据（独立自动装配入口、独立 `@ConfigurationProperties` 前缀、文档中作为独立能力介绍），即标 `hidden: true`
-- 可用依赖树交叉验证：`mvn -q dependency:tree -Dincludes=<框架 groupId>`，看它是否总是挂在别的模块下面
+#### 4.3 required、hidden、requires、冲突
 
-#### 不应标 hidden
-
-- 用户可能**单独**使用它的能力（有独立自动装配入口与独立配置项）→ 保持可见
-- 它虽被某上层模块依赖，但**上层是可选的**——用户不选上层时可能想直接选它 → 保持可见，用 `requires` 表达关系即可
-- 拿不准 → **不标**。`hidden` 只是"默认不展示"，漏标最多列表长一点；错标会让用户彻底找不到该能力
-
-#### `hidden` / `required` / `requires` 三者区别（**不要混用**）
-
-| 字段 | 语义 | 用户感知 |
+| 字段 | 使用依据 | 不足以成立的依据 |
 |---|---|---|
-| `hidden: true` | 依赖选择列表**默认不展示**；后端检索仍返回，正常参与依赖 / 互斥 / 生成校验 | 看不见；**被已选项 `requires` 引用时前端强制展示** |
-| `required: true` | 默认勾选且**禁止取消**，后端生成兜底补齐 | 看得见且去不掉 |
-| `requires: [...]` | 选中本项时还依赖哪些能力 | 前端高亮 / 自动锁定 |
+| `required: true` | 该框架模式下所有业务项目确实必须具备，且样例/启动契约证明不可缺少 | “基础包”、很多模块依赖、仅被可选模块需要 |
+| `hidden: true` | 内部实现细节、用户无需独立选择，默认隐藏有明确产品理由 | 仅因为另一个可选模块也依赖它 |
+| `requires` | 选 A 后必须由用户另外选择/配置某能力，制品传递依赖不能解决 | 单独出现 import、`@ConditionalOnClass` 或 `@ConditionalOnBean` |
+| 冲突规则 | 两项在相同版本和激活条件下不可共用，有明确失败链或文档约束 | 同时使用数据库/Redis、同类型 Bean、同一扩展接口 |
 
-- `hidden` **不影响联动生效**：被隐藏的 starter 仍可被 `requires` 引用，被引用时前端会强制展示它
-- 二者可叠加：框架核心基座常写成 `required: true` + `hidden: true`（默默带上、用户无感、也不占列表位置）
-- 只写 `hidden: true` 而**不**写 `required` 时，它不会自动被选——只有上层被选中并通过 `requires` / 传递依赖引入它时才生效
+`required` 不是“当依赖方被选中才必选”；`hidden` 不会自动选中，且被已选项 requires 引用时可能重新展示。单元素 requires 在前端自动选择，多元素 OR 由用户选择；后端仍校验依赖是否满足，直调生成 API 不应依赖前端补齐。
 
-产出时：在候选清单标注每个能力**是否被隐式依赖及依据**，再据此在**第二节 starter 清单**写 `hidden: true`（默认省略即展示）。
+requires 统一写法：`[[core]]` 表示需要 core，`[[jpa, mybatis]]` 表示任选其一，`[[jpa, mybatis], [core]]` 表示任选其一且需要 core。不写空组、自引用、悬空或强依赖环；每条边在对应 Boot 白名单中必须有可满足的候选。
 
-### 依赖联动判定（`requires`）
+判断 Bean 冲突时检查名称、类型、条件、自动配置顺序、`@Primary`、`@Qualifier`、集合注入和实际注入点。多个同类型 Bean 可以合法共存，`@ConditionalOn…` 通常表示可选激活。缺乏确定证据时写入报告待确认，不生成硬性互斥规则。不要通过修改框架源码、虚构公共模块或添加冲突规则来掩盖配置建模错误。
 
-`requires` 表达"**选了 A 就必须有 B**"。采用 **AND-of-OR-groups** 结构：每一项是一个分组，分组内任一被选即满足该分组，全部分组都满足才算 A 的依赖被满足。
+### 5. 生成完整归档
 
-```yaml
-# 以下 id 均为各能力模块的 <artifactId>
-requires: [acme-framework-core, acme-security]        # 需要 core 和 security（扁平写法，每项各成一个分组）
-requires: [[acme-jpa-repository, acme-mybatis-repository]]   # 需要 jpa 或 mybatis —— 二者互斥/二选一时用这种
-requires: [[acme-jpa-repository, acme-mybatis-repository], acme-framework-core]  # 需要 (jpa 或 mybatis) 且 core
+工作目录建议如下；`catalog/` 的内容是 ZIP 根，报告和验证证据放在 ZIP 外：
+
+```text
+initializer-integration/
+  analysis.md
+  verification.md
+  catalog/
+    metadata.yml
+    conflict-rules.yml
+    starters/<starter-id>.yml
+    templates/pom.xml.ftl
+    templates/build.gradle.ftl
+    templates/settings.gradle.ftl
+    templates/Application.java.ftl
+    templates/application.yml.ftl
+    templates/README.md.ftl
+    templates/starters/<starter-id>/...
+  initializer-config.zip
 ```
 
-前端联动规则：**单元素分组（无 OR）= 强制依赖**——选中 A 时其依赖自动选中并锁定（不可取消），取消 A 后若不再被其他已选组件需要则自动释放；**多元素分组（OR）**不自动勾选，未被满足时组内各候选条目整行淡黄底 + 红色 `*` 高亮。若强制依赖与已选组件命中互斥规则（`conflict-rule.starters`），则互斥双方都不锁定、前端标记互斥并可随时二选一切换。未满足时在依赖区给出告警，生成期后端以 `2004 缺少必需的依赖 starter` 兜底拒绝。
+在已有环境扩展时，以用户指定的导出包为基线，保留不相关配置，再合并本次接入内容；列出新增/修改/删除及同 ID 冲突。平台导出的是草稿，不保证等于当前已发布配置，必须说明基线来源。没有基线时交付独立完整包并说明替换范围，不假称可以直接增量导入。
 
-判定标准（须有代码依据，满足任一）：
+#### 5.1 metadata.yml
 
-1. **A 的代码直接引用 B**：A 的装配类/自动配置 import 了 B 的类型，或用了 `@ConditionalOnBean(B 的类型)` / `@ConditionalOnClass`
-2. **A 的文档/注释明确声明依赖 B**（如"服务发现依赖 Feign 通信"，而 Feign 基座由 core 提供）
-3. **A 离开 B 会运行时报错**：`NoClassDefFoundError` / `NoSuchBeanDefinitionException`
-
-**"或"关系的判定**：若 A 只需 B、C 中任意一个即可工作（例如 A 依赖"某个 ORM 仓储实现"，`acme-jpa-repository` 与 `acme-mybatis-repository` 二选一），写 `requires: [[acme-jpa-repository, acme-mybatis-repository]]`；若两者都缺才报错，不要拆成两个分组（那会变成"两个都要"）。
-
-不应声明为依赖：
-
-- 只是"通常一起用"，无代码级依赖 → 保持独立可选
-- 依赖方向写反：B 用到 A，应写 `B.requires: [A]`，不是 `A.requires: [B]`
-- 循环依赖（A→B 且 B→A，且两组都是单选项）：平台发布期直接拒绝，正确做法是抽出公共基座 C，改为 `A.requires: [C]`、`B.requires: [C]`；若某分组是多选项（可换分支打破环），平台不再判环
-
-**方向口诀：被依赖的基础能力写在后面**——`acme-dal.requires: [acme-framework-core]`，不是 `acme-framework-core.requires: [acme-dal]`。
-
-### 版本与互斥
-
-- 版本兼容：框架适配了哪些 Spring Boot 版本，这些 Boot 版本各支持哪些 Java 版本（多模块项目注意不同分支/模块可能面向不同 Boot 线，分别记录）
-- 互斥识别：两个能力若注册同一类 Bean（缓存管理器、RPC 客户端、事务管理器等，通过装配类中的 `@Bean` / `@ConditionalOnMissingBean` 分析），生成冲突规则
-
-## 第一节：元数据（kind = `metadata`）
+以下是结构示例，值必须替换为取证结果；可选父 POM 无依据时整节省略：
 
 ```yaml
 javaVersions:
-  - id: "17"                        # 字符串！兼容矩阵引用此值
+  - id: "17"
     label: "Java 17"
     deprecated: false
     recommendedBootVersion: "3.2.5"
 bootVersions:
   - id: "3.2.5"
-    label: "Spring Boot 3.2.5"
-    official: true                  # false = 公司定制版 Boot
-    supportedJavaVersions: ["17", "21"]
-    # 只能列本框架实际提供的 id；每个 id = 对应能力模块的 <artifactId>
-    starters: ["acme-framework-core", "acme-dynamic-datasource"]
-    frameworkParent:                # 可选：该 Boot 版本生成项目挂接的框架父 POM（pom.xml 的 <parent>）
-      groupId: com.yourcompany      # 不同 Boot 版本可声明不同父 POM
-      artifactId: your-framework-parent
-      version: "1.0.0-SNAPSHOT"     # 支持 ${revision} 等 Maven 属性占位写法
-  - id: "2.7.18"                    # 仅当框架确实适配了多个 Boot 版本时才添加此条目
-    label: "Spring Boot 2.7.18"
+    label: "框架适配的 Spring Boot 3.2.5"
     official: true
-    supportedJavaVersions: ["8"]
-    starters: ["acme-framework-core"]
-# frameworkParent 未配置（且顶层也未声明全局默认）时，生成器回退 org.springframework.boot:spring-boot-starter-parent:<bootVersion>
-# 注意：metadata 已不再维护 starters 节——必选（required）与依赖联动（requires）
-# 全部在第二节 starter 清单里声明，展示名与坐标也来自清单，此处无需（也不应）重复写。
+    supportedJavaVersions: ["17"]
+    starters: ["acme-cache-starter"]
+    frameworkParent:
+      groupId: com.acme
+      artifactId: acme-application-parent
+      version: "1.4.0"
 ```
 
-规则：
+Java/Boot ID 与版本均用字符串。`official` 表示该条目是否为 Spring 官方版本，不能因为 starter 来自内部框架就自动改为 false。metadata 顶层不写旧版 `starters` 坐标映射；坐标只在 starter 中维护。
 
-- `bootVersions[].supportedJavaVersions` 只能引用已声明的 `javaVersions[].id`
-- `bootVersions[].starters` **只能列出本框架实际提供的 starter id**（即第二节 starter 清单各文档的 `id`，也就是各能力模块的 `<artifactId>`）。框架未提供官方 starter 时，不得出现 `web` / `data-jpa` / `data-redis` / `actuator` 等官方 id（这些 id 不是默认必填项，列了而框架没有就是错的）；此处 id 必须与清单 `id` **字面完全一致**（同一 artifactId，不缩写、不改名）
-- **starter 的一切信息只在第二节 starter 清单写一次**：`description` → 展示名，`dependencies[0]` → 坐标 + version，`required` → 是否必选，`requires` → 依赖联动。第一节 metadata **不再有 `starters` 节**，平台发布时自动把清单合并进元数据
-- `bootVersions[].starters`（**保留，重要**）：列出该 Boot 版本**可引用**的 starter id 白名单（不同 Boot 版本可用不同 starter）。**可整体省略**——省略或为空即该版本对全部清单条目可选；列出的 id 必须在第二节有清单条目，否则该 starter 不可见
-- Java id 必须带引号写成字符串
-- 必选与依赖联动的写法见第二节（`required` / `requires` 字段），不要在 metadata 里写
-- `bootVersions[].frameworkParent`（**强烈建议填写**）：若框架仓库存在统一父 POM / BOM（聚合根 POM、`*-parent`、`*-dependencies`、或集中 `dependencyManagement` 的 POM），必须**在每个 Boot 版本条目内**声明（不同 Boot 版本可挂不同父 POM，例如 2.x 线与 3.x 线分别由不同框架父 POM 管理）；生成的项目才继承该父 POM 并由它统一管理版本。也可在 metadata.yml 顶层声明一次 `frameworkParent` 作为全局默认，条目内未声明时继承。三项（groupId/artifactId/version）必须齐全，缺一发布失败。确实没有统一父 POM 时整节省略，生成器回退官方 `spring-boot-starter-parent`
-- 版本取自框架父 POM 真实 `<version>`（如 `3.0.0-SNAPSHOT`）；若父 POM 用 `${revision}` 之类的属性占位，照抄该占位写法即可
+#### 5.2 starters/*.yml
 
-## 第二节：starter 清单（kind = `starter`，多文档 YAML）
-
-**这一节是 starter 的唯一数据源**：展示名（`description`）、依赖坐标 + version（`dependencies`）、
-分类、维护方、联动规则，**以及是否必选（`required`）与依赖联动（`requires`）**全部在此声明。
-第一节 metadata 不再有 `starters` 节，发布时平台自动把清单合并进元数据。
-
-一个能力一段文档，用 `---` 分隔，可合并为一份多文档 YAML 提交：
+每文件一个 YAML 文档，不使用 `---` 分隔多个 starter。保持 ID 全局唯一，文件名默认 `<id>.yml`。
 
 ```yaml
----
-id: acme-dynamic-datasource        # 【必填】= 承载本能力的子模块 <artifactId> 原文，见第〇步 id 规则
-category: middleware               # web / middleware / tool ...
-maintainer: internal               # official / internal
-description: 一句话描述功能（即前端展示名）
-required: true                     # 可选：true = 必选依赖（默认 false）
-hidden: false                      # 可选：true = 前端依赖选择列表默认隐藏（被已选组件依赖时强制展示）
-# 可选：依赖联动（AND-of-OR-groups），默认 []
-# 下方 = 需要 jpa 或 mybatis（二者互斥时只选其一即可），不是"两个都要"
-requires: [[acme-jpa-repository, acme-mybatis-repository]]
-bootVersions: ["3.2.5"]            # 可选：本条目关联的 Boot 版本（不写 = 对全部 Boot 版本可用）
+id: acme-cache-starter
+category: middleware
+maintainer: internal
+description: 框架缓存接入
+bootVersions: ["3.2.5"]
+required: false
+hidden: false
+requires: []
 dependencies:
-  - groupId: com.yourcompany
-    artifactId: acme-dynamic-datasource   # 与 id 同源：同一子模块的 <artifactId>
-    version: "1.2.0"               # official 或由 BOM 管理时可省略
-linkages: {}                       # 无联动时写 {}
+  - groupId: com.acme
+    artifactId: acme-cache-starter
+    version: "1.4.0"
+linkages:
+  application-yml-fragments:
+    - source: starters/acme-cache-starter/application-cache.yml
+      merge-strategy: append
 ```
 
-约束字段说明（原 metadata `starters` 节能力，全部迁移至此）：
+category 优先使用 `web`、`data`、`middleware`、`tool`；maintainer 为 `official` 或 `internal`。无联动写 `linkages: {}`，不要补造字段。依赖字段以目标解析器支持范围为准，不能把 Maven 的所有 XML 元素直接转换成 starter 字段。
 
-- `id`（**必填**）：取承载本能力的子模块 `<artifactId>` 原文，**不缩写、不翻译、不自造**（理由与例外见第〇步「starter id 取值规则」）。同一 id 必须在 `metadata.bootVersions[].starters`、`requires`、`conflict-rule.starters`、模板 `name` 的 `starters/{id}/` 路径中**字面一致**
-- `required`（可选，默认 false）：设为 `true` 即**必选依赖**——前端默认勾选且禁止取消，后端生成时兜底自动补齐（绕过前端直调 API 也会加上）。框架中"不选就跑不起来"的能力（如核心包、统一配置/鉴权基础模块）应标为必选；其余能力保持可选
-- `hidden`（可选，默认 false）：设为 `true` 时该 starter 在**前端依赖选择列表**默认隐藏；后端检索接口仍返回并正常参与依赖/互斥/生成校验。若被已选组件通过 `requires` 引用，前端强制展示。适用于"不直接对外开放、只作为其他能力内部依赖"的 starter——**凡被其他 starter 通过 POM 传递依赖隐式引入、且用户不会单独选择的模块，都应标 `hidden: true`**（判定标准见第〇步「隐藏能力判定」，可与 `required: true` 叠加）
-- `requires`（可选，默认 `[]`）：**依赖联动（AND-of-OR-groups）**——分组内任一被选即满足该分组，全部分组满足才算依赖满足。前端联动：单元素分组为**强制依赖**（选中父组件时自动选中并锁定、取消后自动释放），多元素分组为 **OR**（不自动勾选，未被满足时组内各候选条目整行淡黄底 + 红色 `*` 高亮）；若强制依赖与已选组件互斥则双方都不锁定、标记互斥并可二选一切换。未满足时告警，后端生成期兜底拒绝（`2004 缺少必需的依赖 starter`）。校验规则：引用的 id 必须在**本清单**中登记（悬空即拒绝）、不得引用自身、不得成环（多选项分组可换分支打破环，不判环；单选项成环发布期报`循环依赖`并拒绝）。方向为「上层能力 → 基础能力」，如 `acme-dal.requires: [acme-framework-core]`
-- `bootVersions`（**Boot 版本关联**）：声明本条目属于哪些 Boot 版本（值取 metadata 的 `bootVersions[].id`）。**不写即对全部 Boot 版本可用**。
-  框架对多个 Boot 线（如 2.x / 3.x）提供不同坐标或版本的能力模块时，**用同一个 id 写多条文档、各自声明 `bootVersions`**——
-  **同一 Boot 版本内 id 不允许重复（重复发布即拒绝），不同 Boot 版本之间允许重复**，平台按当前选中的 Boot 版本取对应条目（坐标、version、联动规则一并生效）
-
-**内部能力（`maintainer: internal`）带联动时**，`linkages` 可含四类：
+需要生成消费端代码时才增加以下联动：
 
 ```yaml
 linkages:
-  config-package: "{basePackage}.config"          # 配置类生成到的包
+  config-package: "{basePackage}.config"
   templates:
-    # 路径中的 acme-dynamic-datasource 必须与本条目的 id（= artifactId）字面一致
-    - source: "starters/acme-dynamic-datasource/DynamicDataSourceConfig.java.ftl"   # 相对 templates/ 目录
-      target: "src/main/java/{packagePath}/config/DynamicDataSourceConfig.java"
+    - source: starters/acme-cache-starter/CacheConfig.java.ftl
+      target: "src/main/java/{packagePath}/config/CacheConfig.java"
   application-yml-fragments:
-    - source: "starters/acme-dynamic-datasource/application-dynamic-datasource.yml"
-      merge-strategy: append       # 目前仅支持 append
+    - source: starters/acme-cache-starter/application-cache.yml
+      merge-strategy: append
   abstract-classes:
-    - fqcn: "com.yourcompany.xxx.XxxSupport"      # 框架中的集成抽象类全限定名
-      alias: xxxSupport
+    - fqcn: com.acme.cache.AbstractCacheSupport
+      alias: acmeCacheSupport
 ```
 
-**占位符白名单（强制）**：yml 中只允许 `{basePackage}` `{packagePath}` `{artifact}` `{group}` `{bootVersion}` `{javaVersion}` 这六个，出现其他占位符发布时直接拒绝。
+上例抽象类及配置类仅示意，未从真实源码取证时不要生成。`abstract-classes` 只给该 starter 模板注入 alias→fqcn，不会自动创建实现类，也不保证跨 starter 可使用该 alias。
 
-## 第三节：冲突规则（kind = `conflict-rule`）
+#### 5.3 conflict-rules.yml
+
+无确凿冲突时使用 `rules: []`；有冲突时：
 
 ```yaml
 rules:
-  - id: acme-jpa-repository-vs-acme-mybatis-repository   # 发布清单内唯一（建议用两个 artifactId 拼接，便于定位）
-    type: pair                      # pair（恰好 2 个）或 group（≥2 个，组内互斥）
-    starters: [acme-jpa-repository, acme-mybatis-repository]   # 必须逐字照抄清单 id（= artifactId）
-    message: 两者均注册 CacheManager（A: XxxCacheConfiguration#cacheManager，B: YyyCacheConfiguration#cacheManager），请二选一
+  - id: acme-cache-a-vs-acme-cache-b
+    type: pair
+    starters: [acme-cache-a, acme-cache-b]
+    message: 两者启用时均注册同名 cacheClient 且无条件回退；见 AConfig#cacheClient 与 BConfig#cacheClient，请二选一
 ```
 
-四字段 `id` / `type` / `starters` / `message` 全部必填，缺一即发布失败。框架没有互斥关系时输出 `rules: []` 或说明"无冲突规则"。
+pair 恰好两个不同 ID；group 至少两个不同 ID，组内任意两项均互斥。部分组合冲突时拆成 pair，不把整个能力类别设为 group。引用必须存在且版本可共同选择；如果平台规则无法表达条件性冲突，在报告注明限制，不用全局规则过度拦截。
 
-### 互斥判定标准（**避免误判，这一节最容易出错**）
+#### 5.4 基础模板必须齐全
 
-只有**会导致应用启动失败**的组合才算冲突，须满足以下两条之一：
+默认支持 Maven 和 Gradle，必须包含上述六份基础模板，优先从目标平台同版本源码或现有导出包复制后最小修改。即使 starter 没有任何联动模板，基础模板也不能省略。
 
-1. **同名 Bean 冲突**：两个 starter 注册了**同名**的 `@Bean`（同名 BeanDefinition 冲突/覆盖）
-2. **同类型 Bean 冲突**：两个 starter 注册了**同一类型**的 Bean，且没有 `@ConditionalOnMissingBean` 兜底（例如两个 `CacheManager`、两个 `DataSource`、两个 `PlatformTransactionManager`）
+完整模板集应满足：**基础模板 ∪ 所有 linkages source ∪ FreeMarker include/import 的递归依赖**均存在；不能只令模板集合等于 starter source 集合。模板放入 `templates/` 也不会自动生成任意文件，额外业务文件必须有联动 target 或由基础模板明确使用。
 
-**以下不是冲突，不要生成规则**：两个能力只是"消费同一底层资源"，但并未各自注册同名/同类型 Bean。
-例如都使用 `DataSource`、都依赖 Redis 连接、都用同一个线程池——这属于**依赖关系**，可以同时选中。
+模板保持适配用户输入：业务包名、Group、Artifact、版本、依赖列表均由上下文渲染。启动类文件名由平台从 artifact 推导，模板中的 public 类名必须与其一致。保留 Maven 与 Gradle 的版本输出逻辑，并按实际构建工具写清生成项目的使用说明。
 
-每条规则必须在 `message` 中写明**具体冲突的 Bean 名或 Bean 类型**以及**源码依据**（类名 + 方法名），
-禁止只写"两者都使用了 Xxx"这类无法定位的模糊描述。
+若拿不到平台基础模板且无法可靠复原契约，保留接入分析与已完成文件，明确标记基础模板阻塞；不要依赖运行时兜底或把空模板打包为可用配置。
 
-规则：
+#### 5.5 两种模板处理路径与占位符
 
-- `rules[].starters` 只能引用**已声明的 starter id**，且必须与第二节清单 `id`（= 子模块 `<artifactId>`）**字面完全一致**，禁止缩写或改写成能力简称，也禁止引用未声明的官方 id（`web`/`data-jpa`/`data-redis`/`actuator` 等）凑数；引用未声明 id 发布即失败
-- 每条规则必须有第 1/2 条判定依据（同名或同类型 Bean），并在 `message` 中给出 Bean 名/类型 + 源码位置
-- 纯"共用底层资源"的组合不产出规则，可在候选清单里标注为依赖关系即可
+| 位置 | 可用语法/变量 | 注意事项 |
+|---|---|---|
+| 联动 target、config-package | `{basePackage}`、`{packagePath}`、`{artifact}`、`{group}`、`{bootVersion}`、`{javaVersion}` | 六项路径占位符；source 使用固定模板名，不假设动态查找 |
+| 基础 FreeMarker 模板 | `${basePackage}`、`${packagePath}`、`${artifact}`、`${group}`、`${bootVersion}`、`${javaVersion}`、`starters`、`starterDependencies`、`parentGroupId`、`parentArtifactId`、`parentVersion` | 最终以 ProjectGenerator.buildModel 为准；依赖项含 groupId/artifactId 和可选 version |
+| starter FreeMarker 模板 | 基础模型，加本条目的 `configPackage` 和抽象类 alias | configPackage 仅在配置了 config-package 时提供；不假设其他条目的 alias 可用 |
+| application-yml-fragments | 静态 YAML，在合并前进行 URL 解码及兼容还原 | 不执行 FreeMarker 渲染；不要在这里使用 `${artifact}` 等模板变量 |
 
-## 第四节：生成模板（kind = `template`，多文档 YAML）
+归档中每个 `templates/<name>` 保存模板全文，不套 `name/content` YAML，也不放 Markdown 代码围栏。
 
-每份模板一个文档，`name` 为相对 `templates/` 目录的路径，`content` 为模板全文（用块标量承载）：
+当前平台对模板集每份文件都做 FreeMarker 语法检查，配置片段中的 Spring `${ENV:default}` 会产生语法冲突。静态 YAML 片段使用带引号的 `'%24{ENV:default}'`，例如：
 
 ```yaml
-name: starters/acme-dynamic-datasource/DynamicDataSourceConfig.java.ftl   # 路径中的 id 必须逐字照抄清单 id
-content: |
-  package ${configPackage};
-
-  import com.yourcompany.xxx.XxxSupport;
-  import org.springframework.context.annotation.Bean;
-  import org.springframework.context.annotation.Configuration;
-
-  @Configuration
-  public class XxxConfig {
-      @Bean
-      public XxxSupport xxxSupport() {
-          return new XxxSupport() {};
-      }
-  }
----
-name: starters/acme-dynamic-datasource/application-dynamic-datasource.yml
-content: |
-  spring:
-    xxx:
-      # %24 是 $ 的 URL 编码：必须用它代替 $，见下方"配置文件模板的 $ 转义"规则
-      host: %24{XXX_HOST:localhost}
-      port: %24{XXX_PORT:6379}
+acme:
+  cache:
+    endpoint: '%24{ACME_CACHE_ENDPOINT:localhost}'
 ```
 
-### 配置文件模板的 `$` 转义（**强制，否则发布失败**）
+此示例只演示编码；真正配置键和默认值必须取自框架。该还原只适用于配置片段读取路径，**不要把 `%24` 规则泛化到 `.ftl`**。FreeMarker 基础模板/Java 模板如需输出 Spring 或 Maven 的字面 `${…}`，使用 FreeMarker 字面输出或 noparse，并验证结果，例如 `${r'${ENV:default}'}`。反斜杠不能被想当然地视为通用 FreeMarker 转义。
 
-管理后台发布模板草稿时，**每一份 content（含 `.yml`）都会做 FreeMarker 语法预校验**。
-配置文件里的 Spring 环境变量占位 `${ENV:default}` 中的 `${` 会被 FreeMarker 当成插值起始，
-而 `:` 在 FreeMarker 表达式里非法，发布直接被拒（报 `模板语法非法 ... Encountered ":"`）。
+片段路径会调用 URLDecoder；存在 `%` 编码时原始 `+` 可能被解为文本空格。片段含 URL、百分号、加号、编码字符串等内容时核对解码后的真实值，需要保留字面加号时使用 `%2B`，并在实际合并结果验证；不批量 URL 编码全部模板。
 
-因此 **`application-*.yml` 等配置文件模板中，一律用 `%24` 代替 `$`**：
+### 6. 配置与代码生成原则
 
-| 你想表达的 | 必须写成 | 原因 |
+- 自动配置已完成的 Bean 注册不要在消费端再复制一遍；优先依赖框架自己的自动装配。只有明确需要用户实现/启用的扩展点才生成代码。
+- 继承抽象类前核对构造器、泛型、抽象方法、访问权限、实际依赖。不得用未经验证的 `new XxxSupport() {}` 冒充可编译实现。
+- 对配置属性建立台账：真实前缀/名称、Java 类型、默认值来源、必填条件、是否敏感、是否写入片段及原因。覆盖继承属性、嵌套对象和条件，不机械地把所有字段写入 application.yml。
+- 片段只写最小必要接入配置和有实际意义的默认值；无默认值不伪造，敏感值用环境变量，开发默认值必须注明用途。不把示例测试环境地址当成框架默认值。
+- YAML 经树合并后注释可能丢失，使用说明放生成项目 README。片段保持单文档映射，不使用锚点、别名、自定义 tag 或重复键。
+- append 不是标量覆盖：Map 递归合并、数组追加去重、不同标量值或类型会报冲突。检查基础 application.yml 与所有可共选片段，避免相同配置键写不同默认值。
+- 检查联动 target 与基础产物、其他 starter 的 target 是否冲突；不同版本线模板内容不同则使用不同 source 路径，不能用同名模板互相覆盖。
+- 仓库地址、BOM、scope、exclusion 等能力若需通过构建模板表达，应明确改动和验证范围。平台无法表达的条件、启动交互或模块结构列为限制，不创造不存在的配置字段。
+
+### 7. 打包和验证：逐层给证据
+
+先完成静态检查，再尽可能验证实际导入、发布、生成和构建。验证失败先定位到框架取证、配置、模板或环境，修正后只重跑受影响项。
+
+| 层级 | 必查内容 | 通过所需证据 |
 |---|---|---|
-| `${XXX_HOST:localhost}` | `%24{XXX_HOST:localhost}` | `%24` 是 `$` 的 URL 编码；发布期 FreeMarker 看不到 `${` 序列，校验通过；生成期合并前自动 URL 解码，还原为 `${XXX_HOST:localhost}` 写进生成项目的 application.yml，由 Spring 解析 |
+| L1 文件与归档 | YAML 单文档/类型、全局 ID 唯一、引用闭合、版本可选性、模板依赖闭合、路径和容量 | 实际脚本或命令结果；不是手工全打勾 |
+| L2 平台导入与发布 | 真实导入服务/接口解析，草稿替换范围，发布装配和语法校验 | 隔离平台或复用真实服务/解析器的运行结果 |
+| L3 生成 | 各版本基础组合、每个能力加必需依赖、每个 OR 分支、代表性共选组合、应被拒绝的组合 | API 或真实生成引擎输出、ZIP 内文件检查；不是只验证模板语法 |
+| L4 构建与启动 | 支持的 JDK/构建工具下编译打包；可启动组合做启动检查 | 生成项目的构建/启动日志；外部基础设施需求单列 |
 
-等价备选写法是 `\${XXX_HOST:localhost}`（FreeMarker 转义），生成期同样会还原；**首选 `%24`**。
-普通配置值（不含 `${`）无需转义，照常书写。
+验证要点：
 
-规则：
+1. L1 用目标平台解析器优先；通用 YAML/XML 解析只证明语法，不代替真实平台契约。检查所有版本 ID、推荐关系、GAV、requires、冲突引用、source、target、alias 和渲染后占位符。
+2. L2 必须验证导入路径，不能只用 `StarterCatalog.of` 代替；导入允许部分悬空关系，导入通过也不能代替发布检查。发布检查也不保证模板变量存在、渲染成功或 Java 可编译。
+3. L3 按框架能力选择测试组合，不盲目枚举所有幂集。预期成功组合校验启动类名、依赖版本、包路径、配置片段和值；预期失败组合核对错误原因。冲突规则和缺少依赖的负例要覆盖。
+4. L4 覆盖声明支持的版本线和 Maven/Gradle。外部制品库或数据库不可达时，区分“配置错误”“环境阻塞”；没有执行的 JDK/组合写明未验证，不由单个成功结果外推全部兼容。
+5. 使用独立数据库、临时端口和输出目录验证；取得授权后才连接指定实例。不要从开发默认 token 推断已获生产写入权限。
 
-- `.ftl` 模板可用 FreeMarker 变量：`${group}` `${artifact}` `${bootVersion}` `${javaVersion}` `${configPackage}` `${packagePath}`
-- `application-yml-fragments` 引用的片段**不要**用 `.ftl` 后缀；片断内容由管理端维护即可生效（发布后覆盖 classpath 同名文件，无需改代码、无需重新打包），合并进生成项目的 application.yml
-- 配置文件模板里的 `${}`（Spring 环境变量占位）**必须用 `%24{` 书写**，禁止裸写 `${`，否则发布期 FreeMarker 预校验失败
-- 配置类模板应引用框架中的集成抽象类（与 `abstract-classes[].fqcn` 对应）
-- `name` 不得重复；模板必须能通过 FreeMarker 语法预校验（tag 闭合、指令合法）
-
-### 模板完整性（**漏文件会直接导致生成失败**）
-
-模板文档必须**逐一覆盖**第二节每个 starter `linkages` 中声明的全部 source：
-
-- `linkages.templates[].source` —— 每一条都要有对应的 `.ftl` 模板文档
-- `linkages.application-yml-fragments[].source` —— 每一条都要有对应的 `.yml` 片段文档
-
-只要声明了 source 却没有同名 `name` 的模板文档，选中该 starter 生成项目时就会报
-`模板不存在` / `yml 片段不存在` 并失败。所以：**声明即必须提供，宁可不声明也不要漏文件**。
-
-带 `@ConfigurationProperties(prefix = "...")` 的 starter，**默认提供一份 `application-*.yml` 片段模板**，
-在片段中列出该前缀下的**全部属性及框架真实默认值**（属性名/默认值取自框架代码，不得编造），并遵循 `%24` 转义规则。
-
-### 引用一致性（拆分为四条独立约束）
-
-1. **starter 单一数据源 + Boot 版本关联**：每个 starter 在第二节清单声明（id / description / dependencies / required / requires / bootVersions），不得在 metadata 里重复登记；`bootVersions[].starters` 列出的 id 必须有对应清单条目且该条目关联本 Boot 版本；**同一 Boot 版本内 id 不重复**（多 Boot 线共用 id 时用 `bootVersions` 拆成多条文档）
-2. **id 字面一致（= artifactId）**：清单 `id` == 子模块 `<artifactId>`；且 `metadata.bootVersions[].starters`、`requires`、`conflict-rule.starters`、模板 `name` 的 `starters/{id}/` 路径中出现的同一 starter，**字面值完全相同**（不缩写、不改命名风格）
-3. **冲突规则引用不越界**：`conflict-rule` 的 `rules[].starters` ⊆ 清单已声明的 starter id
-4. **模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（**数量 + 路径双一致**，无多余、无缺失）
-
-## 输出格式要求
-
-按以下顺序输出，每段用一级标题分隔。
-
-**走 A（导入产物）时**：第 1～4 段的内容按**第五节**的目录布局落盘成文件并打包 ZIP；
-**走 B（粘贴到管理端）时**：第 2～4 段分别复制到管理后台对应草稿页发布（`starter` 与 `template` 用 `---` 多文档）。
-
-0. `## 候选清单`（必须给出：模块/能力 → 子模块 `<artifactId>` → **清单 id（= artifactId）** → GAV → 判定依据 → **必选标记与依据** → **是否被隐式依赖 + 依据（决定 `hidden`）** → **依赖的能力（requires，注明是"和"还是"或"）**，供人工复核）
-1. `## metadata` → A 形态落盘为 `metadata.yml`
-2. `## starter`（B 形态为 `---` 多文档；A 形态为 `starters/<id>.yml`，一 starter 一文件）
-3. `## conflict-rule` → A 形态落盘为 `conflict-rules.yml`
-4. `## template`（B 形态为 `{name, content}` 多文档；A 形态为 `templates/<模板名>` **纯全文**）
-5. `## 导入产物`（A 形态必给：目录树 + 打包命令 + `unzip -l` 自检结果）
-
-## 第五节：导入产物（ZIP 归档，推荐交付形态）
-
-Agent 在框架代码库中运行时（有文件写权限），**优先产出可导入的 ZIP 归档**：比粘贴 YAML 快、可复核、可随框架一起版本化。
-
-### 目录布局（**ZIP 根下直接是这些文件，不要多包一层目录**）
-
-```
-initializer-catalog/              ← 工作目录（名字随意；打包时 cd 进去）
-├── metadata.yml                  # 必填：第一节内容
-├── conflict-rules.yml            # 可选：第三节内容（无冲突规则可省略）
-├── starters/                     # 一 starter 一文件
-│   ├── acme-framework-core.yml
-│   ├── acme-dynamic-datasource.yml
-│   └── ...
-└── templates/                    # 模板全文；路径即模板名
-    └── starters/
-        └── acme-dynamic-datasource/
-            ├── DynamicDataSourceConfig.java.ftl
-            └── application-dynamic-datasource.yml
-```
-
-打包后 ZIP 内的条目名必须是：
-
-```
-metadata.yml
-starters/acme-framework-core.yml
-conflict-rules.yml
-templates/starters/acme-dynamic-datasource/DynamicDataSourceConfig.java.ftl
-```
-
-**不要**打成 `initializer-catalog/metadata.yml`——多一层目录会让平台找不到 `metadata.yml`（报 `配置导入包非法`）。
-
-### 与"粘贴到管理端"的三个关键差异（**最容易写错**）
-
-| 项 | B 粘贴到管理端 | A 导入产物 |
-|---|---|---|
-| starter | 一份**多文档** YAML，`---` 分隔 | **一 starter 一文件**，文件内**不写 `---`** |
-| 模板 | `{name, content}` 的**多文档 YAML** | `templates/<模板名>` 里就是**模板全文**（纯 `.ftl` / 纯 yml，**不做 YAML 包装**） |
-| metadata / 冲突规则 | `metadata.yml` / `conflict-rules.yml` | 同左，内容一致 |
-
-即：导入产物里的 `templates/starters/xxx/Xxx.java.ftl` 内容就是 Java + FreeMarker 源码本身，**不要再套一层 `name:` / `content:`**。
-
-### 文件命名
-
-- **starter 文件**：建议 `starters/<id>.yml`（`<id>` = 该 starter 的 id = artifactId）。文件名**不参与校验**——`starters/` 下任意层级、任意扩展名平台都接受（平台自己**导出**时写的是 `starters/<id>`，无扩展名，两种都能导入，推荐带 `.yml` 便于本地编辑器高亮与 diff）
-- **模板文件**：`templates/` 下的相对路径**就是模板名**，必须与 starter `linkages` 里声明的 `source` **逐字一致**：`linkages.templates[].source` 写 `starters/xxx/Xxx.java.ftl`，文件就放 `templates/starters/xxx/Xxx.java.ftl`
-
-### 打包与自检命令
+打包时确保 ZIP 根直接包含 `metadata.yml`、`starters/`、`conflict-rules.yml`、`templates/`。可从 catalog 目录打包：
 
 ```bash
-# Linux / macOS：cd 进工作目录再打包（保证条目名是相对路径），排除系统垃圾文件
-cd initializer-catalog
-zip -X -r ../initializer-catalog.zip . -x '.*' -x '__MACOSX*' -x '.DS_Store'
-unzip -l ../initializer-catalog.zip     # 自检：根下应直接看到 metadata.yml
+cd initializer-integration/catalog
+zip -X -r ../initializer-config.zip metadata.yml conflict-rules.yml starters templates
+unzip -t ../initializer-config.zip
+unzip -l ../initializer-config.zip
 ```
 
-```powershell
-# Windows PowerShell
-Compress-Archive -Path .\initializer-catalog\* -DestinationPath initializer-catalog.zip -Force
-```
+无 zip 命令时用 Python zipfile 等可用工具实际生成并检查，不能只交付打包命令。Windows 同样需要检查压缩包内层级；不要把 `catalog/` 或 `initializer-integration/` 包为外层目录。
 
-### 平台侧导入步骤（写进交付说明）
+当前归档限制：相对路径、无 `..`、无重复条目；条目数 ≤ 2048，单文件 ≤ 2 MiB，解压总量 ≤ 32 MiB，层级 ≤ 16，名称长度 ≤ 512。导入解析另有限制：单模板 ≤ 512 Ki 字符，集合项数与结构行数受 `StructuredSnapshotCodec` 限制；以目标源码为准。上传请求还受部署端 multipart/代理限制，不能因 ZIP 满足解压上限就声称一定能上传。
 
-1. 管理端 → **导入导出** → 选择 ZIP → **导入到草稿**
-2. 导入**只写草稿、不发布**；校验失败整体回滚（不污染草稿），明细直接展示
-3. 到**发布台**核对四段 → **发布**：快照原子切换，生成接口立即可用
+所有文件使用 UTF-8 无 BOM；排除系统文件、隐藏配置、符号链接、凭据、分析报告、构建输出和验证日志。计算 ZIP 的 SHA-256 并写入 verification.md，不把校验文件塞入平台配置目录。
 
-同一套目录也可直接放进**外部清单目录**（配置项 `initializer.catalog.dir`，默认 jar 同级 `catalog/`）重启生效，完全不走管理端。两条路径字段完全相同。
+### 8. 完成交付与状态声明
 
-### 导入侧硬性约束（违反直接报 4008 / 4009，**打包前自查**）
+交付以下真实文件：
 
-- 条目名必须是**相对路径**：禁止绝对路径（`/x`、`C:\x`）、禁止 `..` 段、禁止重复条目
-- **UTF-8 无 BOM**：非法字节序列直接拒绝（中文注释没问题，但别存成 GBK）
-- 容量上限：条目数 ≤ 2048、单文件 ≤ 2 MiB、解压总量 ≤ 32 MiB、目录层级 ≤ 16、条目名长度 ≤ 512
-- 排除 `__MACOSX/`、`.DS_Store`、`.idea/`、`.git/` 等无关文件
-- 内容校验仍按前四节执行：id 悬空引用、`requires` 成环、模板与 `linkages` 声明不对齐、FreeMarker 语法（含 `%24` 转义）在**发布期**拒绝
+1. `initializer-config.zip`：完整导入包，或明确标记为未验证/阻塞的候选包。
+2. `catalog/`：可审阅、可修改的源文件。
+3. `analysis.md`：框架/平台基线、候选表与排除项、ID→GAV 映射、版本/parent/BOM 证据、选择关系、属性台账、限制与待确认项。
+4. `verification.md`：执行命令、验证组合、逐层结果、关键输出/日志位置、ZIP SHA-256、未执行项及原因、基线替换差异和导入操作说明。
 
-## 平台行为约定（影响产出写法）
+报告至少满足：每个 starter 有真实制品依据；每个 required/requires/hidden/冲突有理由；每个未纳入模块有归类；每个声明 source 有文件；六份基础模板齐全；所有模板引用闭合；包内不存在未解决的虚构坐标或 TODO 占位实现。
 
-- **三条生效路径（任选其一）**：
-  1. **ZIP 归档导入（推荐给 AI Agent / 跨环境迁移）**：把第五节的目录打包上传 → 导入到草稿 → 发布台发布一次即可；
-     **导入只写草稿、不发布、失败整体回滚**，适合机器产出后人工复核一遍再发布
-  2. **外部清单目录（推荐给运维）**：把 `metadata.yml`、`starters/*.yml`、`conflict-rules.yml`、`templates/**` 直接放进清单目录
-     （配置项 `initializer.catalog.dir`，未配置时默认 **jar 同级的 `catalog/`**），**重启即生效**——
-     不需要在管理端保存草稿、不需要点发布、不与内置 metadata.yml 做一致性校验，格式正确即可用
-  3. **管理端发布（热生效）**：发布后快照原子切换，生成接口立即可用；重启服务时会从数据库还原最近一次发布，无需重新发布
-  （后两者同时存在时，**外部清单目录优先级更高**；管理端再次发布会覆盖内存快照）
-- **`.ftl` 与配置文件均可在管理端维护**：发布后覆盖 classpath 同名模板/片段，新增或修改模板不需要改代码、不需要重新打 jar
-- **配置文件必须 `%24` 转义 `$`**：否则发布期 FreeMarker 预校验拒绝（详见第四节）
-- **必选项（`required: true`）双重保障**：前端默认勾选且禁止取消，后端生成时兜底自动补齐，绕过前端直调 API 也会带上；仅当该 starter 属于当前 Boot 版本可选清单时才强制
-- **依赖联动（`requires`）不再自动带上**：前端只在候选条目上高亮提示（整行淡黄底 + 红色 `*`）、**不默认勾选、不锁定**依赖引入项（用户可自由取消，A 依赖 B 或 C 时只勾一个即可，B/C 互斥也不会被强制同选）；未满足时前端告警，后端生成期以 `2004 缺少必需的依赖 starter` 兜底拒绝；仅当依赖属于当前 Boot 版本可选清单时才参与校验
-- **依赖图约束**：`requires` 悬空引用 / 自引用会在**发布期**直接拒绝；成环仅在**分组为单选项（强依赖）**时拒绝——多选项分组可通过换分支打破环，平台不判环（不会等到生成才报错）
-- **首发必须带 metadata**：空 metadata 发布会被拒（报 `metadata 配置缺失`），四段配置中 metadata 必须先有内容
+最终回复保持简短，列出产物路径/下载链接、接入规模、实际完成的验证层级和阻塞项，不重复粘贴所有配置。没有文件写权限时按路径给出完整文件内容及限制，不能声称已经创建 ZIP。
 
-## 输出前自检
+平台操作说明：管理端「导入导出」上传 ZIP → 导入到草稿 → 核对替换内容 → 发布台发布 → 生成页面试生成。已有环境先导出并核对草稿备份、记录已发布回滚点；不要承诺草稿导出包等于发布快照。
 
-- [ ] **模块识别按特征而非命名**：每个 starter 都有第〇步特征依据，候选清单无遗漏
-- [ ] **父子结构 GAV 取自实际承载能力的子模块**，未误用根 POM 或中间父 POM 坐标
-- [ ] **每个 starter 的 `id` 就是该能力模块的 `<artifactId>` 原文**：未缩写、未翻译、未改命名风格、未自造；在框架仓库里能直接 grep 到对应模块
-- [ ] **同一 id 全文字面一致**：清单 `id` ↔ `metadata.bootVersions[].starters` ↔ `requires` ↔ `conflict-rule.starters` ↔ 模板 `name` 的 `starters/{id}/` 路径，五处逐字相同
-- [ ] **BOM/dependencyManagement 管理的依赖未写 version**（内部 starter 仅在版本自持时写）
-- [ ] **框架统一父 POM 已填入各 `bootVersions[].frameworkParent`**（或顶层声明全局默认 / 明确说明框架无统一父 POM），三项齐全
-- [ ] 兼容矩阵闭环：Java → Boot → starter 引用无悬空 id
-- [ ] 占位符仅在白名单六项内
-- [ ] 冲突规则 id 唯一，starters 数量符合 type（pair=2，group≥2）
-- [ ] **① starter 单一数据源 + 版本关联**：每个 starter 只在第二节清单声明（坐标/展示名/必选/联动），metadata 未出现 `starters:` 节；`bootVersions[].starters` 的每个 id 都有清单条目且关联本 Boot 版本；**同一 Boot 版本内无重复 id**（多 Boot 线共用 id 时已用 `bootVersions` 拆成多条文档）
-- [ ] **② 冲突规则引用不越界**：`rules[].starters` ⊆ 清单已声明的 starter id 且逐字照抄 artifactId，无官方 id 凑数
-- [ ] **③ 模板与声明严格对齐**：`template` 的 `name` 集合 == 各 starter `linkages` 声明的 source 集合（数量 + 路径双一致）
-- [ ] **互斥判定无误判**：每条冲突规则都有「同名 Bean / 同类型 Bean」依据，且 `message` 写明 Bean 名或类型 + 源码位置；不存在"仅共用底层资源"却被判为冲突的规则
-- [ ] **必选项保守且有依据**：标了 `required: true` 的 starter 都能指出核心包/缺了起不来/父 POM 直接依赖之一的证据，并已在候选清单注明；不存在"只是推荐搭配"却被标成必选项（必选无法取消，宁少勿多）
-- [ ] **隐式依赖已隐藏**：被其他 starter 通过 POM 传递依赖引入、且用户不会单独选择的模块都标了 `hidden: true`，并在候选清单注明依据；不存在"用户会主动单独使用"却被隐藏的条目（hidden 只是默认不展示，宁少勿多）
-- [ ] **依赖联动闭环**：`requires` 引用的 id 均已登记（无悬空）、无自引用、单选项分组无循环；方向为「上层能力 → 基础能力」；不存在"通常一起用"的伪依赖
-- [ ] **`requires` 的"和/或"表达正确**：确为二选一/互斥的能力写成了单分组 `[[a, b]]`，而非拆成 `[[a], [b]]`（后者含义是"两个都要"）
-- [ ] **配置文件模板（`application-*.yml`）中的 `$` 已全部写成 `%24`**，无裸写 `${`
-- [ ] YAML 可被 SnakeYAML SafeConstructor 解析（禁止锚点/自定义 tag/任意类实例化）
-- [ ] 所有 GAV 坐标、抽象类 fqcn 均取自框架仓库真实代码，未编造
-- [ ] **A 形态（导入产物）布局正确**：ZIP 根下直接是 `metadata.yml` / `starters/*.yml` / `conflict-rules.yml` / `templates/**`（**未多包一层目录**）；模板文件是**纯全文**、未套 `name/content`；starter 文件内**未写 `---`**；模板相对路径与各 starter `linkages` 的 `source` 逐字一致
-- [ ] **归档可读且合规**：`unzip -l` 条目名均为相对路径（无 `..`、无绝对路径、无 `__MACOSX`/`.DS_Store`），UTF-8 无 BOM，单文件 ≤ 2 MiB、条目数 ≤ 2048
+状态用语必须准确：
+
+- “已生成归档”：文件已创建且 ZIP 可读。
+- “已验证可导入”：真实导入链路已通过。
+- “已验证可发布”：真实发布链路已通过。
+- “已验证生成可用”：实际生成通过，并注明版本/组合。
+- “已验证可构建/启动”：生成项目实际构建/启动通过，并注明工具、JDK 与环境。
+
+任何缺失验证均不得用“完全可用”“直接上线”等措辞替代。继续完成不受阻塞影响的工作，集中列出确需用户补充的最小信息。
+
+## 提示词结束
+
+---
+
+## 本版核验依据
+
+本提示词针对平台提交 `f50335deabbd102927aec1afc352cb8ceac93aa3` 的源码契约整理。重点核验了真实 ZIP 导入服务、结构化解析器、发布装配器、生成引擎、联动渲染器及六份基础模板。后续平台升级时，优先复核第二节列出的入口。
+
+提示词本身不提供目标框架的配置 ZIP，也不表示任意框架已通过上述验证。
