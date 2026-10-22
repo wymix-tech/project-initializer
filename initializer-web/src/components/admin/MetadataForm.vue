@@ -54,11 +54,13 @@ function addBoot(): void {
     frameworkParent: null,
     sort: bootVersions.value.length,
   })
+  syncTextDrafts()
 }
 
 /** 删除指定下标的 Boot 版本行。 */
 function removeBoot(index: number): void {
   bootVersions.value.splice(index, 1)
+  syncTextDrafts()
 }
 
 /**
@@ -81,9 +83,72 @@ function splitIds(text: string): string[] {
   return [...new Set(text.split(/[\s,，]+/).map((s) => s.trim()).filter((s) => s !== ''))]
 }
 
+/**
+ * 逗号列表文本框的编辑草稿（原始键入文本）。
+ *
+ * <p>不能把输入框直接绑到 `:value="joinIds(...)" + @input="splitIds(...)"`：
+ * 每敲一个字符就回写规范化数组，再把数组 join 回输入框，
+ * 于是「17,」会被立刻重写成「17」——逗号被吞掉，用户永远无法输入分隔符。
+ * 这里保留逐字符原文，只有**存活下来**的分隔符才回写数组（空串表示尚未产生有效项，不覆盖），
+ * 失焦时再整体规范化一次。
+ */
+const javaVersionsText = ref<Record<number, string>>({})
+const startersText = ref<Record<number, string>>({})
+
+/** 从数组同步编辑草稿（载入 / 重置时用）。 */
+function syncTextDrafts(): void {
+  const javaText: Record<number, string> = {}
+  const starterText: Record<number, string> = {}
+  bootVersions.value.forEach((bv, i) => {
+    javaText[i] = joinIds(bv.supportedJavaVersions)
+    starterText[i] = joinIds(bv.starters)
+  })
+  javaVersionsText.value = javaText
+  startersText.value = starterText
+}
+
+/** 记录键入原文，并把存活下来的分隔符立即回写到结构化数组。 */
+function onListInput(
+  index: number,
+  key: 'java' | 'starters',
+  bv: BootVersionDto,
+  event: Event,
+): void {
+  const text = (event.target as HTMLInputElement).value
+  if (key === 'java') {
+    javaVersionsText.value[index] = text
+    if (text.trim() !== '') bv.supportedJavaVersions = splitIds(text)
+  } else {
+    startersText.value[index] = text
+    if (text.trim() !== '') bv.starters = splitIds(text)
+  }
+}
+
+/** 失去焦点时把编辑草稿规范化回显（去空去重、统一英文逗号）。 */
+function onListBlur(index: number, key: 'java' | 'starters', bv: BootVersionDto): void {
+  const text = (key === 'java' ? javaVersionsText.value[index] : startersText.value[index]) ?? ''
+  if (text.trim() === '') {
+    if (key === 'java') {
+      bv.supportedJavaVersions = []
+      javaVersionsText.value[index] = ''
+    } else {
+      bv.starters = []
+      startersText.value[index] = ''
+    }
+    return
+  }
+  if (key === 'java') {
+    bv.supportedJavaVersions = splitIds(text)
+    javaVersionsText.value[index] = joinIds(bv.supportedJavaVersions)
+  } else {
+    bv.starters = splitIds(text)
+    startersText.value[index] = joinIds(bv.starters)
+  }
+}
+
 /** 数组 → 逗号分隔文本（表单回显用）。 */
 function joinIds(ids: string[]): string {
-  return ids.join(', ')
+  return ids.join(',')
 }
 
 /** 读取元数据草稿（结构化 GET 只回结构，不回版本）。 */
@@ -97,6 +162,7 @@ async function load(): Promise<void> {
   if (view) {
     javaVersions.value = view.javaVersions
     bootVersions.value = view.bootVersions
+    syncTextDrafts()
   }
   await loadVersion()
   loading.value = false
@@ -226,20 +292,22 @@ defineExpose({ load })
       <label class="field">
         <span>兼容 Java 版本（逗号分隔）</span>
         <input
-          :value="joinIds(bv.supportedJavaVersions)"
+          :value="javaVersionsText[i] ?? joinIds(bv.supportedJavaVersions)"
           type="text"
           placeholder="如 17, 21"
-          @input="bv.supportedJavaVersions = splitIds(($event.target as HTMLInputElement).value)"
+          @input="onListInput(i, 'java', bv, $event)"
+          @blur="onListBlur(i, 'java', bv)"
         />
       </label>
 
       <label class="field">
         <span>可选 starter 白名单（逗号分隔，留空 = 全部可选）</span>
         <input
-          :value="joinIds(bv.starters)"
+          :value="startersText[i] ?? joinIds(bv.starters)"
           type="text"
           placeholder="如 web, actuator"
-          @input="bv.starters = splitIds(($event.target as HTMLInputElement).value)"
+          @input="onListInput(i, 'starters', bv, $event)"
+          @blur="onListBlur(i, 'starters', bv)"
         />
       </label>
 
