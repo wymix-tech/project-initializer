@@ -201,6 +201,58 @@ describe('MetadataForm 元数据表单', () => {
     expect(body.bootVersions[0].frameworkParent).toEqual({ groupId: '', artifactId: '', version: '' })
   })
 
+  it('兼容 Java / starter 白名单输入框可以逐字键入逗号', async () => {
+    const wrapper = await mountForm(MetadataForm, {
+      '/api/admin/metadata': { javaVersions: [], bootVersions: [] },
+      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      'PUT /api/admin/metadata': { kind: 'metadata', rows: 1, version: 1, summary: 's' },
+    })
+    await wrapper.findAll('button').find((b) => b.text().includes('+ 新增 Boot 版本'))!.trigger('click')
+    const card = wrapper.find('.boot-card')
+    const javaInput = card.find('input[placeholder="如 17, 21"]')
+    const starterInput = card.find('input[placeholder="如 web, actuator"]')
+
+    // 逐字符键入：每个字符后都不能被规范化回写吞掉
+    for (const text of ['1', '17', '17,', '17, ', '17, 2', '17, 21']) {
+      await javaInput.setValue(text)
+      expect((javaInput.element as HTMLInputElement).value).toBe(text)
+    }
+    for (const text of ['w', 'web', 'web,', 'web, a', 'web, actuator']) {
+      await starterInput.setValue(text)
+      expect((starterInput.element as HTMLInputElement).value).toBe(text)
+    }
+
+    await javaInput.trigger('blur')
+    await starterInput.trigger('blur')
+    expect((javaInput.element as HTMLInputElement).value).toBe('17,21')
+    expect((starterInput.element as HTMLInputElement).value).toBe('web,actuator')
+
+    await wrapper.findAll('button').find((b) => b.text().includes('保存草稿'))!.trigger('click')
+    await settle()
+    const body = JSON.parse(lastCall('PUT', '/api/admin/metadata')!.body as string)
+    expect(body.bootVersions[0].supportedJavaVersions).toEqual(['17', '21'])
+    expect(body.bootVersions[0].starters).toEqual(['web', 'actuator'])
+  })
+
+  it('清空列表输入框后提交空数组', async () => {
+    const wrapper = await mountForm(MetadataForm, {
+      '/api/admin/metadata': view(),
+      '/api/admin/config/metadata': { kind: 'metadata', contentYaml: null, version: null, updatedAt: null },
+      'PUT /api/admin/metadata': { kind: 'metadata', rows: 1, version: 1, summary: 's' },
+    })
+    const card = wrapper.find('.boot-card')
+    const starterInput = card.find('input[placeholder="如 web, actuator"]')
+    await starterInput.setValue('')
+    await starterInput.trigger('blur')
+    expect((starterInput.element as HTMLInputElement).value).toBe('')
+
+    await wrapper.findAll('button').find((b) => b.text().includes('保存草稿'))!.trigger('click')
+    await settle()
+    const body = JSON.parse(lastCall('PUT', '/api/admin/metadata')!.body as string)
+    expect(body.bootVersions[0].starters).toEqual([])
+    expect(body.bootVersions[0].supportedJavaVersions).toEqual(['17', '21'])
+  })
+
   it('删除 Boot 版本行', async () => {
     const wrapper = await mountForm(MetadataForm, {
       '/api/admin/metadata': view(),
