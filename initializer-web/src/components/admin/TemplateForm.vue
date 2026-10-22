@@ -35,6 +35,28 @@ const loadedContent = ref('')
 
 const dirty = computed(() => content.value !== loadedContent.value)
 
+/** 与 ProjectGenerator.buildModel / LinkageRenderer 的实际上下文保持一致。 */
+const parameters = [
+  { name: 'artifact', description: '项目 artifactId', example: 'demo-app', scope: '全部模板及 YAML 片段' },
+  { name: 'group', description: '项目 groupId', example: 'com.example', scope: '全部模板及 YAML 片段' },
+  { name: 'basePackage', description: '项目基础包名', example: 'com.example.demo', scope: '全部模板及 YAML 片段' },
+  { name: 'packagePath', description: '基础包名对应的目录', example: 'com/example/demo', scope: '全部模板及 YAML 片段' },
+  { name: 'bootVersion', description: '所选 Spring Boot 版本 ID', example: '3.2.5', scope: '全部模板及 YAML 片段' },
+  { name: 'javaVersion', description: '所选 Java 版本 ID', example: '17', scope: '全部模板及 YAML 片段' },
+  { name: 'parentGroupId', description: '框架父 POM 的 groupId', example: 'org.springframework.boot', scope: '全部模板及 YAML 片段' },
+  { name: 'parentArtifactId', description: '框架父 POM 的 artifactId', example: 'spring-boot-starter-parent', scope: '全部模板及 YAML 片段' },
+  { name: 'parentVersion', description: '框架父 POM 版本；未配置时使用 Boot 版本', example: '3.2.5', scope: '全部模板及 YAML 片段' },
+  { name: 'configPackage', description: '当前 starter 的配置包名', example: 'com.example.demo.config', scope: '仅声明 config-package 的 starter 联动模板及 YAML 片段' },
+  { name: '自定义 alias', description: '当前 starter 的 abstract-classes[].alias，值为对应 fqcn', example: '${redisSupport} → com.company.RedisSupport', scope: '仅声明该 alias 的 starter 联动模板及 YAML 片段' },
+  { name: 'starters', description: '所选 starter ID 列表（含自动补齐的必选项）', example: '<#list starters as id>${id}</#list>', scope: '仅 FreeMarker；不能直接作为标量插值' },
+  { name: 'starterDependencies', description: '依赖列表：groupId、artifactId、可选 version', example: '<#list starterDependencies as dep>${dep.artifactId}</#list>', scope: '仅 FreeMarker；version 使用 dep.version! 或先检查是否存在' },
+]
+const parameterSyntax = '${artifact}'
+const yamlExample = 'app:\n  name: "${artifact}"\n  base-package: "${basePackage}"\n  host: "${REDIS_HOST:localhost}"'
+const yamlEscape = '\\${artifact}'
+const ftlEscape = '${r"${REDIS_HOST:localhost}"}'
+const pathExample = 'src/main/java/{packagePath}/config/AppConfig.java'
+
 /** 新建模板名输入框内容。 */
 const newName = ref('')
 
@@ -44,7 +66,7 @@ const selectedSort = ref<number | null>(null)
 /**
  * 是否为 yml 片段（非 `.ftl`）。
  *
- * 片段含 Spring 占位符 `${VAR:default}`，只做 YAML 合并、不做 FreeMarker 解析。
+ * 片段含 Spring 占位符 `${VAR:default}`，先替换已知项目参数，再做 YAML 合并；不执行 FreeMarker 指令。
  */
 function isYmlFragment(name: string): boolean {
   return !name.endsWith('.ftl')
@@ -203,7 +225,7 @@ defineExpose({ load })
           <div class="editor-head">
             <span>
               <code>{{ selected }}</code>
-              <em v-if="isYmlFragment(selected)" class="tag" title="yml 片段含 Spring 占位符，不做 FreeMarker 语法校验">
+              <em v-if="isYmlFragment(selected)" class="tag" title="替换项目参数后合并 YAML，保留 Spring 占位符；不执行 FreeMarker 指令">
                 yml 片段
               </em>
               <em v-else class="tag tag-ftl" title=".ftl 模板，发布期做 FreeMarker 语法预校验">FreeMarker</em>
@@ -216,10 +238,46 @@ defineExpose({ load })
               </button>
             </span>
           </div>
+          <p class="hint parameter-hint">
+            使用 <code>{{ parameterSyntax }}</code> 引用项目参数。YAML 片段支持标量参数替换，
+            Spring 运行时占位符原样保留。下方可展开完整参数说明。
+          </p>
           <textarea v-model="content" class="tpl-content" spellcheck="false"></textarea>
           <details class="preview">
             <summary>预览（纯文本渲染，不做语法校验）</summary>
             <pre>{{ content }}</pre>
+          </details>
+          <details class="placeholder-help">
+            <summary>占位参数说明（名称、含义、示例及适用范围）</summary>
+            <div class="parameter-table">
+              <table>
+                <thead><tr><th>参数名</th><th>含义</th><th>示例</th><th>适用范围</th></tr></thead>
+                <tbody>
+                  <tr v-for="parameter in parameters" :key="parameter.name">
+                    <td><code>{{ parameter.name }}</code></td>
+                    <td>{{ parameter.description }}</td>
+                    <td><code>{{ parameter.example }}</code></td>
+                    <td>{{ parameter.scope }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>示例值仅用于说明，生成时取当前项目及所选版本的实际配置。</p>
+            <p>
+              YAML 片段只替换已知标量参数；未知参数和带默认值的 Spring 占位符保留原文，
+              不执行 FreeMarker 表达式或指令。使用 <code>{{ yamlEscape }}</code> 可保留同名运行时参数。
+              建议将含占位符的 YAML 值加引号。
+            </p>
+            <pre>{{ yamlExample }}</pre>
+            <p>
+              FreeMarker 模板支持表达式与列表指令；保留 Spring 占位符需使用原始字符串，例如
+              <code>{{ ftlEscape }}</code>，不能用反斜杠转义。
+            </p>
+            <p>
+              starter 的 target 和 config-package 使用单层大括号，如 <code>{{ pathExample }}</code>；
+              仅支持 basePackage、packagePath、artifact、group、bootVersion、javaVersion。
+              语法由联动用途决定：templates 中的 source 走 FreeMarker，application-yml-fragments 中的 source 走 YAML 参数替换与合并。
+            </p>
           </details>
         </template>
       </div>
@@ -258,4 +316,12 @@ defineExpose({ load })
 .preview { border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 10px; background: #f6f8fa; }
 .preview summary { cursor: pointer; font-size: 12px; color: #0969da; }
 .preview pre { margin: 8px 0 0; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
+.placeholder-help { border: 1px solid #d0d7de; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.6; }
+.placeholder-help summary { cursor: pointer; color: #0969da; }
+.placeholder-help p { margin: 10px 0 0; }
+.placeholder-help pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f6f8fa; padding: 8px; }
+.parameter-table { overflow-x: auto; margin-top: 10px; }
+.parameter-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.parameter-table th, .parameter-table td { padding: 6px 8px; border-bottom: 1px solid #d8dee4; vertical-align: top; overflow-wrap: anywhere; }
+.parameter-table code { white-space: pre-wrap; }
 </style>
