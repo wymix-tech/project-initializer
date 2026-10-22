@@ -82,6 +82,37 @@ class ProjectGeneratorTest {
     }
 
     @Test
+    void generatedZipShouldContainResolvedYamlFragmentParameters() throws Exception {
+        Map<String, String> templates = new java.util.LinkedHashMap<>(ClasspathTemplates.load());
+        templates.put("starters/xxx-redis/application-redis.yml", """
+                framework:
+                  name: ${artifact}
+                  package: ${basePackage}
+                  host: ${REDIS_HOST:localhost}
+                """);
+        MetadataCatalog catalog;
+        try (InputStream in = getClass().getResourceAsStream("/catalog/metadata.yml")) {
+            catalog = MetadataCatalog.load(in).merge(testStarterCatalog());
+        }
+        ProjectGenerator custom = new ProjectGenerator(catalog, new TemplateRenderer(templates), testStarterCatalog());
+        byte[] bytes = custom.generate(request(List.of("xxx-redis-spring-boot-starter")));
+        try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(bytes))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                if (entry.getName().endsWith("/application.yml")) {
+                    Map<?, ?> framework = (Map<?, ?>) YamlFacade.parse(
+                            new String(zip.readAllBytes(), StandardCharsets.UTF_8)).get("framework");
+                    assertThat(framework.get("name")).isEqualTo("demo-app");
+                    assertThat(framework.get("package")).isEqualTo("com.example.demo");
+                    assertThat(framework.get("host")).isEqualTo("${REDIS_HOST:localhost}");
+                    return;
+                }
+            }
+        }
+        throw new AssertionError("ZIP 中缺少 application.yml");
+    }
+
+    @Test
     void shouldGenerateZipWithExpectedFileTree() throws Exception {
         byte[] zipBytes = generate(List.of("web"));
         try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(zipBytes))) {

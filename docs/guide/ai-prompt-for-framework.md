@@ -250,7 +250,7 @@ linkages:
       alias: xxxSupport
 ```
 
-**占位符白名单（强制）**：yml 中只允许 `{basePackage}` `{packagePath}` `{artifact}` `{group}` `{bootVersion}` `{javaVersion}` 这六个，出现其他占位符发布时直接拒绝。
+**路径占位符白名单（强制）**：starter 的 `target` 和 `config-package` 中只允许 `{basePackage}` `{packagePath}` `{artifact}` `{group}` `{bootVersion}` `{javaVersion}` 这六个，出现其他占位符发布时直接拒绝。
 
 ## 第三节：冲突规则（kind = `conflict-rule`）
 
@@ -308,33 +308,26 @@ name: starters/acme-dynamic-datasource/application-dynamic-datasource.yml
 content: |
   spring:
     xxx:
-      # %24 是 $ 的 URL 编码：必须用它代替 $，见下方"配置文件模板的 $ 转义"规则
-      host: %24{XXX_HOST:localhost}
-      port: %24{XXX_PORT:6379}
+      host: "${XXX_HOST:localhost}"
+      port: "${XXX_PORT:6379}"
+  app:
+    name: "${artifact}"
 ```
 
-### 配置文件模板的 `$` 转义（**强制，否则发布失败**）
+### 项目参数与 Spring 运行时占位符
 
-管理后台发布模板草稿时，**每一份 content（含 `.yml`）都会做 FreeMarker 语法预校验**。
-配置文件里的 Spring 环境变量占位 `${ENV:default}` 中的 `${` 会被 FreeMarker 当成插值起始，
-而 `:` 在 FreeMarker 表达式里非法，发布直接被拒（报 `模板语法非法 ... Encountered ":"`）。
+发布期仅对 `.ftl` 做 FreeMarker 语法预校验；`application-yml-fragments` 引用的 `.yml` / `.yaml` 片段不执行 FreeMarker 指令。
 
-因此 **`application-*.yml` 等配置文件模板中，一律用 `%24` 代替 `$`**：
-
-| 你想表达的 | 必须写成 | 原因 |
-|---|---|---|
-| `${XXX_HOST:localhost}` | `%24{XXX_HOST:localhost}` | `%24` 是 `$` 的 URL 编码；发布期 FreeMarker 看不到 `${` 序列，校验通过；生成期合并前自动 URL 解码，还原为 `${XXX_HOST:localhost}` 写进生成项目的 application.yml，由 Spring 解析 |
-
-等价备选写法是 `\${XXX_HOST:localhost}`（FreeMarker 转义），生成期同样会还原；**首选 `%24`**。
-普通配置值（不含 `${`）无需转义，照常书写。
-
-规则：
-
-- `.ftl` 模板可用 FreeMarker 变量：`${group}` `${artifact}` `${bootVersion}` `${javaVersion}` `${configPackage}` `${packagePath}`
-- `application-yml-fragments` 引用的片段**不要**用 `.ftl` 后缀；片断内容由管理端维护即可生效（发布后覆盖 classpath 同名文件，无需改代码、无需重新打包），合并进生成项目的 application.yml
-- 配置文件模板里的 `${}`（Spring 环境变量占位）**必须用 `%24{` 书写**，禁止裸写 `${`，否则发布期 FreeMarker 预校验失败
-- 配置类模板应引用框架中的集成抽象类（与 `abstract-classes[].fqcn` 对应）
-- `name` 不得重复；模板必须能通过 FreeMarker 语法预校验（tag 闭合、指令合法）
+- 项目基础参数：`${group}`、`${artifact}`、`${basePackage}`、`${packagePath}`、`${bootVersion}`、`${javaVersion}`，生成时替换为用户输入或所选版本 ID。
+- 父 POM 参数：`${parentGroupId}`、`${parentArtifactId}`、`${parentVersion}`，来自当前 Boot 版本的框架父 POM；未配置时使用 Spring Boot 父 POM。
+- starter 联动上下文：`${configPackage}` 仅在当前 starter 声明 `config-package` 时可用；`${alias}` 来自当前 starter 的 `abstract-classes[].alias`，替换值为对应 fqcn。
+- `.ftl` 支持 FreeMarker 表达式和指令，并可遍历 `starters`、`starterDependencies`；后者元素含 `groupId`、`artifactId` 和可选 `version`。
+- YAML 片段仅替换上述已知标量；字符串键、值和嵌套列表均支持。未知参数及 `${XXX_HOST:localhost}` 等 Spring 占位符保留至运行时，**直接写 `${...}`，无需 `%24` 编码**。
+- YAML 片段中若需保留同名项目参数，可写 `\${artifact}`；建议为包含占位符的值加引号。普通 YAML 数字、布尔值等不受影响，参数替换值保持字符串。
+- `.ftl` 中保留 Spring 占位符使用 `${r"${XXX_HOST:localhost}"}`；反斜杠不是 FreeMarker 插值转义方式。
+- `application-yml-fragments` 引用的片段使用 `.yml` / `.yaml` 后缀，发布后参与合并生成 `application.yml`；`templates` 中引用的 source 则走 FreeMarker，具体语法由用途决定。
+- 配置类模板应引用框架中的集成抽象类（与 `abstract-classes[].fqcn` 对应）；模板 `name` 不得重复，`.ftl` 必须通过 FreeMarker 语法校验。
+- 路径字段 `target`、`config-package` 使用 `{packagePath}` 等单层大括号，只允许六个基础参数；不要与正文的 `${...}` 混用。
 
 ### 模板完整性（**漏文件会直接导致生成失败**）
 
@@ -445,7 +438,7 @@ Compress-Archive -Path .\initializer-catalog\* -DestinationPath initializer-cata
 - **UTF-8 无 BOM**：非法字节序列直接拒绝（中文注释没问题，但别存成 GBK）
 - 容量上限：条目数 ≤ 2048、单文件 ≤ 2 MiB、解压总量 ≤ 32 MiB、目录层级 ≤ 16、条目名长度 ≤ 512
 - 排除 `__MACOSX/`、`.DS_Store`、`.idea/`、`.git/` 等无关文件
-- 内容校验仍按前四节执行：id 悬空引用、`requires` 成环、模板与 `linkages` 声明不对齐、FreeMarker 语法（含 `%24` 转义）在**发布期**拒绝
+- 内容校验仍按前四节执行：id 悬空引用、`requires` 成环、模板与 `linkages` 声明不对齐、`.ftl` 的 FreeMarker 语法在**发布期**拒绝
 
 ## 平台行为约定（影响产出写法）
 
@@ -458,7 +451,7 @@ Compress-Archive -Path .\initializer-catalog\* -DestinationPath initializer-cata
   3. **管理端发布（热生效）**：发布后快照原子切换，生成接口立即可用；重启服务时会从数据库还原最近一次发布，无需重新发布
   （后两者同时存在时，**外部清单目录优先级更高**；管理端再次发布会覆盖内存快照）
 - **`.ftl` 与配置文件均可在管理端维护**：发布后覆盖 classpath 同名模板/片段，新增或修改模板不需要改代码、不需要重新打 jar
-- **配置文件必须 `%24` 转义 `$`**：否则发布期 FreeMarker 预校验拒绝（详见第四节）
+- **配置文件的两类参数共存**：YAML 片段的项目参数在生成时替换，Spring 运行时参数原样保留；无需 `%24` 编码（详见第四节）
 - **必选项（`required: true`）双重保障**：前端默认勾选且禁止取消，后端生成时兜底自动补齐，绕过前端直调 API 也会带上；仅当该 starter 属于当前 Boot 版本可选清单时才强制
 - **依赖联动（`requires`）不再自动带上**：前端只在候选条目上高亮提示（整行淡黄底 + 红色 `*`）、**不默认勾选、不锁定**依赖引入项（用户可自由取消，A 依赖 B 或 C 时只勾一个即可，B/C 互斥也不会被强制同选）；未满足时前端告警，后端生成期以 `2004 缺少必需的依赖 starter` 兜底拒绝；仅当依赖属于当前 Boot 版本可选清单时才参与校验
 - **依赖图约束**：`requires` 悬空引用 / 自引用会在**发布期**直接拒绝；成环仅在**分组为单选项（强依赖）**时拒绝——多选项分组可通过换分支打破环，平台不判环（不会等到生成才报错）
@@ -473,7 +466,7 @@ Compress-Archive -Path .\initializer-catalog\* -DestinationPath initializer-cata
 - [ ] **BOM/dependencyManagement 管理的依赖未写 version**（内部 starter 仅在版本自持时写）
 - [ ] **框架统一父 POM 已填入各 `bootVersions[].frameworkParent`**（或顶层声明全局默认 / 明确说明框架无统一父 POM），三项齐全
 - [ ] 兼容矩阵闭环：Java → Boot → starter 引用无悬空 id
-- [ ] 占位符仅在白名单六项内
+- [ ] `target` / `config-package` 路径占位符仅在白名单六项内，正文参数符合第四节规则
 - [ ] 冲突规则 id 唯一，starters 数量符合 type（pair=2，group≥2）
 - [ ] **① starter 单一数据源 + 版本关联**：每个 starter 只在第二节清单声明（坐标/展示名/必选/联动），metadata 未出现 `starters:` 节；`bootVersions[].starters` 的每个 id 都有清单条目且关联本 Boot 版本；**同一 Boot 版本内无重复 id**（多 Boot 线共用 id 时已用 `bootVersions` 拆成多条文档）
 - [ ] **② 冲突规则引用不越界**：`rules[].starters` ⊆ 清单已声明的 starter id 且逐字照抄 artifactId，无官方 id 凑数

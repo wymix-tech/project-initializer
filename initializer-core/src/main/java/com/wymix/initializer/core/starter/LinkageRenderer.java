@@ -4,9 +4,7 @@ import com.wymix.initializer.api.error.BusinessException;
 import com.wymix.initializer.api.error.ErrorCode;
 import com.wymix.initializer.core.generator.TemplateRenderer;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -56,7 +54,7 @@ public class LinkageRenderer {
      * <p>作用：
      * <ul>
      *   <li>.ftl 渲染由 {@link TemplateRenderer} 的内存模板加载器直接取用（未命中即 3001，无兜底）</li>
-     *   <li>application.yml 片段合并：键命中时直接用模板集文本（处理 {@code \${} → ${} 还原），未命中即 3004</li>
+     *   <li>application.yml 片段合并：键命中时直接用模板集文本（替换项目参数并保留 Spring 占位符），未命中即 3004</li>
      * </ul>
      * 管理端 TEMPLATE 草稿/模板集对 starter 的模板与 application-*.yml 片段即时维护，发布即生效。
      *
@@ -108,7 +106,7 @@ public class LinkageRenderer {
      */
     public LinkageResult render(String bootVersionId, List<String> starterIds, Map<String, Object> model) {
         Map<String, byte[]> templateFiles = renderTemplates(bootVersionId, starterIds, model);
-        Map<String, Object> mergedYml = mergeYmlFragments(bootVersionId, starterIds);
+        Map<String, Object> mergedYml = mergeYmlFragments(bootVersionId, starterIds, model);
         return new LinkageResult(templateFiles, mergedYml);
     }
 
@@ -174,12 +172,7 @@ public class LinkageRenderer {
                     throw new BusinessException(ErrorCode.TEMPLATE_TARGET_CONFLICT,
                             "模板产物路径冲突: " + target + "（" + previous + " 与 " + starterId + "）");
                 }
-                Map<String, Object> templateModel = new LinkedHashMap<>(model);
-                templateModel.putAll(abstractClassAliases(bootVersionId, starterId));
-                String configPackage = resolveConfigPackage(bootVersionId, starterId, model);
-                if (configPackage != null) {
-                    templateModel.put("configPackage", configPackage);
-                }
+                Map<String, Object> templateModel = linkageModel(bootVersionId, starterId, model);
                 ByteArrayOutputStream buf = new ByteArrayOutputStream();
                 renderer.render(template.source(), templateModel, buf);
                 files.put(target, buf.toByteArray());
@@ -188,77 +181,50 @@ public class LinkageRenderer {
         return files;
     }
 
-    /**
-     * 收集全部 application-yml-fragments 并按请求顺序委托合并器合并。
-     *
-     * <p>读取优先级（M3.5）：快照模板覆盖映射 → classpath 资源。覆盖命中时对内容做
-     * {@code \${} → ${}} 还原——发布期 FreeMarker 预校验要求 yml 中 Spring 占位符写作
-     * {@code \${VAR:default}}（转义为字面），合并时还原为生成项目运行时所需的 {@code ${VAR:default}}。
-     * classpath 内置 yml（含 {@code ${REDIS_HOST:localhost}} 风格）直读路径不变，行为兼容。
-     *
-     * @param starterIds 选中的 starter ID 清单
-     * @return 合并后的 yml 树；选中的 starter 均无片段时为 null
-     * @throws BusinessException 片段来源均不存在（3004）或读取失败（3004）
-     */
-    private Map<String, Object> mergeYmlFragments(String bootVersionId, List<String> starterIds) {
+    /** 为普通模板与 YAML 片段提供相同的 starter 上下文。 */
+    private Map<String, Object> linkageModel(String bootVersionId, String starterId, Map<String, Object> model) {
+        Map<String, Object> result = new LinkedHashMap<>(model);
+        result.putAll(abstractClassAliases(bootVersionId, starterId));
+        String configPackage = resolveConfigPackage(bootVersionId, starterId, model);
+        if (configPackage != null) {
+            result.put("configPackage", configPackage);
+        }
+        return result;
+    }
+
+    /** 收集 YAML 片段，替换项目参数后按请求顺序合并；Spring 占位符保留至项目运行时。 */
+    private Map<String, Object> mergeYmlFragments(String bootVersionId, List<String> starterIds,
+                                                 Map<String, Object> model) {
         List<YmlFragmentMerger.Fragment> fragments = new ArrayList<>();
         for (String starterId : starterIds) {
             StarterCatalogEntry entry = entryFor(bootVersionId, starterId);
             if (entry == null) {
                 continue;
             }
-            LinkageSpec linkages = entry.linkages();
-            for (YmlFragmentLinkage fragmentLinkage : linkages.ymlFragments()) {
-                String source = fragmentLinkage.source();
-                try {
-                    byte[] bytes = readYmlFragmentBytes(source);
-                    try (InputStream in = new ByteArrayInputStream(bytes)) {
-                        fragments.add(YmlFragmentMerger.Fragment.parse(in, source, fragmentLinkage.mergeStrategy()));
-                    }
-                } catch (BusinessException e) {
-                    throw e;
-                } catch (Exception e) {
-                    throw new BusinessException(ErrorCode.YML_MERGE_CONFLICT,
-                            "yml 片段读取失败: " + source + "（starter " + starterId + "）", e);
-                }
+            Map<String, Object> fragmentModel = linkageModel(bootVersionId, starterId, model);
+            for (YmlFragmentLinkage linkage : entry.linkages().ymlFragments()) {
+                fragments.add(YmlFragmentRenderer.render(readYmlFragment(linkage.source()),
+                        linkage.source(), linkage.mergeStrategy(), fragmentModel));
             }
         }
-        if (fragments.isEmpty()) {
-            return null;
-        }
-        return YmlFragmentMerger.merge(null, fragments);
+        return fragments.isEmpty() ? null : YmlFragmentMerger.merge(null, fragments);
     }
 
-    /**
-     * 读取 yml 片段字节：**只**取自模板集映射（T5：DB 唯一数据源，无 classpath 兜底）。
-     *
-     * <p>合并前做两步归一化（兼容管理端维护现状）：
-     * <ol>
-     *   <li>URL 解码：管理端草稿中的 {@code %24}（{@code $}）等若来自 URL 编码片段，合并时还原为字面字符</li>
-     *   <li>FreeMarker 转义还原：发布期预校验要求 yml 中的 Spring 占位符写作 {@code \${...}}（转义为字面），
-     *       合并时还原为 {@code ${...}} 以让生成项目运行时由 Spring 解析</li>
-     * </ol>
-     *
-     * @param source yml 片段相对 templates/ 的源名
-     * @return yml 字节
-     * @throws BusinessException 模板集中无该资源（3004）
-     */
-    private byte[] readYmlFragmentBytes(String source) {
+    /** 从 DB 模板集读取片段，兼容既有 URL 编码文本；转义由片段渲染器统一处理。 */
+    private String readYmlFragment(String source) {
         String template = overrides.get(source);
         if (template == null) {
             throw new BusinessException(ErrorCode.YML_MERGE_CONFLICT,
                     "yml 片段不存在: " + source + "（模板集无该条目）");
         }
-        String restored = template;
-        if (restored.indexOf('%') >= 0) {
+        if (template.indexOf('%') >= 0) {
             try {
-                restored = URLDecoder.decode(restored, StandardCharsets.UTF_8);
+                return URLDecoder.decode(template, StandardCharsets.UTF_8);
             } catch (IllegalArgumentException e) {
-                // 非法 URL 编码片段（如不完整 %XY）：保留原文不阻断
+                // 非法 URL 编码片段：保留原文不阻断。
             }
         }
-        restored = restored.replace("\\${", "${");
-        return restored.getBytes(StandardCharsets.UTF_8);
+        return template;
     }
 
     /**

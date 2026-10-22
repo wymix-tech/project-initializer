@@ -155,6 +155,49 @@ class LinkageRendererTest {
     }
 
     @Test
+    void yamlFragmentsShouldResolveProjectAndStarterParametersBeforeMerge() {
+        Map<String, String> templates = new LinkedHashMap<>(linkageTemplates);
+        templates.put("starters/xxx-redis/application-redis.yml", """
+                custom:
+                  name: "${artifact}"
+                  group: '${group}'
+                  package: ${basePackage}
+                  path: ${packagePath}
+                  boot: ${bootVersion}
+                  java: ${javaVersion}
+                  parent: ${parentVersion}
+                  config: ${configPackage}
+                  support: ${redisSupport}
+                  host: ${REDIS_HOST:localhost}
+                  unknown: ${RUNTIME_VALUE}
+                  escaped: "\\${artifact}"
+                  names: ["${artifact}", "prefix-${basePackage}"]
+                  ${artifact}: true
+                """);
+        Map<String, Object> fullModel = new LinkedHashMap<>(model);
+        fullModel.put("bootVersion", "3.2.5");
+        fullModel.put("javaVersion", "17");
+        fullModel.put("parentVersion", "1.0.0");
+        LinkageRenderer r = new LinkageRenderer(starterCatalogOfTestYml(), new TemplateRenderer(templates), templates);
+        Map<?, ?> custom = (Map<?, ?>) r.render(List.of("xxx-redis-spring-boot-starter"), fullModel)
+                .mergedYml().get("custom");
+        assertThat(custom.get("name")).isEqualTo("demo-app");
+        assertThat(custom.get("group")).isEqualTo("com.example");
+        assertThat(custom.get("package")).isEqualTo("com.example.demo");
+        assertThat(custom.get("path")).isEqualTo("com/example/demo");
+        assertThat(custom.get("boot")).isEqualTo("3.2.5");
+        assertThat(custom.get("java")).isEqualTo("17");
+        assertThat(custom.get("parent")).isEqualTo("1.0.0");
+        assertThat(custom.get("config")).isEqualTo("com.example.demo.config");
+        assertThat(custom.get("support")).isEqualTo("com.company.redis.RedisSupport");
+        assertThat(custom.get("host")).isEqualTo("${REDIS_HOST:localhost}");
+        assertThat(custom.get("unknown")).isEqualTo("${RUNTIME_VALUE}");
+        assertThat(custom.get("escaped")).isEqualTo("${artifact}");
+        assertThat(custom.get("names")).isEqualTo(List.of("demo-app", "prefix-com.example.demo"));
+        assertThat(custom.get("demo-app")).isEqualTo(true);
+    }
+
+    @Test
     void missingFragmentResourceShouldThrow3004() throws Exception {
         // 构造一个声明了不存在片段的清单
         String yml = """
