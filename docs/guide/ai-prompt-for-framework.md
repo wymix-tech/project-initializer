@@ -207,6 +207,8 @@ linkages:
       alias: acmeCacheSupport
 ```
 
+**路径占位符白名单（强制）**：starter 的 `target` 和 `config-package` 中只允许 `{basePackage}` `{packagePath}` `{artifact}` `{group}` `{bootVersion}` `{javaVersion}` 这六个，出现其他占位符发布时直接拒绝。
+
 上例抽象类及配置类仅示意，未从真实源码取证时不要生成。`abstract-classes` 只给该 starter 模板注入 alias→fqcn，不会自动创建实现类，也不保证跨 starter 可使用该 alias。
 
 #### 5.3 conflict-rules.yml
@@ -240,19 +242,21 @@ pair 恰好两个不同 ID；group 至少两个不同 ID，组内任意两项均
 | 联动 target、config-package | `{basePackage}`、`{packagePath}`、`{artifact}`、`{group}`、`{bootVersion}`、`{javaVersion}` | 六项路径占位符；source 使用固定模板名，不假设动态查找 |
 | 基础 FreeMarker 模板 | `${basePackage}`、`${packagePath}`、`${artifact}`、`${group}`、`${bootVersion}`、`${javaVersion}`、`starters`、`starterDependencies`、`parentGroupId`、`parentArtifactId`、`parentVersion` | 最终以 ProjectGenerator.buildModel 为准；依赖项含 groupId/artifactId 和可选 version |
 | starter FreeMarker 模板 | 基础模型，加本条目的 `configPackage` 和抽象类 alias | configPackage 仅在配置了 config-package 时提供；不假设其他条目的 alias 可用 |
-| application-yml-fragments | 静态 YAML，在合并前进行 URL 解码及兼容还原 | 不执行 FreeMarker 渲染；不要在这里使用 `${artifact}` 等模板变量 |
+| application-yml-fragments | `${group}`、`${artifact}`、`${basePackage}`、`${packagePath}`、`${bootVersion}`、`${javaVersion}`、`${parentGroupId}`、`${parentArtifactId}`、`${parentVersion}`，以及本 starter 的 `${configPackage}` 和 `${alias}` | 不执行 FreeMarker 指令，只替换模型中的已知标量；未知参数和 Spring 运行时占位符 `${ENV:default}` 原样保留，**直接写 `${...}`，无需 `%24` 编码**；需保留字面量时写 `\${...}`，含占位符的值建议加引号 |
 
 归档中每个 `templates/<name>` 保存模板全文，不套 `name/content` YAML，也不放 Markdown 代码围栏。
 
-当前平台对模板集每份文件都做 FreeMarker 语法检查，配置片段中的 Spring `${ENV:default}` 会产生语法冲突。静态 YAML 片段使用带引号的 `'%24{ENV:default}'`，例如：
+发布期**只对 `.ftl`** 做 FreeMarker 语法预校验；`application-yml-fragments` 引用的 `.yml` / `.yaml` 片段不执行 FreeMarker 指令，因此配置片段里的 Spring `${ENV:default}` 不会与 FreeMarker 冲突，例如：
 
 ```yaml
 acme:
   cache:
-    endpoint: '%24{ACME_CACHE_ENDPOINT:localhost}'
+    endpoint: "${ACME_CACHE_ENDPOINT:localhost}"
+  app:
+    name: "${artifact}"
 ```
 
-此示例只演示编码；真正配置键和默认值必须取自框架。该还原只适用于配置片段读取路径，**不要把 `%24` 规则泛化到 `.ftl`**。FreeMarker 基础模板/Java 模板如需输出 Spring 或 Maven 的字面 `${…}`，使用 FreeMarker 字面输出或 noparse，并验证结果，例如 `${r'${ENV:default}'}`。反斜杠不能被想当然地视为通用 FreeMarker 转义。
+此示例只演示写法；真正配置键和默认值必须取自框架。YAML 片段的字符串键、值和嵌套列表都支持替换，替换值按字符串写入、不改变 YAML 结构与标量类型，替换后出现重复键会明确报错；需要把同名项目参数保留为字面量时写 `\${artifact}`。`.ftl` 模板如需输出 Spring 或 Maven 的字面 `${…}`，使用 FreeMarker 字面输出或 noparse 并验证结果，例如 `${r'${ENV:default}'}`；反斜杠不是 FreeMarker 的插值转义方式。
 
 片段路径会调用 URLDecoder；存在 `%` 编码时原始 `+` 可能被解为文本空格。片段含 URL、百分号、加号、编码字符串等内容时核对解码后的真实值，需要保留字面加号时使用 `%2B`，并在实际合并结果验证；不批量 URL 编码全部模板。
 

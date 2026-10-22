@@ -530,6 +530,16 @@ describe('TemplateForm 模板表单', () => {
     await settle()
     expect(wrapper.find('.tag').text()).toBe('yml 片段')
     expect(wrapper.find('.preview pre').text()).toContain('${REDIS_HOST:localhost}')
+    const help = wrapper.find('.placeholder-help')
+    expect(help.find('summary').text()).toContain('占位参数说明')
+    expect(help.findAll('tbody tr').map((row) => row.find('td').text())).toEqual([
+      'artifact', 'group', 'basePackage', 'packagePath', 'bootVersion', 'javaVersion',
+      'parentGroupId', 'parentArtifactId', 'parentVersion', 'configPackage', '自定义 alias',
+      'starters', 'starterDependencies',
+    ])
+    expect(help.text()).toContain('未知参数和带默认值的 Spring 占位符保留原文')
+    expect(help.text()).toContain('target 和 config-package 使用单层大括号')
+    expect(help.find('pre').text()).toContain('name: "${artifact}"')
   })
 
   it('保存单模板走 PUT /templates/{name} 并保留其余模板', async () => {

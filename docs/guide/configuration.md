@@ -232,7 +232,30 @@ public class RedisConfig {
 }
 ```
 
-配置片段（`application-redis.yml`）支持环境变量占位：
+配置片段（`.yml` / `.yaml`，由 `application-yml-fragments` 引用）支持项目参数替换和 Spring 运行时占位符共存：
+
+| 参数 | 含义 | 示例 |
+| --- | --- | --- |
+| `${artifact}` / `${group}` | artifactId / groupId | `demo-app` / `com.example` |
+| `${basePackage}` / `${packagePath}` | 基础包名 / 包目录 | `com.example.demo` / `com/example/demo` |
+| `${bootVersion}` / `${javaVersion}` | 所选 Boot / Java 版本 ID | `3.2.5` / `17` |
+| `${parentGroupId}` / `${parentArtifactId}` / `${parentVersion}` | 当前框架父 POM 坐标；未配置时使用 Spring Boot 父 POM | `org.springframework.boot` / `spring-boot-starter-parent` / `3.2.5` |
+| `${configPackage}` | 当前 starter 声明的配置包名，仅该 starter 的联动上下文可用 | `com.example.demo.config` |
+| `${自定义alias}` | 当前 starter 的 `abstract-classes[].alias` 对应的 fqcn，仅该 starter 的联动上下文可用 | `${redisSupport}` → `com.company.redis.RedisSupport` |
+
+普通 FreeMarker 模板还可通过 `<#list>` 遍历 `starters`（starter ID 列表）和 `starterDependencies`（依赖列表，元素含 `groupId`、`artifactId`、可选 `version`）。YAML 片段不执行 FreeMarker 表达式、指令或集合插值，仅替换模型中的已知标量。
+
+YAML 的字符串键、值、嵌套列表均支持替换；参数值按字符串写入，不改变 YAML 结构和标量类型。替换后出现重复键时明确报错。未知参数及 `${REDIS_HOST:localhost}` 等运行时占位符保留原文。若运行时参数恰好与项目参数同名，可写 `\${artifact}` 保留为字面 `${artifact}`。建议为含占位符的 YAML 值加引号。
+
+FreeMarker 模板保留 Spring 占位符时使用 `${r"${REDIS_HOST:localhost}"}`，不能依赖反斜杠转义。starter 的 `target`、`config-package` 仍使用 `{artifact}` 等单层大括号语法，且仅允许六个基础参数。具体渲染方式由联动用途决定，而非生成目标文件的扩展名。
+
+```yaml
+app:
+  name: "${artifact}"
+  base-package: "${basePackage}"
+```
+
+环境变量占位示例：
 
 ```yaml
 spring:
@@ -770,7 +793,7 @@ starter 清单必须已在 metadata 的 `bootVersions[].starters` 白名单登�
 - **CLOB 隔离**：模板列表只取 `name / updatedAt / sort`；全文按需
   `GET /api/admin/templates/{name}`，列表接口不搬运大文本。
 - **`*.ftl` 才做 FreeMarker 校验**：模板编辑区对 `application-*.yml` 片段标注「yml 片段」，
-  预览为纯文本；片段含 Spring 占位符 `${VAR:default}`，不能按模板解析。
+  预览为纯文本；生成时替换项目参数、保留 Spring 占位符 `${VAR:default}`，不执行 FreeMarker 指令。编辑区提供完整占位参数说明与示例。
 - **乐观锁**：结构化端点不直接回版本，版本统一取自 `config_draft_meta.version`
   （`readDraftVersion` 走 YAML 契约的轻量 GET），与结构化写入共享同一 `If-Match` 口径。
 - **一致性**：`types/admin.ts` 与后端 `CatalogDtos` / `ConfigArchiveDtos` 一一对应；
