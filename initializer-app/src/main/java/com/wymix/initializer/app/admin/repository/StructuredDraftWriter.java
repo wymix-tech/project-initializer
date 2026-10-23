@@ -391,7 +391,13 @@ public class StructuredDraftWriter {
         }
         StructuredSnapshot parents = StructuredSnapshot.empty(ConfigRepository.DRAFT_RELEASE_ID);
         int sort = 0;
+        StarterScopeIndex identities = new StarterScopeIndex();
         for (StarterCatalogEntry entry : entries) {
+            try {
+                identities.add(entry.id(), entry.bootVersions());
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED, e.getMessage(), e);
+            }
             CfgStarterEntity row = new CfgStarterEntity();
             row.setStarterId(entry.id());
             row.setCategory(entry.category());
@@ -404,19 +410,18 @@ public class StructuredDraftWriter {
             row.setSort(sort++);
             parents.starters().add(row);
         }
-        Map<String, CfgStarterEntity> starterById = new HashMap<>();
         long placeholderPk = 0L;
         for (CfgStarterEntity row : parents.starters()) {
             // 显式占位主键（负数区间，绝不与库内真实自增主键冲突）：
             // 子行父键据此唯一定位父行，写入期由映射换算为真实主键
             row.setId(--placeholderPk);
-            starterById.put(row.getStarterId(), row);
         }
 
         StructuredSnapshot children = StructuredSnapshot.empty(ConfigRepository.DRAFT_RELEASE_ID);
         long groupPlaceholderPk = 0L;
+        int entryIndex = 0;
         for (StarterCatalogEntry entry : entries) {
-            CfgStarterEntity starterRow = starterById.get(entry.id());
+            CfgStarterEntity starterRow = parents.starters().get(entryIndex++);
             int childSort = 0;
             for (DependencyCoord dep : entry.dependencies()) {
                 CfgStarterDependencyEntity row = new CfgStarterDependencyEntity();

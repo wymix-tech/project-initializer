@@ -521,7 +521,7 @@ describe('TemplateForm 模板表单', () => {
   it('yml 片段标注为非 FreeMarker 模板', async () => {
     const wrapper = await mountForm(TemplateForm, {
       '/api/admin/templates': { templates: [{ name: 'starters/x/application-x.yml', updatedAt: null, sort: 0 }] },
-      '/api/admin/templates/starters%2Fx%2Fapplication-x.yml': {
+      '/api/admin/template?name=starters%2Fx%2Fapplication-x.yml': {
         name: 'starters/x/application-x.yml', content: 'host: ${REDIS_HOST:localhost}', updatedAt: null, sort: 0,
       },
       '/api/admin/config/template': { kind: 'template', contentYaml: null, version: null, updatedAt: null },

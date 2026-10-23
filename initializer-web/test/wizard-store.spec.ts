@@ -42,6 +42,7 @@ const starters: Starter[] = [
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  mockApi.validate.mockReset().mockResolvedValue({ valid: true, errors: null })
 })
 
 function happyMocks(): void {
@@ -540,5 +541,26 @@ describe('可靠性评审回归', () => {
     w.conflictRules = [{ id: 'mutex', type: 'pair', starters: ['web', 'data-jpa'], message: '冲突' }]
     expect(await w.submit()).toBe(false)
     expect(mockApi.generateProject).not.toHaveBeenCalled()
+  })
+})
+
+describe('生成提交与后台校验并发', () => {
+  it('后台字段校验进行中不会静默取消已经提交的生成请求', async () => {
+    const w = useWizardStore()
+    w.selectedJava = '17'
+    w.selectedBoot = '3.2.5'
+    w.meta = { group: 'com.example', artifact: 'demo', packageName: 'com.example.demo', packageTouched: true, buildTool: 'maven' }
+    let finish!: (result: ValidationResult) => void
+    let background!: (result: ValidationResult) => void
+    mockApi.validate.mockReturnValueOnce(new Promise((done) => { finish = done }))
+      .mockReturnValueOnce(new Promise((done) => { background = done }))
+    mockApi.generateProject.mockResolvedValueOnce(undefined)
+    const submitted = w.submit()
+    const validation = w.validateMeta()
+    finish({ valid: true, errors: null })
+    expect(await submitted).toBe(true)
+    expect(mockApi.generateProject).toHaveBeenCalledTimes(1)
+    background({ valid: true, errors: null })
+    await validation
   })
 })

@@ -48,6 +48,7 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
     draftVersion: null as number | null,
     /** 已登录 admin token */
     token: '' as string,
+    operator: 'admin',
     actionState: 'idle' as WizardActionState,
     message: '' as string,
     messageType: 'info' as 'info' | 'error',
@@ -293,7 +294,7 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
         const merged = await this.mergeIntoCatalog()
         const result: DraftSaveResult = await adminStructuredApi.putStarters(
           this.token,
-          { starters: merged },
+          { starters: merged, operator: this.operator },
           this.draftVersion,
         )
         this.draftVersion = result.version
@@ -343,7 +344,7 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
       this.actionState = 'publishing'
       try {
         const { adminApi } = await import('@/api/client')
-        const result = await adminApi.publish(this.token)
+        const result = await adminApi.publish(this.token, this.operator)
         this.actionState = 'done'
         this.showText(
           'info',

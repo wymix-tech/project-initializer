@@ -520,4 +520,34 @@ class StructuredDraftServiceTest {
         return new StarterUpsertDto(id, "web", "official", "desc", false, false, null,
                 List.of(), List.of(), List.of(), null, 0);
     }
+    private StarterUpsertDto scopedStarter(List<String> scope, String version) {
+        return new StarterUpsertDto("shared", "tool", "internal", "scope " + version, false, false,
+                null, List.of(new DependencyDto("com.example", "shared-" + version, version)),
+                List.of(), scope, null, 0);
+    }
+
+    @Test
+    void starterIdentityUsesBootScopeAndChildRowsRemainBoundToTheirEntry() {
+        service.saveStarters(new StarterCatalogUpsertRequest(List.of(
+                scopedStarter(List.of(), "global"), scopedStarter(List.of("2.7.18"), "2"),
+                scopedStarter(List.of("3.2.5"), "3")), "tester"), null);
+        var entries = service.getStarters().starters();
+        assertThat(entries).hasSize(3);
+        for (StarterDto entry : entries) {
+            String expected = entry.bootVersions().isEmpty() ? "global" : entry.bootVersions().contains("2.7.18") ? "2" : "3";
+            assertThat(entry.dependencies()).hasSize(1);
+            assertThat(entry.dependencies().get(0).version()).isEqualTo(expected);
+            assertThat(entry.dependencies().get(0).artifactId()).isEqualTo("shared-" + expected);
+        }
+    }
+
+    @Test
+    void overlappingStarterScopeIsRejectedBeforeChangingTheDraft() {
+        service.saveStarters(new StarterCatalogUpsertRequest(List.of(scopedStarter(List.of("2.7.18"), "old")), "tester"), null);
+        assertThatThrownBy(() -> service.saveStarters(new StarterCatalogUpsertRequest(List.of(
+                scopedStarter(List.of("2.7.18", "3.2.5"), "a"), scopedStarter(List.of("3.2.5"), "b")), "tester"), null))
+                .hasMessageContaining("范围重叠").hasMessageContaining("3.2.5");
+        assertThat(service.getStarters().starters().get(0).dependencies().get(0).version()).isEqualTo("old");
+    }
+
 }

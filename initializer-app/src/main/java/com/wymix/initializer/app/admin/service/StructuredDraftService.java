@@ -664,12 +664,15 @@ public class StructuredDraftService {
         StructuredSnapshot snapshot = StructuredSnapshot.empty(ConfigRepository.DRAFT_RELEASE_ID);
         long placeholderPk = 0L;
         int sort = 0;
-        Set<String> ids = new LinkedHashSet<>();
-        Map<String, CfgStarterEntity> byId = new LinkedHashMap<>();
+        var identities = new com.wymix.initializer.app.admin.repository.StarterScopeIndex();
         for (StarterUpsertDto dto : dtos) {
             String id = requireText(dto.id(), "starters[].id");
-            if (!ids.add(id)) {
-                throw invalid("starter ID 重复: " + id);
+            List<String> scope = nullSafe(dto.bootVersions()).stream()
+                    .map(boot -> requireText(boot, "starters[].bootVersions[]")).distinct().toList();
+            try {
+                identities.add(id, scope);
+            } catch (IllegalArgumentException e) {
+                throw invalid(e.getMessage());
             }
             CfgStarterEntity row = new CfgStarterEntity();
             // 显式占位主键（负数区间）：子行父键据此定位父行，由仓库层写入期换算
@@ -685,11 +688,12 @@ public class StructuredDraftService {
             row.setSort(dto.sort() == null ? sort : dto.sort());
             sort++;
             snapshot.starters().add(row);
-            byId.put(id, row);
         }
         long groupPlaceholderPk = 0L;
+        int entryIndex = 0;
         for (StarterUpsertDto dto : dtos) {
-            CfgStarterEntity starterRow = byId.get(dto.id());
+            // Business IDs may repeat across Boot scopes; children belong to the exact entry row.
+            CfgStarterEntity starterRow = snapshot.starters().get(entryIndex++);
             int childSort = 0;
             for (DependencyDto dep : nullSafe(dto.dependencies())) {
                 CfgStarterDependencyEntity row = new CfgStarterDependencyEntity();

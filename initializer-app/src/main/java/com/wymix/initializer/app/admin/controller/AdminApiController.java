@@ -246,6 +246,44 @@ public class AdminApiController {
         return structuredDraftService.deleteTemplate(name, operator, ifMatch);
     }
 
+    /**
+     * 按查询参数读取模板，支持包含目录分隔符的模板名，避免容器拒绝编码斜杠。
+     * @param name 模板相对路径
+     * @return 模板详情
+     */
+    @GetMapping("/template")
+    public TemplateDetail getTemplateByName(@RequestParam("name") String name) {
+        return getTemplate(name);
+    }
+
+    /**
+     * 按查询参数保存模板；与原路径接口共享校验、乐观锁和审计。
+     * @param name 模板相对路径
+     * @param ifMatch 草稿版本
+     * @param request 模板内容与操作人
+     * @return 保存结果
+     */
+    @PutMapping("/template")
+    public DraftSaveResult putTemplateByName(@RequestParam("name") String name,
+            @RequestHeader(value = IF_MATCH_HEADER, required = false) Integer ifMatch,
+            @Valid @RequestBody TemplateUpsertRequest request) {
+        return putTemplate(name, ifMatch, request);
+    }
+
+    /**
+     * 按查询参数删除模板；保留原路径接口兼容既有调用方。
+     * @param name 模板相对路径
+     * @param ifMatch 草稿版本
+     * @param operator 操作人
+     * @return 保存结果
+     */
+    @DeleteMapping("/template")
+    public DraftSaveResult deleteTemplateByName(@RequestParam("name") String name,
+            @RequestHeader(value = IF_MATCH_HEADER, required = false) Integer ifMatch,
+            @RequestParam("operator") String operator) {
+        return deleteTemplate(name, ifMatch, operator);
+    }
+
     // ==================== 导入导出（T4） ====================
 
     /**

@@ -313,7 +313,7 @@ describe('adminStructuredApi 结构化接口', () => {
 
     fetchMock.mockResolvedValueOnce(jsonResponse({ name: 'a/b.ftl', content: 'x', updatedAt: null, sort: 0 }))
     await adminStructuredApi.getTemplate('tk', 'a/b.ftl')
-    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/templates/a%2Fb.ftl')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/template?name=a%2Fb.ftl')
   })
 
   it('putTemplate 提交 name/content/sort', async () => {
@@ -467,5 +467,17 @@ describe('发布与写入操作人回归', () => {
     fetchMock.mockResolvedValueOnce(textResponse({ version: 2 }))
     await adminStructuredApi.putMetadata('tk', { javaVersions: [], bootVersions: [], operator: 'reviewer' }, 1)
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).operator).toBe('reviewer')
+  })
+})
+
+describe('目录模板寻址', () => {
+  it('保存与删除使用查询参数保留目录名及操作人', async () => {
+    fetchMock.mockResolvedValueOnce(textResponse({ kind: 'template', version: 3 }))
+    await adminStructuredApi.putTemplate('tk', 'nested/app.yml', 'host: ${HOST:localhost}', 2, null, 'reviewer')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/template?name=nested%2Fapp.yml')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).operator).toBe('reviewer')
+    fetchMock.mockResolvedValueOnce(textResponse({ kind: 'template', version: 4 }))
+    await adminStructuredApi.deleteTemplate('tk', 'nested/app.yml', 3, 'reviewer')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/template?name=nested%2Fapp.yml&operator=reviewer')
   })
 })

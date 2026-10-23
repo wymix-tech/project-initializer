@@ -68,6 +68,11 @@ function queryString(params: Record<string, string>): string {
   return new URLSearchParams(params).toString()
 }
 
+/** Nested template names use query parameters; encoded slashes in paths are rejected by servlet containers. */
+function templateResource(name: string): string {
+  return name.includes('/') ? `/api/admin/template?${queryString({ name })}` : `/api/admin/templates/${encodeURIComponent(name)}`
+}
+
 /** 元数据与生成相关接口封装。 */
 export const api = {
   /** Java 版本清单（含推荐 Boot 版本）。 */
@@ -302,7 +307,7 @@ export const adminStructuredApi = {
 
   /** 模板详情（含全文，按需单独取）。 */
   getTemplate(token: string, name: string): Promise<TemplateDetail> {
-    return fetch(`/api/admin/templates/${encodeURIComponent(name)}`, {
+    return fetch(templateResource(name), {
       headers: adminHeaders(token),
     }).then(handleResponse<TemplateDetail>)
   },
@@ -318,7 +323,7 @@ export const adminStructuredApi = {
   ): Promise<DraftSaveResult> {
     return putStructured(
       token,
-      `/api/admin/templates/${encodeURIComponent(name)}`,
+      templateResource(name),
       { name, content, operator, sort },
       version,
     )
@@ -339,7 +344,7 @@ export const adminStructuredApi = {
     const headers = adminHeaders(token)
     if (version !== null) headers['If-Match'] = String(version)
     const res = await fetch(
-      `/api/admin/templates/${encodeURIComponent(name)}?${queryString({ operator })}`,
+      `${templateResource(name)}${name.includes('/') ? '&' : '?'}${queryString({ operator })}`,
       { method: 'DELETE', headers },
     )
     return handleStructured<DraftSaveResult>(res)

@@ -55,6 +55,9 @@ class ConfigImportExportServiceTest {
     @Autowired
     private ConfigRepository repository;
 
+    @Autowired
+    private ConfigService legacyConfig;
+
     /** 清空全部 kind 草稿行，保证用例互不干扰（共享 H2 库）。 */
     @BeforeEach
     void resetDrafts() {
@@ -665,4 +668,48 @@ class ConfigImportExportServiceTest {
         assertThat(repository.readDraftScope(ConfigKind.CONFLICT_RULE).conflictRules()).isEmpty();
         assertThat(repository.readDraftScope(ConfigKind.TEMPLATE).templates()).isEmpty();
     }
+    @Test
+    void exportAndReimportRetainsYamlRuntimePlaceholders() {
+        seedFullDraft();
+        draftService.saveTemplate(new com.wymix.initializer.app.admin.dto.CatalogDtos.TemplateUpsertRequest(
+                "fragments/redis.yml", "redis:\n  host: ${REDIS_HOST:localhost}\n  name: ${artifact}\n", "tester", null), null);
+        byte[] archive = service.export("tester").content();
+        service.importArchive(new ByteArrayInputStream(archive), "tester", null);
+        assertThat(draftService.getTemplate("fragments/redis.yml").content())
+                .contains("${REDIS_HOST:localhost}").contains("${artifact}");
+    }
+
+    @Test
+    void sameIdBootVariantsSurviveYamlWriteAndArchiveRoundTripWithoutCrossingDependencies() {
+        seedFullDraft();
+        legacyConfig.saveDraft(ConfigKind.STARTER, """
+                id: shared
+                category: tool
+                maintainer: internal
+                bootVersions: ["2.7.18"]
+                dependencies:
+                  - groupId: com.example
+                    artifactId: shared-two
+                    version: "2"
+                ---
+                id: shared
+                category: tool
+                maintainer: internal
+                bootVersions: ["3.2.5"]
+                dependencies:
+                  - groupId: com.example
+                    artifactId: shared-three
+                    version: "3"
+                """, null, "tester");
+        byte[] archive = service.export("tester").content();
+        service.importArchive(new ByteArrayInputStream(archive), "tester", null);
+        var entries = draftService.getStarters().starters();
+        assertThat(entries).hasSize(2);
+        for (var entry : entries) {
+            assertThat(entry.dependencies()).hasSize(1);
+            assertThat(entry.dependencies().get(0).version())
+                    .isEqualTo(entry.bootVersions().contains("2.7.18") ? "2" : "3");
+        }
+    }
+
 }

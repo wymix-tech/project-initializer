@@ -451,4 +451,18 @@ class StructuredSnapshotCodecTest {
         assertThat(StructuredSnapshotCodec.parseMaintainerOrNull(null)).isNull();
         assertThat(Map.of().isEmpty()).isTrue();
     }
+    @Test
+    void yamlFragmentKeepsSpringRuntimePlaceholdersWithoutFreeMarkerValidation() {
+        var snapshot = codec.parseTemplates("""
+                name: fragments/redis.yml
+                content: |
+                  redis:
+                    host: ${REDIS_HOST:localhost}
+                    name: ${artifact}
+                """);
+        assertThat(snapshot.templates()).hasSize(1);
+        assertThat(snapshot.templates().get(0).getContent())
+                .contains("${REDIS_HOST:localhost}").contains("${artifact}");
+    }
+
 }

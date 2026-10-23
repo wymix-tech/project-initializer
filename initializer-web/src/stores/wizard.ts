@@ -553,12 +553,24 @@ export const useWizardStore = defineStore('wizard', {
         this.errorMessage = '请等待加载和校验完成，并处理元信息、冲突及未满足的依赖'
         return false
       }
-      await this.validateMeta()
-      if (!this.canGenerate) { return false }
+      const request = this.generateRequest
       this.submitState = 'generating'
       this.errorMessage = ''
       try {
-        await api.generateProject(this.generateRequest)
+        // Validate the submitted snapshot; background debounce validation must not silently cancel a click.
+        const result = await api.validate(request.group, request.artifact, request.packageName)
+        if (JSON.stringify(request) !== JSON.stringify(this.generateRequest)) {
+          this.submitState = 'idle'
+          this.errorMessage = '配置已变化，请重新生成'
+          return false
+        }
+        if (!result.valid) {
+          this.validationErrors = result.errors ?? { metadata: '项目元信息校验失败' }
+          this.submitState = 'error'
+          this.errorMessage = '项目元信息校验失败，请修正后重试'
+          return false
+        }
+        await api.generateProject(request)
         this.submitState = 'success'
         return true
       } catch (e) {

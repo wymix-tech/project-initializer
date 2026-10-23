@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { watch } from 'vue'
 import { useStarterConfigWizardStore, CFG_STEP_BASIC, CFG_STEP_DEPS, CFG_STEP_LINKAGE, CFG_STEP_PREVIEW } from '@/stores/starterConfigWizard'
 import StarterConfigStepBasic from '@/components/StarterConfigStepBasic.vue'
 import StarterConfigStepDeps from '@/components/StarterConfigStepDeps.vue'
@@ -16,11 +16,25 @@ import StarterConfigStepPreview from '@/components/StarterConfigStepPreview.vue'
  */
 const wizard = useStarterConfigWizardStore()
 
-defineProps<{ token: string }>()
+const props = withDefaults(defineProps<{ token: string; operator?: string }>(), { operator: 'admin' })
 
-onMounted(() => {
+watch(() => props.token, (token) => {
+  wizard.setToken(token)
   void wizard.loadExistingDraft()
-})
+}, { immediate: true })
+watch(() => props.operator, (operator) => { wizard.operator = operator }, { immediate: true })
+
+const emit = defineEmits<{ (event: 'saved'): void }>()
+
+/** 保存成功后通知父清单重新读取，避免切回清单表时仍显示旧内容。 */
+async function saveDraft(): Promise<void> {
+  if (await wizard.saveToDraft()) { emit('saved') }
+}
+
+/** 保存并发布成功后同步父清单。 */
+async function publish(): Promise<void> {
+  if (await wizard.publish()) { emit('saved') }
+}
 </script>
 
 <template>
@@ -73,7 +87,7 @@ onMounted(() => {
           type="button"
           class="btn"
           :disabled="wizard.actionState === 'saving' || wizard.actionState === 'publishing'"
-          @click="wizard.saveToDraft()"
+          @click="saveDraft"
         >
           {{ wizard.actionState === 'saving' ? '保存中…' : '写入草稿' }}
         </button>
@@ -86,7 +100,7 @@ onMounted(() => {
             wizard.actionState === 'saving' ||
             wizard.actionState === 'publishing'
           "
-          @click="wizard.publish()"
+          @click="publish"
         >
           {{ wizard.actionState === 'publishing' ? '发布中…' : '保存并发布' }}
         </button>
