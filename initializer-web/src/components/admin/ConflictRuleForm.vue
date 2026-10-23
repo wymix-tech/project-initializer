@@ -101,7 +101,7 @@ async function save(): Promise<void> {
     () =>
       adminStructuredApi.putConflictRules(
         props.session.token.value,
-        { rules: rules.value },
+        { rules: rules.value, operator: props.session.operator.value },
         version.value,
       ),
     '冲突规则草稿已保存',

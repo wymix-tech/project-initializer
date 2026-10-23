@@ -14,4 +14,6 @@ import org.apache.ibatis.annotations.Mapper;
  */
 @Mapper
 public interface ConfigDraftMetaMapper extends BaseMapper<ConfigDraftMetaEntity> {
+    @org.apache.ibatis.annotations.Select("SELECT id FROM config_workspace_lock WHERE id = 1 FOR UPDATE")
+    Integer lockWorkspace();
 }

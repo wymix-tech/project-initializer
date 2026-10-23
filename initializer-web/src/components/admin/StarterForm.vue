@@ -256,7 +256,7 @@ async function save(): Promise<void> {
     () =>
       adminStructuredApi.putStarters(
         props.session.token.value,
-        { starters: starters.value },
+        { starters: starters.value, operator: props.session.operator.value },
         version.value,
       ),
     'starter 清单草稿已保存',

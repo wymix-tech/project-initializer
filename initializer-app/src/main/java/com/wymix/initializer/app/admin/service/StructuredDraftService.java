@@ -287,6 +287,21 @@ public class StructuredDraftService {
         return write(kind, snapshot, ifMatch, request.operator(), summary);
     }
 
+    /**
+     * 在同步写入的同一工作区锁内重新校验手工优先，避免拉取期间新增的手工条目被覆盖。
+     * @param request 全来源合并后的同步条目
+     * @return 同步草稿保存结果
+     */
+    @Transactional
+    public DraftSaveResult saveSyncedStarters(StarterCatalogUpsertRequest request) {
+        repository.lockDraftWorkspace();
+        Set<String> manualIds = readStarters(ConfigKind.STARTER).stream()
+                .map(StarterDto::id).collect(java.util.stream.Collectors.toSet());
+        List<StarterUpsertDto> filtered = request.starters().stream()
+                .filter(dto -> !manualIds.contains(dto.id())).toList();
+        return saveStarters(new StarterCatalogUpsertRequest(filtered, request.operator()), null, ConfigKind.STARTER_SYNC);
+    }
+
     // ==================== 冲突规则 ====================
 
     /**

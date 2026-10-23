@@ -40,8 +40,8 @@ import java.util.List;
  *   <li>回滚（M3.2）：回滚 = 取历史发布全文重新走完整发布校验，通过后切换——
  *       不绕过校验通道，历史版本也可能因后续规则演进变得非法</li>
  *   <li>发布原子性：发布/回滚整体处于同一数据库事务内，并叠加进程内互斥锁；
- *       快照切换置于事务末尾——切换失败则事务回滚，绝不出现「已写发布记录但快照未切换」
- *       或「快照已切换但无发布记录」的不一致状态</li>
+ *       草稿写入与发布共用数据库工作区锁，验证与归档复用同一份结构行；
+ *       快照仅在数据库提交成功后切换，提交失败不暴露未提交内容</li>
  * </ul>
  *
  * <p>线程安全性：无状态单例（并发发布由进程内锁 + 数据库事务 + 快照原子切换保证一致性），线程安全。
@@ -61,6 +61,16 @@ public class ConfigService {
     public static final String ACTION_ROLLBACK_FAILED = "ROLLBACK_FAILED";
 
     private final ConfigRepository repository;
+    @org.springframework.beans.factory.annotation.Autowired
+    private FailureAuditService failureAudit;
+
+    private void failedAudit(String action, String operator, String detail) {
+        if (failureAudit != null) {
+            failureAudit.record(action, null, operator, detail);
+        } else {
+            repository.insertAudit(action, null, operator, detail);
+        }
+    }
     private final StructuredCatalogAssembler assembler;
     private final CatalogSnapshotHolder snapshotHolder;
     /** 结构行 ↔ 语义视图码编器（T1 过渡；T2 装配器落地后由装配器取代）。 */
@@ -215,17 +225,15 @@ public class ConfigService {
      *
      * <p>校验失败整体拒绝（4002 + 明细清单），草稿保留；成功后新快照立即对全部读路径生效。
      *
-     * <p>事务边界：{@code noRollbackFor = BusinessException.class} —— 校验失败时仍要提交
-     * 失败审计（{@code PUBLISH_FAILED}），否则留痕会随回滚一并消失，管理端无从排查。
-     * 成功路径上发布记录与成功审计同处一个事务，快照切换置于事务末尾：切换失败即触发回滚，
-     * 不会留下「已写发布记录但快照未切换」的中间态。
+     * <p>发布记录与成功审计同处一个事务；业务异常也回滚全部修改。
+     * 失败审计经独立事务保留，内存快照通过 afterCommit 切换。
      *
      * @param operator 发布人
      * @param remark   发布备注（可空）
      * @return 发布结果（发布记录 ID + 快照概况）
      * @throws BusinessException 校验失败（4002/9002）或草稿缺失（4002）
      */
-    @Transactional(noRollbackFor = BusinessException.class)
+    @Transactional
     public PublishResult publish(String operator, String remark) {
         synchronized (publishLock) {
             return doPublish(operator, remark);
@@ -240,8 +248,8 @@ public class ConfigService {
      * 装配失败即发布校验失败（4002 + 明细），草稿保留、旧快照继续服务。
      *
      * <p>装配成功后写 {@code config_release} 头 + 把草稿结构行整体
-     * {@link ConfigRepository#copyAsRelease(long, long) 复制为带新 release_id 的不可变快照行}；
-     * 快照切换置于事务末尾，切换失败触发回滚，不留「已发布但未生效」的中间态。
+     * {@link ConfigRepository#insertScope(StructuredSnapshot, long) 复制为带新 release_id 的不可变快照行}；
+     * 快照在数据库提交成功后切换，提交失败继续服务旧快照。
      *
      * @param operator 发布人
      * @param remark   发布备注
@@ -249,17 +257,23 @@ public class ConfigService {
      */
     private PublishResult doPublish(String operator, String remark) {
         CatalogSnapshot snapshot;
+        StructuredSnapshot frozen;
         try {
             // 草稿作用域一次性读全量结构行（1 次 readScope = 15 条批量查询，无 N+1）后内存装配
-            snapshot = assembler.assemble(ConfigRepository.DRAFT_RELEASE_ID);
+            repository.lockDraftWorkspace();
+            frozen = repository.readScope(ConfigRepository.DRAFT_RELEASE_ID);
+            snapshot = assembler.assemble(frozen);
+            new com.wymix.initializer.core.generator.CatalogValidator().validate(
+                    snapshot.metadataCatalog(), snapshot.starterCatalog(), snapshot.templateOverrides(),
+                    snapshot.conflictCatalog());
         } catch (BusinessException e) {
             // 发布失败不写发布历史；审计留痕（含失败明细），供管理端展示
-            repository.insertAudit("PUBLISH_FAILED", null, operator, e.getMessage());
+            failedAudit("PUBLISH_FAILED", operator, e.getMessage());
             throw e;
         }
 
         ConfigReleaseEntity release = repository.insertRelease(operator, remark);
-        int rows = repository.copyAsRelease(ConfigRepository.DRAFT_RELEASE_ID, release.getId());
+        int rows = repository.insertScope(frozen, release.getId());
         repository.insertAudit(ACTION_PUBLISH, null, operator,
                 "发布 #" + release.getId() + "：结构行 " + rows
                         + " 行 / Java " + snapshot.metadataCatalog().javaVersions().size()
@@ -272,8 +286,8 @@ public class ConfigService {
                 snapshot.starterCatalog().size(),
                 snapshot.templateOverrides().size(),
                 snapshot.conflictCatalog().size());
-        // 快照切换置于事务末尾：切换失败抛异常即触发回滚，不留「已发布但未生效」的中间态
-        snapshotHolder.swap(snapshot);
+        // 数据库提交成功后才向读路径暴露新版本。
+        activateAfterCommit(snapshot);
         return result;
     }
 
@@ -288,7 +302,7 @@ public class ConfigService {
      * @return 回滚结果（新发布记录 ID + 快照概况）
      * @throws BusinessException 发布记录不存在（4002 语义）或目标版本校验失败（4002）
      */
-    @Transactional(noRollbackFor = BusinessException.class)
+    @Transactional
     public PublishResult rollback(long releaseId, String operator) {
         synchronized (publishLock) {
             return doRollback(releaseId, operator);
@@ -312,8 +326,10 @@ public class ConfigService {
      * @throws BusinessException 发布记录不存在（4002）或目标版本校验失败（4002）
      */
     private PublishResult doRollback(long releaseId, String operator) {
+        repository.lockDraftWorkspace();
         ConfigReleaseEntity release = repository.findRelease(releaseId);
         if (release == null) {
+            failedAudit(ACTION_ROLLBACK_FAILED, operator, "回滚失败: 发布记录不存在: #" + releaseId);
             throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
                     "回滚失败: 发布记录不存在: #" + releaseId);
         }
@@ -326,14 +342,17 @@ public class ConfigService {
         try {
             // 复用已读出的结构行装配（不再二次 readScope），装配失败即回滚失败（4002）
             snapshot = assembler.assemble(historical);
+            new com.wymix.initializer.core.generator.CatalogValidator().validate(
+                    snapshot.metadataCatalog(), snapshot.starterCatalog(), snapshot.templateOverrides(),
+                    snapshot.conflictCatalog());
         } catch (BusinessException e) {
-            repository.insertAudit(ACTION_ROLLBACK_FAILED, null, operator,
+            failedAudit(ACTION_ROLLBACK_FAILED, operator,
                     "回滚 #" + releaseId + " 失败: " + e.getMessage());
             throw e;
         }
 
         ConfigReleaseEntity newRelease = repository.insertRelease(operator, "回滚自 #" + releaseId);
-        int rows = repository.copyAsRelease(releaseId, newRelease.getId());
+        int rows = repository.insertScope(historical, newRelease.getId());
         repository.insertAudit(ACTION_ROLLBACK, null, operator,
                 "回滚 #" + releaseId + " → 新发布 #" + newRelease.getId() + "（结构行 " + rows + " 行）");
         log.info("配置已回滚: from={}, to={}, rows={}, operator={}",
@@ -343,9 +362,41 @@ public class ConfigService {
                 snapshot.starterCatalog().size(),
                 snapshot.templateOverrides().size(),
                 snapshot.conflictCatalog().size());
-        // 与发布同理：切换失败触发事务回滚，避免「回滚记录已写但快照未切换」
-        snapshotHolder.swap(snapshot);
+        // 回滚也仅在新发布记录提交成功后切换。
+        activateAfterCommit(snapshot);
         return result;
+    }
+
+    /** 发布预检报告；RENDERED 表示试渲染成功，NOT_RUN 表示未执行外部依赖构建。 */
+    public record ValidationReport(String stage, String buildValidation, int bootVersions, int starters) { }
+
+    /**
+     * 只读校验当前一致草稿，不推进版本、不发布。
+     * @return 已完成的验证层级与规模
+     * @throws BusinessException 发布预检失败（4002）
+     */
+    @Transactional
+    public ValidationReport validateDraft() {
+        repository.lockDraftWorkspace();
+        CatalogSnapshot snapshot = assembler.assemble(repository.readScope(ConfigRepository.DRAFT_RELEASE_ID));
+        new com.wymix.initializer.core.generator.CatalogValidator().validate(
+                snapshot.metadataCatalog(), snapshot.starterCatalog(), snapshot.templateOverrides(), snapshot.conflictCatalog());
+        return new ValidationReport("RENDERED", "NOT_RUN", snapshot.metadataCatalog().bootVersions().size(),
+                snapshot.starterCatalog().size());
+    }
+
+    private void activateAfterCommit(CatalogSnapshot snapshot) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            snapshotHolder.swap(snapshot);
+            return;
+        }
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        snapshotHolder.swap(snapshot);
+                    }
+                });
     }
 
     /** @return 发布历史（最新在前） */

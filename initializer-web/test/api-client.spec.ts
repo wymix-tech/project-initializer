@@ -161,7 +161,7 @@ describe('adminApi admin 接口封装', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/admin/config/publish', {
       method: 'POST',
       headers: { 'X-Admin-Token': 'mytk', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ operator: 'admin' }),
+      body: JSON.stringify({ operator: 'admin', remark: null }),
     })
   })
 
@@ -453,5 +453,19 @@ describe('adminApi.sync 制品库同步', () => {
     expect(init.method).toBe('POST')
     expect(JSON.parse(init.body as string)).toEqual({ operator: 'bob' })
     expect((init.headers as Record<string, string>)['X-Admin-Token']).toBe('tk')
+  })
+})
+
+describe('发布与写入操作人回归', () => {
+  it('发布保留当前操作人与备注原文', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ releaseId: 2 }))
+    await adminApi.publish('tk', 'reviewer', '发布内部框架 3.x')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ operator: 'reviewer', remark: '发布内部框架 3.x' })
+  })
+
+  it('结构化写入不再将显式操作人覆盖为 admin', async () => {
+    fetchMock.mockResolvedValueOnce(textResponse({ version: 2 }))
+    await adminStructuredApi.putMetadata('tk', { javaVersions: [], bootVersions: [], operator: 'reviewer' }, 1)
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).operator).toBe('reviewer')
   })
 })

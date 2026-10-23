@@ -38,7 +38,7 @@ const sections: { key: AdminSection; label: string; icon: string; desc: string }
 const active = ref<AdminSection>('publish')
 
 /** 操作人（写入草稿与审计；当前为固定值，后续可做成可配置项）。 */
-const operator = ref('admin')
+const operator = session.operator
 
 /**
  * 登录：先验证 token 有效性再进入工作台。

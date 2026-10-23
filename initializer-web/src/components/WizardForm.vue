@@ -21,7 +21,7 @@ onMounted(() => {
         <StepBoot />
         <StepMeta />
       </div>
-      <aside class="wizard-right">
+      <aside id="starter-selection" class="wizard-right">
         <div class="deps-head">
           <h2 class="section-title">依赖</h2>
           <span class="deps-count">已选 {{ wizard.selectedStarters.size }}</span>
@@ -32,6 +32,11 @@ onMounted(() => {
     <footer v-if="wizard.errorMessage" class="wizard-error" role="alert">
       {{ wizard.errorMessage }}
     </footer>
+    <ul v-if="wizard.generationBlockers.length" class="wizard-error" aria-live="polite">
+      <li v-for="(reason, index) in wizard.generationBlockers" :key="index">
+        <a :href="reason.target">{{ reason.message }}</a>
+      </li>
+    </ul>
     <div class="wizard-actions">
       <button
         type="button"

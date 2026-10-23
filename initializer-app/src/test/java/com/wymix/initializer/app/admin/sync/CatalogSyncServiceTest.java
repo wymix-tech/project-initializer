@@ -255,7 +255,7 @@ class CatalogSyncServiceTest {
             assertThatThrownBy(() -> syncService.syncAll("tester"))
                     .isInstanceOfSatisfying(BusinessException.class,
                             e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.SYNC_PROVIDER_FAILED))
-                    .hasMessageContaining("全部通道拉取失败");
+                    .hasMessageContaining("整轮未写入");
             // 审计留痕
             assertThat(repository.listAudits().stream()
                     .anyMatch(a -> "SYNC_FAILED".equals(a.getAction()))).isTrue();

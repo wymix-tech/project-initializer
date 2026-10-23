@@ -194,7 +194,7 @@ async function save(): Promise<void> {
     () =>
       adminStructuredApi.putMetadata(
         props.session.token.value,
-        { javaVersions: javaVersions.value, bootVersions: bootVersions.value },
+        { javaVersions: javaVersions.value, bootVersions: bootVersions.value, operator: props.session.operator.value },
         version.value,
       ),
     '元数据草稿已保存',

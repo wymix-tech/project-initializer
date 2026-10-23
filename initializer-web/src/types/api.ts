@@ -15,6 +15,7 @@ export interface BootVersion {
   id: string
   label: string
   official: boolean
+  supportedBuildTools?: string[]
 }
 
 /** starter 清单项：GET /api/metadata/starters?boot=&q=&category= */

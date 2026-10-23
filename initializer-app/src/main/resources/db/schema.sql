@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS config_release (
 
 -- 草稿种类级元信息：承载 kind 级乐观锁（替代原 config_draft.content_yaml）
 -- 一 kind 一行；version 为乐观锁版本，结构表行本身不带版本列
+CREATE TABLE IF NOT EXISTS config_workspace_lock (id INT PRIMARY KEY);
+INSERT INTO config_workspace_lock (id)
+SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM config_workspace_lock WHERE id = 1);
+
 CREATE TABLE IF NOT EXISTS config_draft_meta (
     id         BIGINT AUTO_INCREMENT PRIMARY KEY,
     kind       VARCHAR(32) NOT NULL,

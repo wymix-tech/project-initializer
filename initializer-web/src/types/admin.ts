@@ -229,3 +229,10 @@ export type AdminSection = 'publish' | 'metadata' | 'starter' | 'conflict-rule' 
 
 /** 结构化模块键（有独立草稿与乐观锁版本的四个 kind）。 */
 export type AdminModuleKind = 'metadata' | 'starter' | 'conflict-rule' | 'template'
+
+export interface ImportPreview {
+  previewId: string
+  versions: Record<string, number>
+  expiresAt: number
+  changes: { path: string; action: 'ADD' | 'UPDATE' | 'DELETE'; before: string | null; after: string | null }[]
+}

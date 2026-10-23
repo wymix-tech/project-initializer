@@ -42,6 +42,7 @@ const parameters = [
   { name: 'basePackage', description: '项目基础包名', example: 'com.example.demo', scope: '全部模板及 YAML 片段' },
   { name: 'packagePath', description: '基础包名对应的目录', example: 'com/example/demo', scope: '全部模板及 YAML 片段' },
   { name: 'bootVersion', description: '所选 Spring Boot 版本 ID', example: '3.2.5', scope: '全部模板及 YAML 片段' },
+  { name: 'buildTool', description: '所选构建工具：maven 或 gradle', example: 'gradle', scope: '全部模板及 YAML 片段' },
   { name: 'javaVersion', description: '所选 Java 版本 ID', example: '17', scope: '全部模板及 YAML 片段' },
   { name: 'parentGroupId', description: '框架父 POM 的 groupId', example: 'org.springframework.boot', scope: '全部模板及 YAML 片段' },
   { name: 'parentArtifactId', description: '框架父 POM 的 artifactId', example: 'spring-boot-starter-parent', scope: '全部模板及 YAML 片段' },
@@ -131,6 +132,7 @@ async function saveCurrent(): Promise<void> {
         content.value,
         version.value,
         selectedSort.value,
+        props.session.operator.value,
       ),
     '模板已保存',
     '模板保存失败',
@@ -147,7 +149,7 @@ async function saveCurrent(): Promise<void> {
 /** 删除当前选中模板（保留其余模板）。 */
 async function removeCurrent(): Promise<void> {
   if (selected.value === null) return
-  if (!window.confirm(`确认删除模板 ${selected.value}？发布后引用它的 starter 会在生成时报模板缺失。`)) {
+  if (!window.confirm(`确认删除模板 ${selected.value}？发布预检会拒绝缺失引用的配置。`)) {
     return
   }
   saving.value = true
@@ -157,6 +159,7 @@ async function removeCurrent(): Promise<void> {
         props.session.token.value,
         selected.value as string,
         version.value,
+        props.session.operator.value,
       ),
     '模板已删除',
     '模板删除失败',

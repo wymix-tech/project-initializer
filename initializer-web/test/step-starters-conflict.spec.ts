@@ -169,7 +169,7 @@ describe('wizard store 冲突求值（M3.5）', () => {
     expect(ids).toContain('redis-family')
   })
 
-  it('listConflictRules 失败时回退空规则（提示降级不影响选择）', async () => {
+  it('listConflictRules 失败时阻止使用未验证版本', async () => {
     const { api } = await import('@/api/client')
     const mockApi = vi.mocked(api, true)
     mockApi.listStarters.mockResolvedValue(starters)
@@ -178,7 +178,8 @@ describe('wizard store 冲突求值（M3.5）', () => {
     setActivePinia(pinia)
     const wizard = useWizardStore()
     await wizard.selectBoot('3.2.5')
-    expect(wizard.conflictRules).toEqual([])
+    expect(wizard.selectedBoot).toBe('')
+    expect(wizard.canGenerate).toBe(false)
   })
 })
 

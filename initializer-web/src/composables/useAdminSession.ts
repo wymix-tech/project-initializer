@@ -12,6 +12,7 @@ import { adminApi, ApiError } from '@/api/client'
  */
 export function useAdminSession(initialToken = '') {
   const token = ref(initialToken)
+  const operator = ref('admin')
   const loggedIn = ref(false)
   const busy = ref(false)
   const message = ref('')
@@ -83,6 +84,7 @@ export function useAdminSession(initialToken = '') {
 
   return {
     token,
+    operator,
     loggedIn,
     busy,
     message,

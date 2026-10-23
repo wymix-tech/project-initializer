@@ -41,7 +41,7 @@ async function refresh(): Promise<void> {
 /** 发布：全量校验 + 快照热切换（失败给出 4002 明细）。 */
 async function publish(): Promise<void> {
   const result = await props.session.run(
-    () => adminApi.publish(props.session.token.value),
+    () => adminApi.publish(props.session.token.value, props.operator, remark.value || null),
     undefined,
     '发布失败',
   )
@@ -63,7 +63,7 @@ async function publish(): Promise<void> {
  */
 async function rollback(releaseId: number): Promise<void> {
   const result = await props.session.run(
-    () => adminApi.rollback(props.session.token.value, releaseId),
+    () => adminApi.rollback(props.session.token.value, releaseId, props.operator),
     undefined,
     '回滚失败',
   )
@@ -100,7 +100,7 @@ defineExpose({ refresh })
         <h3>发布台</h3>
         <p class="hint">
           发布 = 全量校验 → 快照构建 → 原子切换（四类草稿一起生效）；校验失败返回 4002 逐条明细，
-          旧快照继续服务。回滚会把历史版本重新走一遍完整校验通道。
+          旧快照继续服务。预检包含引用与样例试渲染，不执行外部依赖构建；回滚使用相同预检。
         </p>
       </div>
       <div class="card-actions">

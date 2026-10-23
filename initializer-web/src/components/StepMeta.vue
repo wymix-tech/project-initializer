@@ -93,8 +93,8 @@ onBeforeUnmount(() => {
             Maven
           </label>
           <label class="radio" for="build-tool-gradle">
-            <input id="build-tool-gradle" type="radio" value="gradle" v-model="wizard.meta.buildTool" />
-            Gradle
+            <input id="build-tool-gradle" type="radio" value="gradle" v-model="wizard.meta.buildTool" :disabled="!wizard.supportedBuildTools.includes('gradle')" />
+            Gradle<span v-if="!wizard.supportedBuildTools.includes('gradle')">（该框架暂未支持）</span>
           </label>
         </div>
       </div>

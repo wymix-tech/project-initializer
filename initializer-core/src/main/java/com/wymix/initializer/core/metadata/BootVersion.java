@@ -36,6 +36,12 @@ public record BootVersion(String id, String label, boolean official, List<String
         this(id, label, official, supportedJavaVersions, starters, null);
     }
 
+    /** Custom Maven parents require an independently verified Gradle model before enabling Gradle. */
+    public List<String> supportedBuildTools() {
+        return frameworkParent == null || frameworkParent.equals(FrameworkParent.defaultSpringBootParent(id))
+                ? List.of("maven", "gradle") : List.of("maven");
+    }
+
     /** @return 该 Boot 版本是否支持指定 Java 版本 */
     public boolean supportsJava(String javaVersionId) {
         return supportedJavaVersions.contains(javaVersionId);

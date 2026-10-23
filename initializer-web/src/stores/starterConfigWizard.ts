@@ -43,6 +43,7 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
     form: emptyStarterConfigForm() as StarterConfigForm,
     /** 已登记的 starter ID 集合（结构化读取，用于查重；不含同步通道条目） */
     existingIds: [] as string[],
+    existingEntries: [] as StarterDto[],
     /** 现有清单草稿乐观锁版本（PUT 携带 If-Match） */
     draftVersion: null as number | null,
     /** 已登录 admin token */
@@ -92,8 +93,12 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
         if (f.id.trim() === '') errors.id = 'starter id 不能为空'
         else if (!/^[a-z][a-z0-9-]*$/.test(f.id.trim())) {
           errors.id = 'id 须小写字母开头，仅小写字母/数字/中划线'
-        } else if (state.existingIds.includes(f.id.trim())) {
-          errors.id = `starter id「${f.id.trim()}」已存在于清单中，请改名或先删除旧条目`
+        }
+        const scope = new Set(f.bootVersions)
+        if (state.existingEntries.some((s) => s.id === f.id.trim() &&
+            s.bootVersions.length > 0 && scope.size > 0 &&
+            s.bootVersions.some((b) => scope.has(b)) && !sameScope(s.bootVersions, f.bootVersions))) {
+          errors.id = '该 ID 的 Boot 版本范围部分重叠，请到清单中明确拆分或修改范围'
         }
         if (f.description.trim() === '') errors.description = '描述建议填写（展示与文档说明）'
       }
@@ -170,6 +175,7 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
       if (this.token === '') return
       try {
         const view = await adminStructuredApi.getStarters(this.token)
+        this.existingEntries = view.starters
         this.existingIds = view.starters.map((s) => s.id)
         const version = await adminStructuredApi.readDraftVersion(this.token, 'starter')
         this.draftVersion = version
@@ -291,13 +297,14 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
           this.draftVersion,
         )
         this.draftVersion = result.version
+        this.existingEntries = merged
         this.existingIds = merged.map((s) => s.id)
         this.actionState = 'done'
         this.showText('info', `已写入 starter 清单草稿（${result.summary}），未发布`)
         return true
       } catch (e) {
         this.actionState = 'error'
-        this.showText('error', e instanceof ApiError ? e.detail : '草稿保存失败')
+        this.showText('error', e instanceof ApiError ? e.detail : e instanceof Error ? e.message : '草稿保存失败')
         return false
       }
     },
@@ -310,7 +317,16 @@ export const useStarterConfigWizardStore = defineStore('starterConfigWizard', {
     async mergeIntoCatalog(): Promise<StarterDto[]> {
       const view = await adminStructuredApi.getStarters(this.token)
       const entry = toStarterDto(this.form, view.starters.length)
-      const others = view.starters.filter((s) => s.id !== entry.id)
+      const overlap = view.starters.find((s) => s.id === entry.id &&
+        s.bootVersions.length > 0 && entry.bootVersions.length > 0 &&
+        s.bootVersions.some((b) => entry.bootVersions.includes(b)) &&
+        !sameScope(s.bootVersions, entry.bootVersions))
+      if (overlap) {
+        throw new Error('同 ID 的 Boot 版本范围部分重叠，请先在清单中明确拆分范围')
+      }
+      const previous = view.starters.find((s) => s.id === entry.id && sameScope(s.bootVersions, entry.bootVersions))
+      if (previous) { entry.sort = previous.sort }
+      const others = view.starters.filter((s) => s.id !== entry.id || !sameScope(s.bootVersions, entry.bootVersions))
       return [...others, entry]
     },
 
@@ -420,4 +436,11 @@ export function findUnknownPlaceholders(form: StarterConfigForm): string[] {
     scan(a.alias)
   }
   return [...unknown]
+}
+
+/** Scope equality is only used for exact replacement; global and scoped entries coexist. */
+function sameScope(a: string[], b: string[]): boolean {
+  const left = new Set(a)
+  const right = new Set(b)
+  return left.size === right.size && [...left].every((id) => right.has(id))
 }
