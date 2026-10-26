@@ -26,6 +26,13 @@ dependencies {
 </#list>
 }
 
-tasks.named('test') {
+<#-- 框架父 POM：Gradle 无 parent 概念，自定义父 POM 时以 BOM 导入复刻其依赖版本管理 --><#if (customFrameworkParent!false)>
+dependencyManagement {
+    imports {
+        mavenBom '${parentGroupId}:${parentArtifactId}:${parentVersion}'
+    }
+}
+
+</#if>tasks.named('test') {
     useJUnitPlatform()
 }

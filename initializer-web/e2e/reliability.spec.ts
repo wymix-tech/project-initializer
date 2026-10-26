@@ -254,7 +254,7 @@ test('OR 依赖阻止无效提交，满足后 YAML 替换项目参数并保留�
   expect(files['e2e-demo/src/main/resources/application.yml']).toContain('${SERVICE_HOST:localhost}')
 })
 
-test('自定义框架禁用 Gradle，直调 API 同样拒绝', async ({ page, request }) => {
+test('自定义框架父 POM 仍支持 Gradle：产物以 BOM 导入复刻版本管理', async ({ page, request }, info) => {
   const metadata = await json(request, 'metadata')
   metadata.bootVersions.find((b: { id: string }) => b.id === '3.2.5').frameworkParent = {
     groupId: 'com.example', artifactId: 'framework-parent', version: '1.0',
@@ -262,14 +262,17 @@ test('自定义框架禁用 Gradle，直调 API 同样拒绝', async ({ page, re
   await put(request, 'metadata', { ...metadata, operator: 'e2e' })
   await publish(request)
   await project(page)
-  await expect(page.locator('#build-tool-gradle')).toBeDisabled()
-  await expect(page.locator('#build-tool-maven')).toBeChecked()
-  const response = await request.post('/api/generate', { data: {
-    group: 'com.example', artifact: 'demo', packageName: 'com.example.demo', javaVersion: '17',
-    bootVersion: '3.2.5', starters: [], buildTool: 'gradle',
-  } })
-  expect(response.status()).toBe(422)
-  expect((await response.json()).code).toBe(1004)
+  await expect(page.locator('#build-tool-gradle')).toBeEnabled()
+  await page.locator('#build-tool-gradle').check()
+  const downloadEvent = page.waitForEvent('download')
+  await page.getByRole('button', { name: '生成并下载' }).click()
+  const download = await downloadEvent
+  const path = info.outputPath('framework-gradle.zip')
+  await download.saveAs(path)
+  const files = unzip(path)
+  expect(files['e2e-demo/build.gradle']).toContain('dependencyManagement {')
+  expect(files['e2e-demo/build.gradle']).toContain("mavenBom 'com.example:framework-parent:1.0'")
+  expect(files['e2e-demo/README.md']).toContain('gradle bootRun')
   const wrongMethod = await request.get('/api/generate')
   expect(wrongMethod.status()).toBe(405)
   expect(wrongMethod.headers().allow).toContain('POST')

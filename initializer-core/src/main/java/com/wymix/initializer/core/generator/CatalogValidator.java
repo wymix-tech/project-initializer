@@ -65,7 +65,7 @@ public final class CatalogValidator {
                                 "依赖与互斥约束无法满足，或超过预检组合搜索上限 " + MAX_SEARCH);
                     }
                     for (BuildTool tool : BuildTool.values()) {
-                        // Custom parent POM semantics have no verified Gradle equivalent yet.
+                        // 跳过该 Boot 版本未声明支持的构建工具（当前 maven / gradle 均受支持，保留兜底）
                         if (!boot.supportedBuildTools().contains(tool.name().toLowerCase(java.util.Locale.ROOT))) {
                             continue;
                         }

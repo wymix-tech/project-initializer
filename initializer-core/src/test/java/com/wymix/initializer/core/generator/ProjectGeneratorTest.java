@@ -317,6 +317,62 @@ class ProjectGeneratorTest {
         assertThat(settings).contains("rootProject.name = 'demo-app'");
     }
 
+    /** 声明自定义框架父 POM 的 catalog（顶层 frameworkParent），用于 Gradle 等价配置断言。 */
+    private static MetadataCatalog frameworkParentCatalog() throws Exception {
+        String yaml = """
+                javaVersions:
+                  - id: "17"
+                    label: "Java 17"
+                    recommendedBootVersion: "3.2.5"
+                bootVersions:
+                  - id: "3.2.5"
+                    label: "Spring Boot 3.2.5"
+                    official: true
+                    supportedJavaVersions: ["17"]
+                frameworkParent:
+                  groupId: "com.company"
+                  artifactId: "company-framework-parent"
+                  version: "1.0.0"
+                """;
+        return MetadataCatalog.load(
+                new java.io.ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)))
+                .merge(testStarterCatalog());
+    }
+
+    @Test
+    void customFrameworkParentShouldKeepGradleAvailable() throws Exception {
+        // 自定义框架父 POM 不再排除 Gradle：由 build.gradle 导入其 BOM 复刻版本管理
+        assertThat(frameworkParentCatalog().bootVersion("3.2.5").supportedBuildTools())
+                .containsExactly("maven", "gradle");
+    }
+
+    @Test
+    void gradleShouldImportFrameworkParentBomWhenCustomParentDeclared() throws Exception {
+        MetadataCatalog catalog = frameworkParentCatalog();
+        ProjectGenerator gen = new ProjectGenerator(catalog, ClasspathTemplates.renderer(), testStarterCatalog());
+
+        byte[] zip = gen.generate(GenerateRequest.of("com.example", "demo-app", "com.example.demo",
+                "17", "3.2.5", List.of("web"), "gradle"));
+        String build = readEntry(zip, "demo-app/build.gradle");
+        assertThat(build).contains("id 'org.springframework.boot' version '3.2.5'")
+                .contains("dependencyManagement {")
+                .contains("mavenBom 'com.company:company-framework-parent:1.0.0'");
+
+        // Maven 侧仍按 <parent> 继承，未受本次改动影响
+        String pom = readEntry(gen.generate(GenerateRequest.of("com.example", "demo-app", "com.example.demo",
+                "17", "3.2.5", List.of("web"), "maven")), "demo-app/pom.xml");
+        assertThat(pom).contains("company-framework-parent");
+    }
+
+    @Test
+    void gradleShouldSkipBomImportForOfficialSpringBootParent() throws Exception {
+        // 官方父 POM 的版本管理已由 Spring Boot 插件覆盖，不重复导入
+        byte[] zip = generator.generate(gradleRequest(List.of("web")));
+        assertThat(readEntry(zip, "demo-app/build.gradle"))
+                .doesNotContain("dependencyManagement {")
+                .doesNotContain("mavenBom");
+    }
+
     @Test
     void gradleRequestShouldKeepLinkagePipelineOutputs() throws Exception {
         // M2.4：构建脚本双轨不影响联动管线——配置类 + yml 合并产物一致
