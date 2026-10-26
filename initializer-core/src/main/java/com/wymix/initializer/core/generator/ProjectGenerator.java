@@ -130,7 +130,7 @@ public class ProjectGenerator {
      * @param request 原始生成请求
      * @return 补齐必选项后的请求（无必选项或已全部携带时返回原对象）
      */
-    private GenerateRequest withRequiredStarters(GenerateRequest request) {
+    public GenerateRequest withRequiredStarters(GenerateRequest request) {
         List<String> required = catalog.requiredStarters(request.bootVersion());
         List<String> explicit = request.starters();
         // 种子 = 必选项 + 用户选择；resolveRequires 不再自动带上 requires 依赖，
@@ -196,6 +196,10 @@ public class ProjectGenerator {
 
     private void validateRequest(GenerateRequest request) {
         BootVersion bv = catalog.bootVersion(request.bootVersion());
+        if (!bv.supportedBuildTools().contains(request.buildTool().name().toLowerCase(java.util.Locale.ROOT))) {
+            throw new BusinessException(ErrorCode.INVALID_BUILD_TOOL,
+                    "框架父 POM 尚未验证 Gradle 等价配置，请使用 Maven: " + bv.id());
+        }
         if (!bv.supportsJava(request.javaVersion())) {
             throw new BusinessException(ErrorCode.INCOMPATIBLE_VERSION,
                     "Boot 版本 " + request.bootVersion() + " 不兼容 Java 版本 " + request.javaVersion());
@@ -251,6 +255,8 @@ public class ProjectGenerator {
                 }
             }
         }
+        deps.sort(java.util.Comparator.comparing((Map<String, String> dep) -> dep.get("groupId"))
+                .thenComparing(dep -> dep.get("artifactId")));
         return deps;
     }
 
@@ -312,13 +318,16 @@ public class ProjectGenerator {
                             com.wymix.initializer.core.starter.YmlFragmentLinkage.MergeStrategy.APPEND,
                             "linkage-merged"))));
         }
-        files.put(request.artifact() + "/src/main/resources/application.yml",
-                applicationYml.getBytes(StandardCharsets.UTF_8));
+        String applicationPath = request.artifact() + "/src/main/resources/application.yml";
+        if (files.putIfAbsent(applicationPath, applicationYml.getBytes(StandardCharsets.UTF_8)) != null) {
+            throw new BusinessException(ErrorCode.TEMPLATE_TARGET_CONFLICT, "模板产物路径冲突: " + applicationPath);
+        }
         return files;
     }
 
     private Map<String, Object> buildModel(GenerateRequest request) {
         Map<String, Object> model = new LinkedHashMap<>();
+        model.put("buildTool", request.buildTool().name().toLowerCase(java.util.Locale.ROOT));
         model.put(TemplateRenderer.K_BASE_PACKAGE, request.basePackage());
         model.put(TemplateRenderer.K_PACKAGE_PATH, request.basePackage().replace('.', '/'));
         model.put(TemplateRenderer.K_ARTIFACT, request.artifact());

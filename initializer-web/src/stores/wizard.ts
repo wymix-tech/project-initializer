@@ -107,9 +107,35 @@ export const useWizardStore = defineStore('wizard', {
     submitState: 'idle' as SubmitState,
     errorMessage: '' as string,
     loading: false,
+    configLoading: false,
+    selectionRequest: 0,
+    searchRequest: 0,
+    deriveRequest: 0,
+    validationRequest: 0,
+    deriving: false,
+    validating: false,
   }),
 
   getters: {
+    supportedBuildTools(state): string[] {
+      return state.bootVersions.find((b) => b.id === state.selectedBoot)?.supportedBuildTools ?? ['maven', 'gradle']
+    },
+    generationBlockers(state): { message: string; target: string }[] {
+      const reasons: { message: string; target: string }[] = []
+      if (state.loading || state.configLoading || state.deriving || state.validating) {
+        reasons.push({ message: '正在加载或校验，请稍候', target: '#meta-group' })
+      }
+      for (const conflict of this.triggeredConflicts) {
+        reasons.push({ message: conflict.message, target: '#starter-selection' })
+      }
+      for (const dependency of this.unsatisfiedRequires) {
+        reasons.push({ message: `${dependency.id} 需要 ${dependency.group.join(' 或 ')}`, target: '#starter-selection' })
+      }
+      if (!this.supportedBuildTools.includes(state.meta.buildTool)) {
+        reasons.push({ message: '该框架暂仅支持 Maven', target: '#build-tool-maven' })
+      }
+      return reasons
+    },
     /** 是否可进入下一步。 */
     canNext(state): boolean {
       switch (state.step) {
@@ -136,6 +162,9 @@ export const useWizardStore = defineStore('wizard', {
      */
     canGenerate(state): boolean {
       return (
+        this.generationBlockers.length === 0 && !state.loading && !state.deriving && !state.validating &&
+        state.submitState !== 'generating' &&
+        this.triggeredConflicts.length === 0 && this.unsatisfiedRequires.length === 0 &&
         state.selectedJava !== '' &&
         state.selectedBoot !== '' &&
         state.meta.group !== '' &&
@@ -288,26 +317,42 @@ export const useWizardStore = defineStore('wizard', {
 
     /** 选择 Java 版本：联动拉取兼容 Boot 版本，默认选中推荐版本。 */
     async selectJava(javaId: string): Promise<void> {
+      const request = ++this.selectionRequest
+      const search = ++this.searchRequest
+      this.configLoading = true
+      this.starterRegistry = {}
+      this.starters = []
+      this.bootVersions = []
       this.selectedJava = javaId
       this.selectedBoot = ''
       this.selectedStarters = new Set()
       this.manualStarters = new Set()
       this.loading = true
       try {
-        this.bootVersions = await api.listBootVersions(javaId)
+        const versions = await api.listBootVersions(javaId)
+        if (request !== this.selectionRequest) { return }
+        this.bootVersions = versions
         const recommended = this.javaVersions.find((j) => j.id === javaId)
         const recommendedId = recommended?.recommendedBootVersion
         if (recommendedId && this.bootVersions.some((b) => b.id === recommendedId)) {
           await this.selectBoot(recommendedId)
         }
       } finally {
-        this.loading = false
+        if (request === this.selectionRequest) {
+          this.configLoading = false
+          if (search === this.searchRequest) { this.loading = false }
+        }
       }
     },
 
     /** 选择 Boot 版本：联动拉取 starter 清单（携带当前搜索条件）与冲突规则（M3.5）。 */
     async selectBoot(bootId: string): Promise<void> {
+      const request = ++this.selectionRequest
+      const search = ++this.searchRequest
+      this.configLoading = true
       this.selectedBoot = bootId
+      if (!this.supportedBuildTools.includes(this.meta.buildTool)) { this.meta.buildTool = 'maven' }
+      this.starters = []
       this.selectedStarters = new Set()
       this.manualStarters = new Set()
       this.starterRegistry = {}
@@ -317,34 +362,47 @@ export const useWizardStore = defineStore('wizard', {
       try {
         const [starters, conflictRules] = await Promise.all([
           api.listStarters(bootId),
-          api.listConflictRules().catch(() => [] as ConflictRule[]),
+          api.listConflictRules(),
         ])
-        this.starters = starters
+        if (request !== this.selectionRequest) { return }
+        if (search === this.searchRequest) { this.starters = starters }
         this.conflictRules = conflictRules
         this.registerStarters(starters)
         this.selectRequiredStarters()
+      } catch (e) {
+        if (request === this.selectionRequest) {
+          this.selectedBoot = ''
+          this.errorMessage = e instanceof Error ? e.message : '版本配置加载失败，请重试'
+        }
       } finally {
-        this.loading = false
+        if (request === this.selectionRequest) {
+          this.configLoading = false
+          if (search === this.searchRequest) { this.loading = false }
+        }
       }
     },
 
     /** M3.4：更新搜索条件并按条件重新拉取 starter 清单。 */
     async setSearch(keyword: string, category: string): Promise<void> {
+      const request = ++this.searchRequest
+      const bootId = this.selectedBoot
       this.starterKeyword = keyword
       this.starterCategory = category
       if (this.selectedBoot === '') return
       this.loading = true
       try {
-        this.starters = await api.listStarters(
-          this.selectedBoot,
+        const starters = await api.listStarters(
+          bootId,
           keyword || undefined,
           category || undefined,
         )
+        if (request !== this.searchRequest || bootId !== this.selectedBoot) { return }
+        this.starters = starters
         // 检索只换展示项，注册表累积（依赖联动需基于全量）
         this.registerStarters(this.starters)
         this.selectRequiredStarters()
       } finally {
-        this.loading = false
+        if (request === this.searchRequest && bootId === this.selectedBoot) { this.loading = false }
       }
     },
 
@@ -419,6 +477,10 @@ export const useWizardStore = defineStore('wizard', {
 
     /** 更新元信息字段；group/artifact 变化且用户未手改包名时自动推导。 */
     async updateMeta(field: Exclude<keyof ProjectMeta, 'packageTouched'> | 'packageTouched', value: string): Promise<void> {
+      const request = ++this.deriveRequest
+      this.deriving = false
+      ++this.validationRequest
+      this.validating = false
       if (field === 'packageTouched') {
         this.meta.packageTouched = value === 'true'
         return
@@ -426,11 +488,20 @@ export const useWizardStore = defineStore('wizard', {
       ;(this.meta as Record<string, unknown>)[field] = value
       if ((field === 'group' || field === 'artifact') && !this.meta.packageTouched) {
         if (this.meta.group !== '' && this.meta.artifact !== '') {
+          const group = this.meta.group
+          const artifact = this.meta.artifact
+          this.deriving = true
           try {
-            const res = await api.derivePackage(this.meta.group, this.meta.artifact)
-            this.meta.packageName = res.packageName
+            const res = await api.derivePackage(group, artifact)
+            if (request === this.deriveRequest && !this.meta.packageTouched) {
+              this.meta.packageName = res.packageName
+            }
           } catch (e) {
-            if (e instanceof ApiError) this.validationErrors.packageName = e.detail
+            if (request === this.deriveRequest && e instanceof ApiError) {
+              this.validationErrors.packageName = e.detail
+            }
+          } finally {
+            if (request === this.deriveRequest) { this.deriving = false }
           }
         } else {
           this.meta.packageName = ''
@@ -444,8 +515,22 @@ export const useWizardStore = defineStore('wizard', {
         this.validationErrors = {}
         return
       }
-      const result = await api.validate(this.meta.group, this.meta.artifact, this.meta.packageName)
-      this.validationErrors = result.valid ? {} : (result.errors ?? {})
+      const request = ++this.validationRequest
+      const input = [this.meta.group, this.meta.artifact, this.meta.packageName] as const
+      this.validating = true
+      try {
+        const result = await api.validate(...input)
+        if (request === this.validationRequest && input[0] === this.meta.group &&
+            input[1] === this.meta.artifact && input[2] === this.meta.packageName) {
+          this.validationErrors = result.valid ? {} : (result.errors ?? {})
+        }
+      } catch (e) {
+        if (request === this.validationRequest) {
+          this.validationErrors = { server: e instanceof Error ? e.message : '校验失败，请重试' }
+        }
+      } finally {
+        if (request === this.validationRequest) { this.validating = false }
+      }
     },
 
     /** 下一步。 */
@@ -464,10 +549,28 @@ export const useWizardStore = defineStore('wizard', {
      * @returns 是否成功
      */
     async submit(): Promise<boolean> {
+      if (!this.canGenerate) {
+        this.errorMessage = '请等待加载和校验完成，并处理元信息、冲突及未满足的依赖'
+        return false
+      }
+      const request = this.generateRequest
       this.submitState = 'generating'
       this.errorMessage = ''
       try {
-        await api.generateProject(this.generateRequest)
+        // Validate the submitted snapshot; background debounce validation must not silently cancel a click.
+        const result = await api.validate(request.group, request.artifact, request.packageName)
+        if (JSON.stringify(request) !== JSON.stringify(this.generateRequest)) {
+          this.submitState = 'idle'
+          this.errorMessage = '配置已变化，请重新生成'
+          return false
+        }
+        if (!result.valid) {
+          this.validationErrors = result.errors ?? { metadata: '项目元信息校验失败' }
+          this.submitState = 'error'
+          this.errorMessage = '项目元信息校验失败，请修正后重试'
+          return false
+        }
+        await api.generateProject(request)
         this.submitState = 'success'
         return true
       } catch (e) {

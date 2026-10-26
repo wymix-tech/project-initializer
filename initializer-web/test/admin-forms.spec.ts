@@ -521,7 +521,7 @@ describe('TemplateForm 模板表单', () => {
   it('yml 片段标注为非 FreeMarker 模板', async () => {
     const wrapper = await mountForm(TemplateForm, {
       '/api/admin/templates': { templates: [{ name: 'starters/x/application-x.yml', updatedAt: null, sort: 0 }] },
-      '/api/admin/templates/starters%2Fx%2Fapplication-x.yml': {
+      '/api/admin/template?name=starters%2Fx%2Fapplication-x.yml': {
         name: 'starters/x/application-x.yml', content: 'host: ${REDIS_HOST:localhost}', updatedAt: null, sort: 0,
       },
       '/api/admin/config/template': { kind: 'template', contentYaml: null, version: null, updatedAt: null },
@@ -533,7 +533,7 @@ describe('TemplateForm 模板表单', () => {
     const help = wrapper.find('.placeholder-help')
     expect(help.find('summary').text()).toContain('占位参数说明')
     expect(help.findAll('tbody tr').map((row) => row.find('td').text())).toEqual([
-      'artifact', 'group', 'basePackage', 'packagePath', 'bootVersion', 'javaVersion',
+      'artifact', 'group', 'basePackage', 'packagePath', 'bootVersion', 'buildTool', 'javaVersion',
       'parentGroupId', 'parentArtifactId', 'parentVersion', 'configPackage', '自定义 alias',
       'starters', 'starterDependencies',
     ])
@@ -700,6 +700,8 @@ describe('ImportExportPanel 导入导出面板', () => {
 
   it('选择文件后可导入并展示写入行数与版本', async () => {
     const s = session()
+    fetchMock.mockResolvedValueOnce(jsonResponse({ previewId: 'p1', versions: {}, expiresAt: Date.now() + 60000,
+      changes: [{ path: 'templates/old.ftl', action: 'DELETE', before: 'old', after: null }] }))
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ rows: 12, versions: { metadata: 3, starter: 5 }, summary: '元数据 2 项；starter 3 项' }),
     )
@@ -708,6 +710,9 @@ describe('ImportExportPanel 导入导出面板', () => {
     const file = new File(['zip'], 'cfg.zip', { type: 'application/zip' })
     Object.defineProperty(input.element, 'files', { value: [file] })
     await input.trigger('change')
+    await wrapper.findAll('button').find((b) => b.text().includes('预览差异'))!.trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('DELETE · templates/old.ftl')
     await wrapper.findAll('button').find((b) => b.text().includes('导入到草稿'))!.trigger('click')
     await settle()
     expect(wrapper.find('.result').text()).toContain('12')
@@ -731,7 +736,7 @@ describe('ImportExportPanel 导入导出面板', () => {
     const input = wrapper.find('input[type="file"]')
     Object.defineProperty(input.element, 'files', { value: [new File(['zip'], 'x.zip')] })
     await input.trigger('change')
-    await wrapper.findAll('button').find((b) => b.text().includes('导入到草稿'))!.trigger('click')
+    await wrapper.findAll('button').find((b) => b.text().includes('预览差异'))!.trigger('click')
     await settle()
     expect(s.message.value).toContain('路径穿越')
     expect(wrapper.find('.result').exists()).toBe(false)

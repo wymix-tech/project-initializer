@@ -37,8 +37,9 @@ initializer:
     # 管理端内置管理员 token（M3.1 轻量鉴权；生产环境通过环境变量覆盖）
     token: ${INITIALIZER_ADMIN_TOKEN:admin-dev-token}
   sync:
-    # 制品库同步（M3.3）：Mock fixture 路径与 remote 接口配置化；remote 未配置时仅 Mock 通道生效
+    # 制品库同步（M3.3）：Mock 仅在显式开启时启用；remote 通过 endpoint 配置启用
     mock:
+      enabled: ${INITIALIZER_SYNC_MOCK_ENABLED:false}
       fixture: ${INITIALIZER_SYNC_MOCK_FIXTURE:classpath:sync/artifact-repo-fixtures.yml}
     remote:
       endpoint: ${INITIALIZER_SYNC_REMOTE_ENDPOINT:}

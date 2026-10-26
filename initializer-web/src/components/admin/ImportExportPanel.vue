@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { adminArchiveApi } from '@/api/client'
-import type { ImportView } from '@/types/admin'
+import type { ImportView, ImportPreview } from '@/types/admin'
 import { useAdminSession } from '@/composables/useAdminSession'
 
 /**
@@ -18,6 +18,7 @@ import { useAdminSession } from '@/composables/useAdminSession'
 const props = defineProps<{ session: ReturnType<typeof useAdminSession>; operator: string }>()
 
 const file = ref<File | null>(null)
+const preview = ref<ImportPreview | null>(null)
 const exportedName = ref('')
 const importResult = ref<ImportView | null>(null)
 const busy = ref(false)
@@ -31,6 +32,7 @@ const emit = defineEmits<{ (e: 'imported'): void }>()
  */
 function onFileChange(event: Event): void {
   const input = event.target as HTMLInputElement
+  preview.value = null
   file.value = input.files && input.files.length > 0 ? input.files[0] : null
 }
 
@@ -38,7 +40,7 @@ function onFileChange(event: Event): void {
 async function doExport(): Promise<void> {
   busy.value = true
   try {
-    const name = await adminArchiveApi.exportArchive(props.session.token.value)
+    const name = await adminArchiveApi.exportArchive(props.session.token.value, props.operator)
     exportedName.value = name
     props.session.showText('info', `已导出 ${name}`)
   } catch (e) {
@@ -48,17 +50,33 @@ async function doExport(): Promise<void> {
   }
 }
 
+async function doPreview(): Promise<void> {
+  if (!file.value) { return }
+  busy.value = true
+  preview.value = null
+  importResult.value = null
+  try {
+    preview.value = await props.session.run(
+      () => adminArchiveApi.previewImport(props.session.token.value, file.value as File),
+      undefined, '预览失败',
+    )
+  } finally {
+    busy.value = false
+  }
+}
+
 /** 上传 ZIP 归档导入到草稿（整体替换，失败整体回滚）。 */
 async function doImport(): Promise<void> {
-  if (file.value === null) return
+  if (preview.value === null) return
   busy.value = true
   importResult.value = null
   const result = await props.session.run(
-    () => adminArchiveApi.importArchive(props.session.token.value, file.value as File, null, props.operator),
+    () => adminArchiveApi.applyImport(props.session.token.value, preview.value!.previewId, props.operator),
     undefined,
     '导入失败',
   )
   if (result) {
+    preview.value = null
     importResult.value = result
     props.session.showText('info', `导入完成：${result.summary}`)
     emit('imported')
@@ -89,15 +107,25 @@ async function doImport(): Promise<void> {
     <div class="block">
       <h4>导入</h4>
       <p class="hint">
-        上传 ZIP 归档 → 解析校验（路径穿越 / 条目数 / 单文件与总量 / UTF-8）→ 事务内整体替换草稿。
+        上传 ZIP 归档 → 解析校验（路径穿越 / 条目数 / 单文件与总量 / UTF-8）→ 查看增删改差异 → 确认后整体替换草稿。
         导入后请到「发布台」核对并发布。
       </p>
       <div class="import-row">
         <input type="file" accept=".zip,application/zip" @change="onFileChange" />
-        <button type="button" class="btn btn-primary" :disabled="busy || file === null" @click="doImport">
-          {{ busy ? '导入中…' : '导入到草稿' }}
+        <button type="button" class="btn" :disabled="busy || file === null" @click="doPreview">预览差异</button>
+        <button type="button" class="btn btn-primary" :disabled="busy || preview === null" @click="doImport">
+          {{ busy ? '导入中…' : '确认导入到草稿' }}
         </button>
       </div>
+    </div>
+
+    <div v-if="preview" class="result">
+      <p>将整体替换手工草稿，共 {{ preview.changes.length }} 项变化；草稿变化或预览过期时需重新预览。</p>
+      <details v-for="change in preview.changes" :key="change.path">
+        <summary>{{ change.action }} · {{ change.path }}</summary>
+        <p>导入前</p><pre>{{ change.before ?? '（无）' }}</pre>
+        <p>导入后</p><pre>{{ change.after ?? '（删除）' }}</pre>
+      </details>
     </div>
 
     <div v-if="importResult" class="result">
@@ -118,6 +146,7 @@ async function doImport(): Promise<void> {
 .import-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
 .file-name { margin-left: 10px; color: #1a7f37; font-size: 13px; }
 .result { margin-top: 12px; border: 1px solid #aceebb; background: #dafbe1; border-radius: 6px; padding: 10px 12px; font-size: 13px; }
+.result pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; }
 .result p { margin: 0 0 4px; }
 .ver-item { display: inline-block; background: #fff; border-radius: 4px; padding: 1px 6px; margin-right: 6px; font-size: 12px; }
 </style>

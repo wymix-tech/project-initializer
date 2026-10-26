@@ -13,8 +13,6 @@ import com.wymix.initializer.core.sync.CatalogMerger;
 import com.wymix.initializer.core.sync.CatalogSyncProvider;
 import com.wymix.initializer.core.sync.SyncedStarter;
 import com.wymix.initializer.core.sync.SyncResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -30,7 +28,7 @@ import java.util.stream.IntStream;
  * <p>同步 = 只读贡献者（概要设计决策 3）：同步结果**直写结构化 starter 草稿行**
  * （{@code cfg_starter} 等表、{@code release_id = 0}、{@code source = 'SYNC'}，
  * T3 起不再拼 YAML），不触碰手工 STARTER/METADATA 草稿；合并语义为同名条目手工配置优先
- * （合并发生在 {@link #syncChannel}，同名条目不写同步层草稿）。
+ * （合并发生在 {@link #syncAll}，同名条目不写同步层草稿）。
  *
  * <p>生效通道与手工配置一致：同步层草稿写入后，管理端发布时
  * {@code CatalogRefresher.validateAndBuild} 三通道归并（classpath 内置 → 同步层 → 手工，
@@ -41,12 +39,10 @@ import java.util.stream.IntStream;
  * <p>失败语义：拉取失败（4005）不触碰快照与草稿，审计留痕（SYNC_FAILED），
  * 生成服务无感。
  *
- * <p>线程安全性：无状态单例（并发同步由草稿行级覆盖收敛，后写者胜），线程安全。
+ * <p>线程安全性：无状态单例（同实例同步串行执行，草稿提交由数据库事务与工作区锁保护），线程安全。
  */
 @Service
 public class CatalogSyncService {
-
-    private static final Logger log = LoggerFactory.getLogger(CatalogSyncService.class);
 
     /** 审计动作：同步成功。 */
     public static final String ACTION_SYNC = "SYNC";
@@ -84,63 +80,49 @@ public class CatalogSyncService {
      *
      * @param operator 触发人（定时任务传 system，手动触发传管理员）
      * @return 同步结果概况（各通道采纳/覆盖计数）
-     * @throws BusinessException 全部通道拉取失败时抛 4005（保留上次同步草稿）；单通道失败审计后跳过
+     * @throws BusinessException 任一通道失败时抛 4005，整轮保留上次同步草稿
      */
-    public SyncOutcome syncAll(String operator) {
+    public synchronized SyncOutcome syncAll(String operator) {
         if (providers.isEmpty()) {
             throw new BusinessException(ErrorCode.SYNC_PROVIDER_FAILED,
                     "制品库同步失败: 未装配任何同步通道（CatalogSyncProvider）");
         }
         List<ChannelOutcome> channels = new ArrayList<>();
-        boolean anySuccess = false;
-        BusinessException lastFailure = null;
+        List<SyncedStarter> combined = new ArrayList<>();
+        Set<String> reserved = new LinkedHashSet<>(structuredDraftService.getStarters().starters().stream()
+                .map(StarterDto::id).toList());
+        Set<String> providerIds = new LinkedHashSet<>();
+        Set<String> adoptedIds = new LinkedHashSet<>();
         for (CatalogSyncProvider provider : providers) {
             try {
-                channels.add(syncChannel(provider));
-                anySuccess = true;
-            } catch (BusinessException e) {
-                // 单通道失败不阻断其他通道；全部失败才向上抛 4005
-                lastFailure = e;
-                channels.add(new ChannelOutcome(provider.providerId(), 0, 0, e.getMessage()));
-                repository.insertAudit(ACTION_SYNC_FAILED, ConfigKind.STARTER_SYNC,
-                        operator, provider.providerId() + " 拉取失败: " + e.getMessage());
-                log.warn("制品库同步通道失败: provider={}, error={}", provider.providerId(), e.getMessage());
+                if (!providerIds.add(provider.providerId())) {
+                    throw new BusinessException(ErrorCode.SYNC_PROVIDER_FAILED,
+                            "重复同步来源: " + provider.providerId());
+                }
+                SyncResult fetched = provider.fetch();
+                CatalogMerger.MergeOutcome merged = CatalogMerger.merge(reserved, fetched.starters());
+                for (SyncedStarter starter : merged.adopted()) {
+                    if (!adoptedIds.add(starter.id())) {
+                        throw new BusinessException(ErrorCode.SYNC_PROVIDER_FAILED,
+                                "同步来源存在重复 starter ID: " + starter.id());
+                    }
+                    combined.add(starter);
+                }
+                channels.add(new ChannelOutcome(provider.providerId(), merged.adopted().size(),
+                        merged.overridden().size(), null));
+            } catch (RuntimeException e) {
+                repository.insertAudit(ACTION_SYNC_FAILED, ConfigKind.STARTER_SYNC, operator,
+                        provider.providerId() + " 同步失败，本轮草稿未写入: " + e.getMessage());
+                throw new BusinessException(ErrorCode.SYNC_PROVIDER_FAILED,
+                        "制品库同步失败: " + provider.providerId() + "（整轮未写入，保留上次同步结果）", e);
             }
         }
-        if (!anySuccess) {
-            throw new BusinessException(ErrorCode.SYNC_PROVIDER_FAILED,
-                    "制品库同步失败: 全部通道拉取失败（保留上次同步结果）", lastFailure);
-        }
+        // All enabled channels must succeed. Merge once, then transactionally replace the SYNC layer once.
+        upsertSyncDraft(combined, operator);
         SyncOutcome outcome = new SyncOutcome(channels);
-        repository.insertAudit(ACTION_SYNC, ConfigKind.STARTER_SYNC, operator, outcome.summary());
-        log.info("制品库同步完成: {}", outcome.summary());
+        repository.insertAudit(ACTION_SYNC, ConfigKind.STARTER_SYNC, operator,
+                "同步草稿已更新，需发布后生效: " + outcome.summary());
         return outcome;
-    }
-
-    /**
-     * 同步单个通道：拉取 → 合并（同名手工优先）→ 同步层草稿重建。
-     *
-     * <p>保留集 = 手工 STARTER 草稿条目 ID + 当前同步层草稿条目 ID（本轮重建的全量输入，
-     * 不含同步层会导致草稿残留旧条目）；同名条目进覆盖清单仅审计留痕。
-     *
-     * @param provider 同步通道
-     * @return 通道结果
-     * @throws BusinessException 拉取失败（4005）
-     */
-    private ChannelOutcome syncChannel(CatalogSyncProvider provider) {
-        SyncResult fetched = provider.fetch();
-
-        // 保留集 = 手工 starter 草稿条目 ID + 当前同步层草稿条目 ID
-        Set<String> reservedIds = new LinkedHashSet<>(structuredDraftService.getStarters().starters().stream()
-                .map(StarterDto::id).toList());
-
-        CatalogMerger.MergeOutcome merged = CatalogMerger.merge(reservedIds, fetched.starters());
-
-        // 同步层草稿全量重建：本轮采纳条目直接以结构化 starter 行落库
-        // （制品库为权威源，下架条目自然随整体替换移除）。
-        upsertSyncDraft(merged.adopted(), provider.providerId());
-        return new ChannelOutcome(provider.providerId(), merged.adopted().size(),
-                merged.overridden().size(), null);
     }
 
     /**
@@ -158,8 +140,7 @@ public class CatalogSyncService {
         List<StarterUpsertDto> dtos = IntStream.range(0, adopted.size())
                 .mapToObj(i -> toStarterDto(adopted.get(i), i))
                 .toList();
-        structuredDraftService.saveStarters(new StarterCatalogUpsertRequest(dtos, operator),
-                null, ConfigKind.STARTER_SYNC);
+        structuredDraftService.saveSyncedStarters(new StarterCatalogUpsertRequest(dtos, operator));
     }
 
     /**

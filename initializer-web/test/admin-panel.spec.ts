@@ -72,7 +72,7 @@ async function mountLoggedIn(
   })
   const wrapper = mountAdmin()
   await wrapper.find('input.admin-token').setValue('secret-token')
-  await wrapper.find('button.btn-primary').trigger('click')
+  await wrapper.find('form.admin-login').trigger('submit')
   await settle()
   return wrapper
 }
@@ -110,12 +110,12 @@ describe('AdminPanel 登录', () => {
     )
     const wrapper = mountAdmin()
     await wrapper.find('input.admin-token').setValue('bad')
-    await wrapper.find('button.btn-primary').trigger('click')
+    await wrapper.find('form.admin-login').trigger('submit')
     await settle()
     expect(wrapper.find('.admin-msg-error').text()).toContain('未授权')
   })
 
-  it('Enter 键触发登录', async () => {
+  it('原生表单提交触发登录', async () => {
     const wrapper = await mountLoggedIn()
     expect(wrapper.find('.admin-body').exists()).toBe(true)
   })
@@ -194,7 +194,7 @@ describe('AdminPanel 提示条', () => {
     })
     const wrapper = mountAdmin()
     await wrapper.find('input.admin-token').setValue('tk')
-    await wrapper.find('button.btn-primary').trigger('click')
+    await wrapper.find('form.admin-login').trigger('submit')
     await settle()
     await wrapper.findAll('.card-actions button.btn-primary')[0]!.trigger('click')
     await settle()

@@ -326,7 +326,8 @@ public class LinkageRenderer {
      * @return 依赖坐标清单
      */
     public List<DependencyCoord> resolveDependencies(String bootVersionId, List<String> starterIds) {
-        LinkedHashMap<String, DependencyCoord> deps = new LinkedHashMap<>();
+        Map<String, DependencyCoord> deps = new java.util.TreeMap<>();
+        Map<String, String> sources = new java.util.TreeMap<>();
         for (String starterId : starterIds) {
             StarterCatalogEntry entry = entryFor(bootVersionId, starterId);
             if (entry == null) {
@@ -334,7 +335,16 @@ public class LinkageRenderer {
             }
             for (DependencyCoord dep : entry.dependencies()) {
                 String key = dep.groupId() + ":" + dep.artifactId();
+                DependencyCoord previous = deps.get(key);
+                if (previous != null && !java.util.Objects.equals(previous.version(), dep.version())) {
+                    List<String> declarations = new java.util.ArrayList<>(List.of(
+                            sources.get(key) + "=" + previous.version(), starterId + "=" + dep.version()));
+                    declarations.sort(String::compareTo);
+                    throw new BusinessException(ErrorCode.DEPENDENCY_CONFLICT,
+                            "依赖版本冲突: " + key + " [" + String.join(", ", declarations) + "]");
+                }
                 deps.putIfAbsent(key, dep);
+                sources.putIfAbsent(key, starterId);
             }
         }
         return List.copyOf(deps.values());

@@ -1,7 +1,15 @@
 <script setup lang="ts">
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useWizardStore, type MutexInfo } from '@/stores/wizard'
 
 const wizard = useWizardStore()
+const selectedOnly = ref(false)
+const visibleStarters = computed(() => selectedOnly.value
+  ? wizard.displayStarters.filter(starter => wizard.selectedStarters.has(starter.id))
+  : wizard.displayStarters)
+onBeforeUnmount(() => {
+  if (debounceTimer !== undefined) { clearTimeout(debounceTimer) }
+})
 
 /** 分类选项（M3.4）：与后端 starter 清单 category 枚举一致 */
 const categories = [
@@ -50,6 +58,7 @@ function mutexTitle(starter: { id: string }): string {
     <div class="starter-toolbar">
       <input
         class="starter-search"
+        aria-label="搜索依赖名称或描述"
         type="search"
         placeholder="按名称 / 描述搜索…"
         :value="wizard.starterKeyword"
@@ -57,14 +66,21 @@ function mutexTitle(starter: { id: string }): string {
       />
       <select
         class="starter-category"
+        aria-label="依赖分类"
         :value="wizard.starterCategory"
         @change="onCategoryChange"
       >
         <option v-for="c in categories" :key="c.value" :value="c.value">{{ c.label }}</option>
       </select>
     </div>
-    <ul v-if="wizard.displayStarters.length > 0" class="starter-list">
-      <li v-for="st in wizard.displayStarters" :key="st.id">
+    <div class="list-options">
+      <span>{{ visibleStarters.length }} 项可用依赖</span>
+      <button type="button" class="selected-filter" :aria-pressed="selectedOnly" @click="selectedOnly = !selectedOnly">
+        仅看已选
+      </button>
+    </div>
+    <ul v-if="visibleStarters.length > 0" class="starter-list">
+      <li v-for="st in visibleStarters" :key="st.id">
         <label
           class="starter"
           :class="{
@@ -87,16 +103,19 @@ function mutexTitle(starter: { id: string }): string {
             class="pending-mark"
             title="已选组件需要你在可选项中最少勾选一项"
           >*</span>
-          <span class="starter-label">{{ st.id }}</span>
+          <span class="starter-info">
+            <span class="starter-label">{{ st.label || st.id }}</span>
+            <span v-if="st.label && st.label !== st.id" class="starter-id">{{ st.id }}</span>
+            <span v-if="st.description && st.description !== st.label" class="starter-desc">{{ st.description }}</span>
+          </span>
           <span v-if="st.required" class="required-tag" title="框架必选依赖，不可取消">必选</span>
           <span v-else-if="wizard.lockedStarters.has(st.id)" class="dep-locked-tag" title="由已选组件的强制依赖自动选中，取消父组件后自动释放">依赖锁定</span>
           <span v-if="st.category" class="category-tag">{{ st.category }}</span>
           <span v-if="st.maintainer === 'internal'" class="maintainer-tag">内部</span>
-          <span class="starter-desc" :title="st.description ?? undefined">{{ st.description }}</span>
         </label>
       </li>
     </ul>
-    <p v-else class="starter-empty">没有匹配的依赖，请调整搜索条件</p>
+    <p v-else class="starter-empty">{{ selectedOnly ? '当前筛选下没有已选依赖，可取消「仅看已选」或调整搜索条件' : '没有匹配的依赖，请调整搜索条件' }}</p>
     <div v-if="wizard.triggeredConflicts.length > 0" class="conflict-warnings" role="alert">
       <div v-for="c in wizard.triggeredConflicts" :key="c.ruleId" class="conflict-warning">
         <span class="conflict-icon">⚠</span>
@@ -120,115 +139,34 @@ function mutexTitle(starter: { id: string }): string {
 </template>
 
 <style scoped>
-.starter-toolbar { display: flex; gap: 8px; margin: 8px 0 12px; }
-.starter-search {
-  flex: 1;
-  padding: 7px 10px;
-  font-size: 13px;
-  border: 1px solid #d0d7de;
-  border-radius: 4px;
-  outline: none;
-}
-.starter-search:focus { border-color: #6db33f; }
-.starter-category {
-  padding: 7px 8px;
-  font-size: 13px;
-  border: 1px solid #d0d7de;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-.starter-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 6px;
-  max-height: 480px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #c9ced4 transparent;
-}
-.starter-list::-webkit-scrollbar { width: 8px; }
-.starter-list::-webkit-scrollbar-track { background: transparent; }
-.starter-list::-webkit-scrollbar-thumb {
-  background: #c9ced4;
-  border-radius: 4px;
-}
-.starter-list::-webkit-scrollbar-thumb:hover { background: #aab1b8; }
+.starter-toolbar { display: flex; gap: 8px; margin: 8px 0 14px; }
+.starter-search { flex: 1; min-width: 0; padding: 11px 12px; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: #f8faf8; }
+.starter-search:focus { border-color: var(--accent); background: white; }
+.starter-category { max-width: 42%; padding: 9px; font-size: 12px; border: 1px solid var(--line); border-radius: 8px; background: white; cursor: pointer; color: #52675b; }
+.list-options { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11px; margin: 0 0 12px; gap: 10px; }
+.selected-filter { display: flex; align-items: center; gap: 6px; cursor: pointer; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; background: white; color: var(--muted); }
+.selected-filter[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: #8cbaa0; }
+.starter-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 9px; max-height: 620px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #b6c9bc transparent; padding-right: 4px; }
 .starter-list li { min-width: 0; }
-.starter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid #e2e5e9;
-  border-left: 3px solid transparent;
-  border-radius: 4px;
-  font-size: 13px;
-  cursor: pointer;
-  overflow: hidden;
-  min-width: 0;
-  transition: background 0.1s ease;
-}
-.starter:hover { background: #f6f8fa; }
-.starter.checked {
-  border-color: #6db33f;
-  border-left-color: #6db33f;
-  background: #f4faee;
-}
-/* M3.9：已选组件「二选一」的候选项——淡黄底标识待选，配合 id 前的红色 * */
-.starter.pending:not(.checked) { background: #fff8c5; border-color: #e6d48a; }
-.starter.pending:not(.checked):hover { background: #fff2ac; }
-.pending-mark { color: #cf222e; font-weight: 700; line-height: 1; flex-shrink: 0; }
-.starter input[type='checkbox'] { accent-color: #6db33f; flex-shrink: 0; }
-.starter.required { cursor: default; border-left-color: #6db33f; }
-.starter.required input { cursor: not-allowed; }
-.starter.locked { cursor: default; }
-.starter.locked input { cursor: not-allowed; }
-.starter-label { font-weight: 500; flex-shrink: 0; white-space: nowrap; }
-.starter-desc {
-  margin-left: auto;
-  flex: 1 1 0;
-  min-width: 0;
-  text-align: right;
-  color: #8b949e;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.requires-warnings .conflict-warning { border-color: #d4a72c; background: #fff8c5; }
-.required-tag {
-  font-size: 11px; color: #0a3622; border: 1px solid #1a7f37;
-  border-radius: 10px; padding: 0 6px; line-height: 16px; background: #dafbe1;
-  flex-shrink: 0;
-}
-/* M3.8：强制依赖自动锁定（区别于必选） */
-.dep-locked-tag {
-  font-size: 11px; color: #07457d; border: 1px solid #54aeff;
-  border-radius: 10px; padding: 0 6px; line-height: 16px; background: #ddf4ff;
-  flex-shrink: 0;
-}
-/* M3.8：互斥标记（成对高亮，可二选一切换；文案走整行 hover 提示） */
-.starter.mutex { border-right: 3px solid #fd8c73; }
-.category-tag {
-  font-size: 11px; color: #0550ae; border: 1px solid #54aeff;
-  border-radius: 10px; padding: 0 6px; line-height: 16px;
-  flex-shrink: 0;
-}
-.maintainer-tag {
-  font-size: 11px; color: #8250df; border: 1px solid #d2a8ff;
-  border-radius: 10px; padding: 0 6px; line-height: 16px;
-  flex-shrink: 0;
-}
-.starter-empty { color: #6a737d; font-size: 13px; padding: 12px 0; }
-.conflict-warnings { display: grid; gap: 6px; margin-top: 12px; }
-.conflict-warning {
-  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
-  border: 1px solid #d4a72c; background: #fff8c5; border-radius: 4px;
-  color: #4d2d00; font-size: 13px;
-}
+.starter { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; font-size: 12px; cursor: pointer; min-width: 0; }
+.starter:hover { background: #f7faf8; border-color: #a3bfad; }
+.starter.checked { border-color: #8cbaa0; background: #f0f8f3; }
+.starter-info { display: flex; flex-direction: column; gap: 4px; flex: 1 1 150px; min-width: 0; overflow-wrap: anywhere; }
+.starter-label { font-size: 13px; font-weight: 600; line-height: 1.5; }
+.starter-id { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.starter-desc { color: var(--muted); font-size: 12px; line-height: 1.65; }
+.starter input[type='checkbox'] { flex-shrink: 0; }
+.starter.required, .starter.locked { cursor: default; }
+.starter.required input, .starter.locked input { cursor: not-allowed; }
+.starter.pending:not(.checked) { background: #fff8df; border-color: #d8bd69; }
+.pending-mark { color: #b32937; font-weight: 700; }
+.starter.mutex { border-right: 3px solid #d58b60; }
+.required-tag, .dep-locked-tag, .category-tag, .maintainer-tag { font-size: 10px; border-radius: 5px; padding: 2px 6px; line-height: 16px; }
+.required-tag { color: #236043; background: #dcefe1; }
+.dep-locked-tag, .category-tag { color: #386680; background: #e9f1f7; }
+.maintainer-tag { color: #775785; background: #f0eaf6; }
+.starter-empty { color: var(--muted); font-size: 13px; padding: 40px 20px; text-align: center; line-height: 1.8; border: 1px dashed var(--line); border-radius: 10px; }
+.conflict-warnings { display: grid; gap: 8px; margin-top: 14px; }
+.conflict-warning { display: flex; align-items: flex-start; gap: 8px; padding: 12px; border: 1px solid #e8d89e; background: #fff9e7; border-radius: 8px; color: #73551c; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .conflict-icon { color: #9a6700; }
 </style>

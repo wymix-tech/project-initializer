@@ -51,6 +51,21 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 不支持的 HTTP 方法属于客户端错误，保留 405 和 Allow 头，避免误报系统故障。
+     * @param e 方法不匹配异常
+     * @return 405 错误响应
+     */
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleUnsupportedMethod(
+            org.springframework.web.HttpRequestMethodNotSupportedException e) {
+        var response = ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED);
+        if (e.getSupportedHttpMethods() != null) {
+            response.allow(e.getSupportedHttpMethods().toArray(org.springframework.http.HttpMethod[]::new));
+        }
+        return response.body(ErrorResponse.of(ErrorCode.INVALID_REQUEST, "不支持的请求方法: " + e.getMethod()));
+    }
+
+    /**
      * Jakarta Validation 校验失败处理。
      *
      * @param e 校验异常

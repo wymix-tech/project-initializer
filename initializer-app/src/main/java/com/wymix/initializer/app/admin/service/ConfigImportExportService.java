@@ -72,6 +72,16 @@ public class ConfigImportExportService {
     private static final String SOURCE_MANUAL = ConfigRepository.SOURCE_MANUAL;
 
     private final ConfigRepository repository;
+    @org.springframework.beans.factory.annotation.Autowired
+    private FailureAuditService failureAudit;
+
+    private void failedAudit(String action, String operator, String detail) {
+        if (failureAudit != null) {
+            failureAudit.record(action, null, operator, detail);
+        } else {
+            repository.insertAudit(action, null, operator, detail);
+        }
+    }
     private final ConfigArchiveCodec archiveCodec;
     private final StructuredSnapshotCodec snapshotCodec;
     private final StructuredYamlCodec yamlCodec;
@@ -116,6 +126,123 @@ public class ConfigImportExportService {
         return new ExportResult("initializer-config.zip", archive, summary);
     }
 
+    private static final List<ConfigKind> IMPORT_KINDS = List.of(ConfigKind.METADATA, ConfigKind.STARTER,
+            ConfigKind.CONFLICT_RULE, ConfigKind.TEMPLATE);
+    private static final long PREVIEW_TTL_MS = 10 * 60 * 1000;
+    private final Map<String, PendingImport> previews = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 无副作用预检：解析归档，基于一致版本向量展示新增、修改和删除。
+     * @param archive 上传 ZIP 输入流，最多 16 MiB
+     * @return 10 分钟内有效的预览；进程最多保存 16 份
+     * @throws BusinessException 归档非法或预览容量已满
+     */
+    @Transactional
+    public ImportPreview previewImport(InputStream archive) {
+        try {
+            byte[] bytes = archive.readNBytes(16 * 1024 * 1024 + 1);
+            if (bytes.length > 16 * 1024 * 1024) {
+                throw new BusinessException(ErrorCode.CONFIG_IMPORT_VALIDATION_FAILED, "归档超过 16 MiB");
+            }
+            Map<String, String> entries = archiveCodec.readArchive(new java.io.ByteArrayInputStream(bytes));
+            String metadataYaml = archiveCodec.metadataOf(entries);
+            if (metadataYaml == null) {
+                throw new BusinessException(ErrorCode.CONFIG_IMPORT_VALIDATION_FAILED, "归档缺少必需文件: metadata.yml");
+            }
+            StructuredSnapshot starters = snapshotCodec.parseStarters(archiveCodec.startersOf(entries), SOURCE_MANUAL, true);
+            StructuredSnapshot metadata = snapshotCodec.parseMetadata(metadataYaml, true, declaredStarterIds(starters));
+            StructuredSnapshot rules = snapshotCodec.parseConflictRules(archiveCodec.conflictRulesOf(entries), false);
+            StructuredSnapshot templates = snapshotCodec.parseTemplates(archiveCodec.templatesOf(entries));
+            repository.lockDraftWorkspace();
+            Map<ConfigKind, Integer> baseline = draftVersions();
+            StructuredSnapshot current = repository.readScope(ConfigRepository.DRAFT_RELEASE_ID);
+            Map<String, String> before = previewFiles(current, current, current, current);
+            Map<String, String> after = previewFiles(metadata, starters, rules, templates);
+            List<ImportChange> changes = new ArrayList<>();
+            Set<String> paths = new java.util.TreeSet<>(before.keySet());
+            paths.addAll(after.keySet());
+            for (String path : paths) {
+                String oldValue = before.get(path);
+                String newValue = after.get(path);
+                if (!java.util.Objects.equals(oldValue, newValue)) {
+                    changes.add(new ImportChange(path, oldValue == null ? "ADD" : newValue == null ? "DELETE" : "UPDATE",
+                            oldValue, newValue));
+                }
+            }
+            String id = java.util.UUID.randomUUID().toString();
+            long expires = System.currentTimeMillis() + PREVIEW_TTL_MS;
+            synchronized (previews) {
+                previews.entrySet().removeIf(e -> e.getValue().expiresAt() < System.currentTimeMillis());
+                if (previews.size() >= 16) {
+                    throw new BusinessException(ErrorCode.CONFIG_IMPORT_VALIDATION_FAILED, "导入预览数量已达上限，请稍后重试");
+                }
+                previews.put(id, new PendingImport(bytes, baseline, expires));
+            }
+            return new ImportPreview(id, baseline, expires, List.copyOf(changes));
+        } catch (java.io.IOException e) {
+            throw new BusinessException(ErrorCode.CONFIG_IMPORT_VALIDATION_FAILED, "读取归档失败", e);
+        }
+    }
+
+    /**
+     * 按预览归档应用修改，任何模块版本变化均拒绝覆盖。
+     * @param previewId 预览标识
+     * @param operator 填写的操作人
+     * @return 导入结果；只写草稿，不自动发布
+     * @throws BusinessException 预览过期、版本冲突或导入失败
+     */
+    @Transactional
+    public ImportResult applyPreview(String previewId, String operator) {
+        PendingImport pending = previews.get(previewId);
+        if (pending == null || pending.expiresAt() < System.currentTimeMillis()) {
+            throw new BusinessException(ErrorCode.CONFIG_CONCURRENT_MODIFY, "导入预览已过期，请重新预览");
+        }
+        repository.lockDraftWorkspace();
+        if (!pending.versions().equals(draftVersions())) {
+            failedAudit(ACTION_IMPORT_FAILED, operator, "导入预览后草稿已变化，拒绝覆盖，请重新预览");
+            throw new BusinessException(ErrorCode.CONFIG_CONCURRENT_MODIFY, "草稿已变化，请重新预览差异后导入");
+        }
+        ImportResult result = importArchive(new java.io.ByteArrayInputStream(pending.archive()), operator, null);
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            previews.remove(previewId);
+                        }
+                    });
+        }
+        return result;
+    }
+
+    private Map<ConfigKind, Integer> draftVersions() {
+        Map<ConfigKind, Integer> versions = new LinkedHashMap<>();
+        for (ConfigKind kind : IMPORT_KINDS) {
+            ConfigDraftMetaEntity meta = repository.findDraftMeta(kind);
+            versions.put(kind, meta == null ? -1 : meta.getVersion());
+        }
+        return Map.copyOf(versions);
+    }
+
+    private Map<String, String> previewFiles(StructuredSnapshot metadata, StructuredSnapshot starters,
+                                           StructuredSnapshot rules, StructuredSnapshot templates) {
+        Map<String, String> files = new LinkedHashMap<>();
+        String yaml = archiveCodec.renderMetadata(metadata);
+        if (yaml != null) { files.put("metadata.yml", yaml); }
+        renderStarterDocuments(starters).forEach((name, content) -> files.put("starters/" + name, content));
+        yaml = yamlCodec.renderConflictRules(rules);
+        if (yaml != null) { files.put("conflict-rules.yml", yaml); }
+        renderTemplates(templates).forEach((name, content) -> files.put("templates/" + name, content));
+        return files;
+    }
+
+    private record PendingImport(byte[] archive, Map<ConfigKind, Integer> versions, long expiresAt) { }
+    /** 单文件语义差异；action 为 ADD、UPDATE 或 DELETE，空正文表示不存在。 */
+    public record ImportChange(String path, String action, String before, String after) { }
+    /** 绑定归档与草稿版本向量的导入预览，expiresAt 为毫秒时间戳。 */
+    public record ImportPreview(String previewId, Map<ConfigKind, Integer> versions, long expiresAt,
+                                List<ImportChange> changes) { }
+
     // ==================== 导入 ====================
 
     /**
@@ -124,15 +251,13 @@ public class ConfigImportExportService {
      * @param archive  上传的归档输入流
      * @param operator 操作人（同时作为草稿乐观锁行的修改人）
      * @param ifMatch  可选的整体乐观锁期望版本（任一 kind 不匹配即拒；{@code null} = 按当前版本推进）
-     * <p><b>事务与留痕</b>：{@code noRollbackFor = BusinessException.class} —— 业务失败（归档非法 /
-     * 校验失败 / 乐观锁冲突）时草稿写操作本就在校验之后，失败即整体回滚不污染草稿；
-     * 而失败审计必须提交，否则运维在管理端看不到任何导入失败痕迹（与发布失败同策略）。
-     * 非业务异常（如运行时故障）仍整体回滚，不做留痕。
+     * <p>业务失败也整体回滚，包括先前模块的版本推进；失败审计经独立事务保存。
+     * 管理界面使用 previewImport/applyPreview 携带完整版本向量，本入口保留旧客户端兼容。
      *
      * @return 导入结果（各 kind 写入行数 + 规模摘要）
      * @throws BusinessException 归档非法（4008）/ 校验失败（4009）/ 乐观锁冲突（4003）
      */
-    @Transactional(noRollbackFor = BusinessException.class)
+    @Transactional
     public ImportResult importArchive(InputStream archive, String operator, Integer ifMatch) {
         if (operator == null || operator.isBlank()) {
             throw new BusinessException(ErrorCode.CONFIG_IMPORT_VALIDATION_FAILED, "缺少必需字段: operator");
@@ -177,8 +302,8 @@ public class ConfigImportExportService {
             log.info("配置归档已导入: operator={}, rows={}, {}", operator, rows, describe);
             return new ImportResult(rows, versions, describe);
         } catch (BusinessException e) {
-            // 失败留痕（与发布失败同策略）：明细供管理端排查；事务内不触碰草稿
-            repository.insertAudit(ACTION_IMPORT_FAILED, null, operator,
+            // 独立审计事务保留失败证据，外层导入事务回滚内容与版本。
+            failedAudit(ACTION_IMPORT_FAILED, operator,
                     "配置导入失败: " + e.getMessage());
             throw e;
         }

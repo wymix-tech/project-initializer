@@ -102,11 +102,11 @@ describe('starterConfigWizard 分步校验', () => {
     expect(wizard.canNext).toBe(false)
   })
 
-  it('id 与清单重复时报错', () => {
+  it('同 ID 允许按明确作用域替换', () => {
     const wizard = useStarterConfigWizardStore()
     wizard.existingIds = ['web', 'data-jpa']
     wizard.form.id = 'web'
-    expect(wizard.stepErrors.id).toContain('已存在')
+    expect(wizard.stepErrors.id).toBeUndefined()
   })
 
   it('合法 id 且依赖完整时可下一步', () => {
@@ -764,7 +764,7 @@ describe('starterConfigWizard stepErrors 边界', () => {
     wizard.form.id = '  web  '
     wizard.form.description = 'd'
     wizard.step = 1
-    expect(wizard.stepErrors.id).toContain('已存在')
+    expect(wizard.stepErrors.id).toBeUndefined()
   })
 
   it('步骤 1 时不检查依赖校验', () => {
@@ -878,13 +878,13 @@ describe('starterConfigWizard stepErrors 边界', () => {
 })
 
 describe('starterConfigWizard id 清单查重', () => {
-  it('清单中存在同名 id 即报重复', () => {
+  it('同名 ID 不再阻止版本条目保存', () => {
     const wizard = useStarterConfigWizardStore()
     wizard.existingIds = ['webflux']
     wizard.form.id = 'web'
     expect(wizard.stepErrors.id).toBeUndefined()
     wizard.form.id = 'webflux'
-    expect(wizard.stepErrors.id).toContain('已存在')
+    expect(wizard.stepErrors.id).toBeUndefined()
   })
 
   it('id 在清单中不存在时不报错', () => {
@@ -904,7 +904,7 @@ describe('starterConfigWizard id 清单查重', () => {
     const wizard = useStarterConfigWizardStore()
     wizard.existingIds = ['web']
     wizard.form.id = '  web  '
-    expect(wizard.stepErrors.id).toContain('已存在')
+    expect(wizard.stepErrors.id).toBeUndefined()
   })
 })
 
@@ -1000,5 +1000,33 @@ describe('toStarterDto 与 findUnknownPlaceholders 纯函数', () => {
 
   it('无占位符时返回空数组', () => {
     expect(findUnknownPlaceholders(emptyStarterConfigForm())).toEqual([])
+  })
+})
+
+describe('跨 Boot 保存回归', () => {
+  it('替换 3.x 时保留 2.x 和全局条目', async () => {
+    const w = useStarterConfigWizardStore()
+    fillValidForm(w)
+    w.form.bootVersions = ['3.x']
+    const global = { ...emptyStarterDto(), id: 'web', description: 'global' }
+    const boot2 = { ...emptyStarterDto(), id: 'web', bootVersions: ['2.x'] }
+    fetchMock.mockResolvedValueOnce(ok(catalogView([global, boot2,
+      { ...emptyStarterDto(), id: 'web', bootVersions: ['3.x'], sort: 2 },
+    ])))
+    const merged = await w.mergeIntoCatalog()
+    expect(merged).toHaveLength(3)
+    expect(merged).toContainEqual(global)
+    expect(merged).toContainEqual(boot2)
+    expect(merged[2].sort).toBe(2)
+  })
+  it('部分重叠范围拒绝且不写后端', async () => {
+    const w = useStarterConfigWizardStore()
+    fillValidForm(w)
+    w.form.bootVersions = ['3.x']
+    fetchMock.mockResolvedValueOnce(ok(catalogView([
+      { ...emptyStarterDto(), id: 'web', bootVersions: ['2.x', '3.x'] },
+    ])))
+    await expect(w.mergeIntoCatalog()).rejects.toThrow('部分重叠')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

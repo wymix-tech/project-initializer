@@ -143,3 +143,18 @@ describe('StarterConfigStepPreview 复制功能', () => {
     expect(useStarterConfigWizardStore().messageType).toBe('error')
   })
 })
+
+describe('向导与管理会话集成', () => {
+  it('从组件属性注入 token 与当前操作人，并随属性变化更新', async () => {
+    const wrapper = mount(StarterConfigWizard, { props: { token: 'session-token', operator: 'reviewer' } })
+    await settle()
+    const wizard = useStarterConfigWizardStore()
+    expect(wizard.token).toBe('session-token')
+    expect(wizard.operator).toBe('reviewer')
+    expect(fetchMock.mock.calls.some(([, init]) => init.headers['X-Admin-Token'] === 'session-token')).toBe(true)
+    await wrapper.setProps({ token: 'renewed-token', operator: 'another-reviewer' })
+    await settle()
+    expect(wizard.token).toBe('renewed-token')
+    expect(wizard.operator).toBe('another-reviewer')
+  })
+})

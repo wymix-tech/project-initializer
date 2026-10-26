@@ -12,5 +12,9 @@
 ## 快速启动
 
 ```bash
+<#if (buildTool!"maven") == "gradle">
+gradle bootRun
+<#else>
 mvn spring-boot:run
+</#if>
 ```

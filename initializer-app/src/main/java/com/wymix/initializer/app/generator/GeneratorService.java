@@ -81,8 +81,10 @@ public class GeneratorService {
      */
     public void generate(GenerateRequest request, OutputStream out) {
         preValidate(request);
-        validateConflicts(request);
-        ProjectGenerator generator = generatorFor(request);
+        CatalogSnapshot snapshot = snapshotHolder.current();
+        ProjectGenerator generator = generatorFor(request, snapshot);
+        request = generator.withRequiredStarters(request);
+        validateConflicts(request, snapshot);
         // T5：模板集为 DB 唯一数据源，「缺模板」必须在渲染任何字节之前以明确明细失败
         generator.validate(request);
         generator.generate(request, out);
@@ -115,8 +117,7 @@ public class GeneratorService {
      * @param request 生成请求
      * @throws BusinessException 命中冲突规则（错误码 {@link ErrorCode#DEPENDENCY_CONFLICT}）
      */
-    private void validateConflicts(GenerateRequest request) {
-        CatalogSnapshot snapshot = snapshotHolder.current();
+    private void validateConflicts(GenerateRequest request, CatalogSnapshot snapshot) {
         if (snapshot == null || snapshot.conflictCatalog().size() == 0) {
             return;
         }
@@ -146,8 +147,7 @@ public class GeneratorService {
      * @param request 生成请求（构建工具决定双轨渲染实现）
      * @return 本次请求使用的生成引擎
      */
-    private ProjectGenerator generatorFor(GenerateRequest request) {
-        CatalogSnapshot snapshot = snapshotHolder.current();
+    private ProjectGenerator generatorFor(GenerateRequest request, CatalogSnapshot snapshot) {
         // 兜底条件：仅快照未播种才回退启动期单例；快照存在即以其清单/模板集为准
         if (snapshot == null) {
             return fallbackGenerator;

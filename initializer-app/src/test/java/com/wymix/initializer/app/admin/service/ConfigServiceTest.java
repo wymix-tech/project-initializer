@@ -74,6 +74,8 @@ class ConfigServiceTest {
         repository.clearDraftKind(com.wymix.initializer.app.admin.entity.ConfigKind.STARTER_SYNC);
         repository.clearDraftKind(com.wymix.initializer.app.admin.entity.ConfigKind.CONFLICT_RULE);
         repository.clearDraftKind(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE);
+        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE,
+                com.wymix.initializer.app.generator.TestTemplates.templateYaml(), null, "tester");
     }
 
     @Autowired
@@ -81,6 +83,14 @@ class ConfigServiceTest {
 
     @Autowired
     private ConfigRepository repository;
+    @Autowired
+    private StructuredDraftService structuredDraftService;
+
+    private void saveReadme(String content) {
+        structuredDraftService.saveTemplate(
+                new com.wymix.initializer.app.admin.dto.CatalogDtos.TemplateUpsertRequest(
+                        "README.md.ftl", content, "tester", null), null);
+    }
 
     @Test
     void getDraft_kindWithoutRows_returnsEmptyContent() {
@@ -117,7 +127,7 @@ class ConfigServiceTest {
         configService.getDraft(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE);
         assertThatThrownBy(() -> configService.saveDraft(
                         com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE,
-                        "x: 1", 5, "tester"))
+                        "x: 1", Integer.MAX_VALUE, "tester"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONFIG_CONCURRENT_MODIFY));
     }
@@ -154,11 +164,10 @@ class ConfigServiceTest {
     @Test
     void publish_withTemplateDraft_templateOverridesHotSwap() {
         saveValidDrafts();
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE,
-                "name: README.md.ftl\ncontent: |\n  # 自定义产物说明\n", null, "tester");
+        saveReadme("# 自定义产物说明\n");
         PublishResult result = configService.publish("tester", "模板覆盖发布");
 
-        assertThat(result.templateOverrideCount()).isEqualTo(1);
+        assertThat(result.templateOverrideCount()).isEqualTo(6);
         assertThat(result.conflictRuleCount()).isZero();
         assertThat(snapshotHolder.current().templateOverrides()).containsKey("README.md.ftl");
     }
@@ -185,17 +194,16 @@ class ConfigServiceTest {
         long v1 = configService.publish("tester", "v1").releaseId();
 
         // 第二版：加模板覆盖
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE,
-                "name: README.md.ftl\ncontent: |\n  # v2 自定义\n", null, "tester");
+        saveReadme("# v2 自定义\n");
         PublishResult v2 = configService.publish("tester", "v2");
         assertThat(snapshotHolder.current().templateOverrides()).isNotEmpty();
 
-        // 回滚到 v1 → 模板覆盖清空，metadata 保留
+        // 回滚到 v1 → 基础模板恢复，metadata 保留
         PublishResult rolled = configService.rollback(v1, "tester");
         assertThat(rolled.releaseId()).isPositive().isNotEqualTo(v1);
-        assertThat(rolled.templateOverrideCount()).isZero();
+        assertThat(rolled.templateOverrideCount()).isEqualTo(6);
         CatalogSnapshot after = snapshotHolder.current();
-        assertThat(after.templateOverrides()).isEmpty();
+        assertThat(after.templateOverrides()).hasSize(6);
         assertThat(after.metadataCatalog().javaVersions()).hasSize(1);
 
         // 审计留痕
@@ -307,15 +315,14 @@ class ConfigServiceTest {
         long v1 = configService.publish("tester", "v1").releaseId();
 
         // 在 v1 结构行里补一个模板（模拟「快照行即历史真相」，YAML 全文已不存于 config_release）
-        configService.saveDraft(com.wymix.initializer.app.admin.entity.ConfigKind.TEMPLATE,
-                "name: README.md.ftl\ncontent: |\n  # v2\n", null, "tester");
+        saveReadme("# v2\n");
         configService.publish("tester", "v2");
         assertThat(snapshotHolder.current().templateOverrides()).isNotEmpty();
 
-        // 回滚到 v1：模板集合回到空（从 v1 的 cfg_template 行装配，而非任何 YAML）
+        // 回滚到 v1：模板集合恢复为基础模板（从 v1 的 cfg_template 行装配，而非任何 YAML）
         PublishResult rolled = configService.rollback(v1, "tester");
-        assertThat(rolled.templateOverrideCount()).isZero();
-        assertThat(snapshotHolder.current().templateOverrides()).isEmpty();
+        assertThat(rolled.templateOverrideCount()).isEqualTo(6);
+        assertThat(snapshotHolder.current().templateOverrides()).hasSize(6);
         assertThat(snapshotHolder.current().starterCatalog().entry("web")).isNotNull();
     }
 

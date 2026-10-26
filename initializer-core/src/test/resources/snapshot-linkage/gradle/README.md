@@ -12,5 +12,5 @@
 ## 快速启动
 
 ```bash
-mvn spring-boot:run
+gradle bootRun
 ```

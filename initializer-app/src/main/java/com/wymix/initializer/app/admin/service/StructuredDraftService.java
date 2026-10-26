@@ -287,6 +287,21 @@ public class StructuredDraftService {
         return write(kind, snapshot, ifMatch, request.operator(), summary);
     }
 
+    /**
+     * 在同步写入的同一工作区锁内重新校验手工优先，避免拉取期间新增的手工条目被覆盖。
+     * @param request 全来源合并后的同步条目
+     * @return 同步草稿保存结果
+     */
+    @Transactional
+    public DraftSaveResult saveSyncedStarters(StarterCatalogUpsertRequest request) {
+        repository.lockDraftWorkspace();
+        Set<String> manualIds = readStarters(ConfigKind.STARTER).stream()
+                .map(StarterDto::id).collect(java.util.stream.Collectors.toSet());
+        List<StarterUpsertDto> filtered = request.starters().stream()
+                .filter(dto -> !manualIds.contains(dto.id())).toList();
+        return saveStarters(new StarterCatalogUpsertRequest(filtered, request.operator()), null, ConfigKind.STARTER_SYNC);
+    }
+
     // ==================== 冲突规则 ====================
 
     /**
@@ -649,12 +664,15 @@ public class StructuredDraftService {
         StructuredSnapshot snapshot = StructuredSnapshot.empty(ConfigRepository.DRAFT_RELEASE_ID);
         long placeholderPk = 0L;
         int sort = 0;
-        Set<String> ids = new LinkedHashSet<>();
-        Map<String, CfgStarterEntity> byId = new LinkedHashMap<>();
+        var identities = new com.wymix.initializer.app.admin.repository.StarterScopeIndex();
         for (StarterUpsertDto dto : dtos) {
             String id = requireText(dto.id(), "starters[].id");
-            if (!ids.add(id)) {
-                throw invalid("starter ID 重复: " + id);
+            List<String> scope = nullSafe(dto.bootVersions()).stream()
+                    .map(boot -> requireText(boot, "starters[].bootVersions[]")).distinct().toList();
+            try {
+                identities.add(id, scope);
+            } catch (IllegalArgumentException e) {
+                throw invalid(e.getMessage());
             }
             CfgStarterEntity row = new CfgStarterEntity();
             // 显式占位主键（负数区间）：子行父键据此定位父行，由仓库层写入期换算
@@ -670,11 +688,12 @@ public class StructuredDraftService {
             row.setSort(dto.sort() == null ? sort : dto.sort());
             sort++;
             snapshot.starters().add(row);
-            byId.put(id, row);
         }
         long groupPlaceholderPk = 0L;
+        int entryIndex = 0;
         for (StarterUpsertDto dto : dtos) {
-            CfgStarterEntity starterRow = byId.get(dto.id());
+            // Business IDs may repeat across Boot scopes; children belong to the exact entry row.
+            CfgStarterEntity starterRow = snapshot.starters().get(entryIndex++);
             int childSort = 0;
             for (DependencyDto dep : nullSafe(dto.dependencies())) {
                 CfgStarterDependencyEntity row = new CfgStarterDependencyEntity();

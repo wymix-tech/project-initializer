@@ -32,14 +32,14 @@ import java.util.Scanner;
  * <p>fixture 格式：多文档 YAML，每文档一个 {@code SyncedStarter} 同构映射
  * （id / category / description / groupId / artifactId / version）。
  *
- * <p>装配开关：{@code initializer.sync.mock.enabled}（默认 true），测试可通过置 false
+ * <p>装配开关：{@code initializer.sync.mock.enabled}（默认 false），仅演示或测试显式置 true；可置 false
  * 排除 Mock 通道。
  *
  * <p>线程安全性：无状态单例（每次调用独立读取资源），线程安全。
  */
 @Component
 @ConditionalOnProperty(prefix = "initializer.sync.mock", name = "enabled",
-        havingValue = "true", matchIfMissing = true)
+        havingValue = "true", matchIfMissing = false)
 public class MockCatalogSyncProvider implements CatalogSyncProvider {
 
     /** Mock provider 来源标识。 */
