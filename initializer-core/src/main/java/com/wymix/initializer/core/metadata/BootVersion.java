@@ -36,10 +36,16 @@ public record BootVersion(String id, String label, boolean official, List<String
         this(id, label, official, supportedJavaVersions, starters, null);
     }
 
-    /** Custom Maven parents require an independently verified Gradle model before enabling Gradle. */
+    /**
+     * 该 Boot 版本支持的构建工具。
+     *
+     * <p>Maven 走 {@code <parent>} 继承；Gradle 无 parent 概念，由 Spring Boot 插件 +
+     * dependency-management 插件复刻版本管理，自定义框架父 POM 时额外导入其 BOM（见 build.gradle.ftl）。
+     *
+     * @return 受支持的构建工具 id（{@code maven} / {@code gradle}）
+     */
     public List<String> supportedBuildTools() {
-        return frameworkParent == null || frameworkParent.equals(FrameworkParent.defaultSpringBootParent(id))
-                ? List.of("maven", "gradle") : List.of("maven");
+        return List.of("maven", "gradle");
     }
 
     /** @return 该 Boot 版本是否支持指定 Java 版本 */
