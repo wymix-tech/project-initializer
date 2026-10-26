@@ -104,8 +104,8 @@ function mutexTitle(starter: { id: string }): string {
             title="已选组件需要你在可选项中最少勾选一项"
           >*</span>
           <span class="starter-info">
-            <span class="starter-label">{{ st.label || st.id }}</span>
-            <span v-if="st.label && st.label !== st.id" class="starter-id">{{ st.id }}</span>
+            <span class="starter-id">{{ st.id }}</span>
+            <span v-if="st.label && st.label !== st.id" class="starter-label">{{ st.label }}</span>
             <span v-if="st.description && st.description !== st.label" class="starter-desc">{{ st.description }}</span>
           </span>
           <span v-if="st.required" class="required-tag" title="框架必选依赖，不可取消">必选</span>
@@ -152,8 +152,8 @@ function mutexTitle(starter: { id: string }): string {
 .starter:hover { background: #f7faf8; border-color: #a3bfad; }
 .starter.checked { border-color: #8cbaa0; background: #f0f8f3; }
 .starter-info { display: flex; flex-direction: column; gap: 4px; flex: 1 1 150px; min-width: 0; overflow-wrap: anywhere; }
-.starter-label { font-size: 13px; font-weight: 600; line-height: 1.5; }
-.starter-id { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.starter-id { font-size: 13px; font-weight: 600; line-height: 1.5; }
+.starter-label { color: var(--muted); font-size: 12px; line-height: 1.65; }
 .starter-desc { color: var(--muted); font-size: 12px; line-height: 1.65; }
 .starter input[type='checkbox'] { flex-shrink: 0; }
 .starter.required, .starter.locked { cursor: default; }
