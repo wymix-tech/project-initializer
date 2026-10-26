@@ -292,3 +292,39 @@ test('目录内 YAML 模板可在浏览器编辑和删除', async ({ page, reque
   await expect(page.locator('.admin-msg')).toContainText('模板已删除')
   expect((await json(request, 'templates')).templates.some((t: { name: string }) => t.name === name)).toBeFalsy()
 })
+
+test('依赖已选筛选与键盘恢复不丢失选择', async ({ page }) => {
+  await project(page)
+  const item = page.locator('.starter').filter({ has: page.locator('.starter-id', { hasText: /^web$/ }) })
+  await item.locator('input').check()
+  const filter = page.getByRole('button', { name: '仅看已选', exact: true })
+  await filter.focus()
+  await page.keyboard.press('Space')
+  await expect(filter).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('.starter')).toHaveCount(1)
+  await expect(item.locator('input')).toBeChecked()
+  // The row disappears immediately in selected-only mode; assert the resulting empty state.
+  await item.locator('input').click()
+  await expect(page.locator('.starter-empty')).toContainText('取消「仅看已选」')
+  await filter.click()
+  await expect(page.locator('.starter')).toHaveCount(5)
+  await expect(item.locator('input')).not.toBeChecked()
+})
+
+test('小屏生成与后台各分区不产生页面横向溢出，Enter 可登录', async ({ page }, info) => {
+  for (const width of [768, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 })
+    await project(page)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBeTruthy()
+    await page.screenshot({ path: info.outputPath(`wizard-${width}.png`), fullPage: true })
+    await page.getByRole('button', { name: '管理后台', exact: true }).click()
+    await page.locator('.admin-token').fill(headers['X-Admin-Token'])
+    await page.locator('.admin-token').press('Enter')
+    await expect(page.locator('.admin-nav')).toBeVisible()
+    for (const label of ['发布台', '元数据', 'starter 清单', '冲突规则', '模板', '导入导出']) {
+      await page.locator('.nav-item').filter({ hasText: label }).click()
+      await expect(page.locator('.admin-main .card').first()).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width}px ${label}`).toBeTruthy()
+    }
+  }
+})

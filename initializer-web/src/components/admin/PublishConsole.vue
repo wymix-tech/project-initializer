@@ -99,8 +99,8 @@ defineExpose({ refresh })
       <div>
         <h3>发布台</h3>
         <p class="hint">
-          发布 = 全量校验 → 快照构建 → 原子切换（四类草稿一起生效）；校验失败返回 4002 逐条明细，
-          旧快照继续服务。预检包含引用与样例试渲染，不执行外部依赖构建；回滚使用相同预检。
+          保存的草稿将在发布后统一生效。系统会先校验配置与模板，校验失败时保留当前版本。
+          如需恢复旧配置，可从发布历史中回滚。
         </p>
       </div>
       <div class="card-actions">
@@ -120,7 +120,7 @@ defineExpose({ refresh })
     <div class="history-grid">
       <div>
         <h4>发布历史</h4>
-        <ul class="list">
+        <ul class="list" tabindex="0" aria-label="发布历史">
           <li v-for="r in releases" :key="r.id">
             <span>#{{ r.id }} {{ r.releasedAt ?? '' }} {{ r.releasedBy ?? '' }} {{ r.remark ?? '' }}</span>
             <button type="button" class="btn btn-sm" :disabled="session.busy.value" @click="rollback(r.id)">
@@ -132,7 +132,7 @@ defineExpose({ refresh })
       </div>
       <div>
         <h4>审计日志</h4>
-        <ul class="list">
+        <ul class="list" tabindex="0" aria-label="审计日志">
           <li v-for="a in audits" :key="a.id">
             <span>{{ a.createdAt ?? '' }} [{{ a.action }}] {{ a.operator ?? '' }}：{{ a.detail ?? '' }}</span>
           </li>
@@ -149,11 +149,14 @@ defineExpose({ refresh })
 .remark { margin: 14px 0 6px; }
 .remark input { padding: 6px 8px; border: 1px solid #d0d7de; border-radius: 4px; font-size: 13px; }
 .history-grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
-@media (min-width: 900px) { .history-grid { grid-template-columns: 1fr 1fr; } }
-.list { list-style: none; padding: 0; display: grid; gap: 6px; font-size: 13px; margin: 0; }
+@media (min-width: 900px) { .history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.history-grid > div { min-width: 0; }
+.list { max-height: 520px; overflow-y: auto; scrollbar-width: thin; list-style: none; padding: 0; display: grid; gap: 6px; font-size: 13px; margin: 0; }
 .list li {
   padding: 6px 10px; border: 1px solid #d0d7de; border-radius: 6px;
   display: flex; justify-content: space-between; gap: 8px; align-items: center;
 }
+.list li > span { min-width: 0; overflow-wrap: anywhere; line-height: 1.7; }
+.list .btn { flex-shrink: 0; white-space: nowrap; }
 .list li.empty { display: block; }
 </style>

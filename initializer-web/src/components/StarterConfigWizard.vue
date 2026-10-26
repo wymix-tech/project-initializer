@@ -110,10 +110,10 @@ async function publish(): Promise<void> {
 </template>
 
 <style scoped>
-.scw { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 20px; }
-.scw-steps { display: flex; list-style: none; padding: 0; gap: 8px; flex-wrap: wrap; }
-.scw-step { display: flex; align-items: center; gap: 6px; color: #57606a; font-size: 13px; }
-.scw-step.active { color: #0969da; font-weight: 600; }
+.scw { background: #fff; border: 1px solid #d0d7de; border-radius: 14px; padding: 24px; min-width: 0; }
+.scw-steps { display: flex; background: #f4f7f5; border-radius: 10px; padding: 12px; list-style: none; gap: 8px; flex-wrap: wrap; }
+.scw-step { display: flex; flex: 1 1 120px; min-height: 34px; align-items: center; gap: 6px; color: #57606a; font-size: 13px; }
+.scw-step.active { color: var(--accent); font-weight: 600; }
 .scw-step.done { color: #1a7f37; }
 .scw-step-idx {
   width: 22px; height: 22px; border-radius: 50%;
@@ -128,5 +128,5 @@ async function publish(): Promise<void> {
 .scw-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #d0d7de; background: #f6f8fa; cursor: pointer; font-size: 14px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-primary { background: #0969da; border-color: #0969da; color: #fff; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 </style>

@@ -47,12 +47,14 @@ onBeforeUnmount(() => {
       <div class="field-control">
         <input
           id="meta-group"
+          :aria-invalid="!!wizard.validationErrors.group"
+          :aria-describedby="wizard.validationErrors.group ? 'meta-group-error' : undefined"
           :value="wizard.meta.group"
           type="text"
           placeholder="com.example"
           @input="onInput('group', $event)"
         />
-        <p v-if="wizard.validationErrors.group" class="field-error">{{ wizard.validationErrors.group }}</p>
+        <p v-if="wizard.validationErrors.group" id="meta-group-error" class="field-error">{{ wizard.validationErrors.group }}</p>
       </div>
     </div>
     <div class="field">
@@ -60,12 +62,14 @@ onBeforeUnmount(() => {
       <div class="field-control">
         <input
           id="meta-artifact"
+          :aria-invalid="!!wizard.validationErrors.artifact"
+          :aria-describedby="wizard.validationErrors.artifact ? 'meta-artifact-error' : undefined"
           :value="wizard.meta.artifact"
           type="text"
           placeholder="demo-app"
           @input="onInput('artifact', $event)"
         />
-        <p v-if="wizard.validationErrors.artifact" class="field-error">{{ wizard.validationErrors.artifact }}</p>
+        <p v-if="wizard.validationErrors.artifact" id="meta-artifact-error" class="field-error">{{ wizard.validationErrors.artifact }}</p>
       </div>
     </div>
     <div class="field">
@@ -73,12 +77,14 @@ onBeforeUnmount(() => {
       <div class="field-control">
         <input
           id="meta-package"
+          :aria-invalid="!!wizard.validationErrors.packageName"
+          :aria-describedby="wizard.validationErrors.packageName ? 'meta-package-error' : undefined"
           :value="wizard.meta.packageName"
           type="text"
           placeholder="com.example.demoapp"
           @input="onPackageInput"
         />
-        <p v-if="wizard.validationErrors.packageName" class="field-error">
+        <p v-if="wizard.validationErrors.packageName" id="meta-package-error" class="field-error">
           {{ wizard.validationErrors.packageName }}
         </p>
         <p v-else class="field-hint">由 Group + Artifact 自动推导，可修改</p>
@@ -89,11 +95,11 @@ onBeforeUnmount(() => {
       <div class="field-control">
         <div class="radio-row">
           <label class="radio" for="build-tool-maven">
-            <input id="build-tool-maven" type="radio" value="maven" v-model="wizard.meta.buildTool" />
+            <input id="build-tool-maven" type="radio" name="build-tool" value="maven" v-model="wizard.meta.buildTool" />
             Maven
           </label>
           <label class="radio" for="build-tool-gradle">
-            <input id="build-tool-gradle" type="radio" value="gradle" v-model="wizard.meta.buildTool" :disabled="!wizard.supportedBuildTools.includes('gradle')" />
+            <input id="build-tool-gradle" type="radio" name="build-tool" value="gradle" v-model="wizard.meta.buildTool" :disabled="!wizard.supportedBuildTools.includes('gradle')" />
             Gradle<span v-if="!wizard.supportedBuildTools.includes('gradle')">（该框架暂未支持）</span>
           </label>
         </div>
@@ -103,33 +109,18 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.section-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; }
-.field {
-  display: grid;
-  grid-template-columns: 132px 1fr;
-  align-items: start;
-  gap: 0 16px;
-  margin-bottom: 16px;
-}
-.field > label { font-size: 13px; color: #424a53; line-height: 32px; }
-.field-control { display: flex; flex-direction: column; }
-.field input[type='text'] {
-  border: none;
-  border-bottom: 1px solid #3d434b;
-  border-radius: 0;
-  padding: 6px 2px;
-  font-size: 14px;
-  background: transparent;
-  outline: none;
-}
-.field input[type='text']:focus { border-bottom-color: #6db33f; }
-.field input[type='text']::placeholder { color: #b0b6bd; }
-.radio-row { display: flex; gap: 20px; line-height: 32px; }
-.radio { display: flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
-.radio input { accent-color: #6db33f; }
-.field-error { color: #cf222e; font-size: 12px; margin-top: 4px; }
-.field-hint { color: #8b949e; font-size: 12px; margin-top: 4px; }
-@media (max-width: 560px) {
-  .field { grid-template-columns: 1fr; }
-}
+.section-title { font-size: 13px; font-weight: 600; margin-bottom: 18px; }
+.field { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: start; gap: 10px; margin-bottom: 18px; }
+.field:last-child { margin-bottom: 0; }
+.field > label { font-size: 13px; color: #52675b; line-height: 42px; }
+.field-control { display: flex; flex-direction: column; min-width: 0; }
+.field input[type='text'] { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; font-size: 13px; background: #fcfdfc; color: #21342e; }
+.field input[type='text']:focus { border-color: var(--accent); background: white; }
+.field input[type='text']::placeholder { color: #8a9b90; }
+.radio-row { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 0; }
+.radio { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; cursor: pointer; }
+.radio:has(input:disabled) { color: var(--muted); cursor: not-allowed; }
+.field-error { color: #b32937; font-size: 12px; margin-top: 6px; line-height: 1.6; }
+.field-hint { color: var(--muted); font-size: 11px; margin-top: 7px; line-height: 1.6; }
+@media (max-width: 480px) { .field { grid-template-columns: 1fr; gap: 5px; } .field > label { line-height: 1.8; } }
 </style>

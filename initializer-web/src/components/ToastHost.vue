@@ -21,7 +21,7 @@ const { toasts, dismiss } = useToast()
 <style scoped>
 .toast-host {
   position: fixed;
-  top: 16px;
+  top: 92px;
   right: 16px;
   display: flex;
   flex-direction: column;
@@ -34,8 +34,8 @@ const { toasts, dismiss } = useToast()
   color: #fff;
   font-size: 14px;
   cursor: pointer;
-  max-width: 360px;
+  max-width: min(360px, calc(100vw - 32px)); overflow-wrap: anywhere; box-shadow: 0 8px 24px #21342e20;
 }
-.toast-info { background: #0969da; }
+.toast-info { background: var(--accent); }
 .toast-error { background: #cf222e; }
 </style>
