@@ -284,6 +284,34 @@ public class AdminApiController {
         return deleteTemplate(name, ifMatch, operator);
     }
 
+    /**
+     * 恢复内置构建脚本模板：把该模板的草稿内容重写为平台内置版本。
+     * @param name 内置模板名（pom.xml.ftl / build.gradle.ftl / settings.gradle.ftl）
+     * @param ifMatch 草稿版本
+     * @param operator 操作人
+     * @return 保存结果
+     */
+    @PostMapping("/template/restore")
+    public DraftSaveResult restoreTemplateByName(@RequestParam("name") String name,
+            @RequestHeader(value = IF_MATCH_HEADER, required = false) Integer ifMatch,
+            @RequestParam("operator") String operator) {
+        return structuredDraftService.restoreTemplate(name, operator, ifMatch);
+    }
+
+    /**
+     * 恢复内置构建脚本模板（路径变量版本），语义同 {@code ?name=} 版本。
+     * @param name 内置模板名
+     * @param ifMatch 草稿版本
+     * @param operator 操作人
+     * @return 保存结果
+     */
+    @PostMapping("/templates/{name}/restore")
+    public DraftSaveResult restoreTemplate(@PathVariable("name") String name,
+            @RequestHeader(value = IF_MATCH_HEADER, required = false) Integer ifMatch,
+            @RequestParam("operator") String operator) {
+        return structuredDraftService.restoreTemplate(name, operator, ifMatch);
+    }
+
     // ==================== 导入导出（T4） ====================
 
     /**

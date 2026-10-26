@@ -168,7 +168,8 @@ class CatalogSnapshotBootstrapTest {
 
     @Test
     void seed_withReleaseProvidingTemplates_prefersDbTemplates() throws Exception {
-        // T2/T5 交叉：非 demo 起步时，快照模板集**只**来自 DB 发布快照（无 classpath 兜底）
+        // T2/T5 交叉：非 demo 起步时，快照模板集来自 DB 发布快照；
+        // DB 已有的同名构建脚本优先，缺失的构建脚本由平台内置兜底
         for (ConfigKind kind : ConfigKind.values()) {
             repository.clearDraftKind(kind);
         }
@@ -184,7 +185,9 @@ class CatalogSnapshotBootstrapTest {
 
         CatalogSnapshot snapshot = snapshotHolder.current();
         assertThat(snapshot).isNotNull();
-        assertThat(snapshot.templateOverrides()).containsOnlyKeys("pom.xml.ftl");
+        assertThat(snapshot.templateOverrides())
+                .containsOnlyKeys("pom.xml.ftl", "build.gradle.ftl", "settings.gradle.ftl");
+        // DB 覆盖优先于平台内置版本
         assertThat(snapshot.templateOverrides().get("pom.xml.ftl")).contains("db-only");
 
         repository.deleteScope(releaseId);

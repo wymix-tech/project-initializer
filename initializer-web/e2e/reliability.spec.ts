@@ -105,14 +105,25 @@ test('发布备注与操作人通过 UI 写入真实发布历史', async ({ page
   expect(releases[0]).toMatchObject({ releasedBy: 'e2e-reviewer', remark: 'E2E 发布备注：中文与符号 #42' })
 })
 
-test('缺核心模板时 UI 发布失败且已发布版本仍可生成', async ({ page, request }) => {
-  const before = await json(request, 'releases')
+test('内置构建脚本不可删除，可覆盖后可恢复为平台内置版本', async ({ page, request }) => {
+  // 删除内置构建脚本被拒绝
   const response = await request.delete('/api/admin/templates/pom.xml.ftl?operator=e2e', { headers })
-  expect(response.ok()).toBeTruthy()
+  expect(response.status()).toBe(400)
+  expect((await response.json()).code).toBe(4002)
+
+  // 覆盖 + 恢复内置：内容回到平台版本
+  await request.put('/api/admin/templates/pom.xml.ftl', {
+    headers, data: { name: 'pom.xml.ftl', content: '<project>overridden</project>', operator: 'e2e' },
+  })
+  const restore = await request.post('/api/admin/template/restore?name=pom.xml.ftl&operator=e2e', { headers })
+  expect(restore.ok()).toBeTruthy()
+  const restored = await json(request, 'template?name=pom.xml.ftl')
+  expect(restored.content).toContain('<project')
+  expect(restored.content).not.toContain('overridden')
+
+  // 发布与生成链路正常
   await login(page)
   await page.getByRole('button', { name: '发布', exact: true }).click()
-  await expect(page.locator('.admin-msg')).toContainText('pom.xml.ftl')
-  expect((await json(request, 'releases')).length).toBe(before.length)
   await project(page, 'still-active')
   const event = page.waitForEvent('download')
   await page.getByRole('button', { name: '生成并下载' }).click()

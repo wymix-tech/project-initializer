@@ -6,6 +6,8 @@ import com.wymix.initializer.app.admin.refresh.CatalogSnapshotHolder;
 import com.wymix.initializer.app.admin.repository.ConfigRepository;
 import com.wymix.initializer.app.admin.sync.CatalogSyncService;
 import com.wymix.initializer.app.generator.TestTemplates;
+import com.wymix.initializer.app.admin.dto.CatalogDtos.TemplateUpsertRequest;
+import com.wymix.initializer.core.generator.BuiltInBuildTemplates;
 import com.wymix.initializer.core.sync.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,15 +61,52 @@ class ReliabilityRegressionTest {
                 k -> k, k -> repository.findDraftMeta(k).getVersion()));
     }
 
+    /** 模板集 YAML：仅含非构建脚本的基础模板（构建脚本交给平台内置兜底）。 */
+    private static String templateYamlWithoutBuildScripts() {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> entry : TestTemplates.load().entrySet()) {
+            String name = entry.getKey();
+            if (name.contains("starters/") || BuiltInBuildTemplates.isBuiltIn(name)) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append("---\n");
+            }
+            sb.append("name: \"").append(name).append("\"\n");
+            sb.append("content: |\n");
+            for (String line : entry.getValue().split("\n", -1)) {
+                sb.append("  ").append(line).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
     @Test
-    void missingCoreTemplateRejectsPublicationAndPreservesActiveRelease() {
-        config.publish("reviewer", "valid");
-        var old = holder.current();
-        config.saveDraft(ConfigKind.TEMPLATE, "name: README.md.ftl\ncontent: hello", null, "reviewer");
-        assertThatThrownBy(() -> config.publish("reviewer", "missing core"))
-                .hasMessageContaining("pom.xml.ftl");
-        assertThat(holder.current()).isSameAs(old);
-        assertThat(config.listAudits()).anyMatch(a -> a.getAction().equals("PUBLISH_FAILED"));
+    void missingBuiltInBuildScriptIsBackfilledFromPlatformTemplate() {
+        // 构建脚本是平台内置基线：草稿里没有也能发布，快照用内置内容补齐
+        config.saveDraft(ConfigKind.TEMPLATE, templateYamlWithoutBuildScripts(), null, "reviewer");
+        config.publish("reviewer", "backfilled");
+        Map<String, String> templates = holder.current().templateOverrides();
+        assertThat(templates).containsKeys("pom.xml.ftl", "build.gradle.ftl", "settings.gradle.ftl");
+        assertThat(templates.get("pom.xml.ftl")).contains("<project");
+        assertThat(templates.get("build.gradle.ftl")).contains("org.springframework.boot");
+    }
+
+    @Test
+    void builtInBuildScriptCannotBeDeletedButCanBeRestored() {
+        // 内置构建脚本不允许删除
+        assertThatThrownBy(() -> drafts.deleteTemplate("pom.xml.ftl", "reviewer", null))
+                .hasMessageContaining("不允许删除");
+
+        // 用户可保存为覆盖
+        drafts.saveTemplate(new TemplateUpsertRequest("pom.xml.ftl", "overridden", "reviewer", null), null);
+        assertThat(drafts.getTemplate("pom.xml.ftl").content()).isEqualTo("overridden");
+
+        // 恢复内置后回到平台版本（CLOB 不保证保留尾部换行，按 trim 比较）
+        drafts.restoreTemplate("pom.xml.ftl", "reviewer", null);
+        String restored = drafts.getTemplate("pom.xml.ftl").content();
+        assertThat(restored.trim()).isEqualTo(BuiltInBuildTemplates.contentOf("pom.xml.ftl").trim());
+        assertThat(restored).contains("<project");
     }
 
     @Test

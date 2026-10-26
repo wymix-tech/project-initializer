@@ -21,6 +21,7 @@ import com.wymix.initializer.app.admin.repository.ConfigRepository;
 import com.wymix.initializer.app.admin.repository.StructuredSnapshot;
 import com.wymix.initializer.core.conflict.ConflictCatalog;
 import com.wymix.initializer.core.conflict.ConflictRule;
+import com.wymix.initializer.core.generator.BuiltInBuildTemplates;
 import com.wymix.initializer.core.generator.TemplateRenderer;
 import com.wymix.initializer.core.metadata.BootVersion;
 import com.wymix.initializer.core.metadata.FrameworkParent;
@@ -373,6 +374,9 @@ public class StructuredCatalogAssembler {
                 throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED, e.getMessage(), e);
             }
         }
+        // 内置构建脚本兜底：快照缺失 pom.xml / build.gradle / settings.gradle 时用平台内置版本补齐；
+        // 库里已有的同名条目视为用户覆盖，优先级更高（不做覆盖）
+        BuiltInBuildTemplates.fillMissing(templates);
         return templates;
     }
 

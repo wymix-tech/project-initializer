@@ -349,6 +349,22 @@ export const adminStructuredApi = {
     )
     return handleStructured<DraftSaveResult>(res)
   },
+
+  /** 恢复内置构建脚本模板：把草稿内容重写为平台内置版本。 */
+  async restoreTemplate(
+    token: string,
+    name: string,
+    version: number | null,
+    operator = 'admin',
+  ): Promise<DraftSaveResult> {
+    const headers = adminHeaders(token)
+    if (version !== null) headers['If-Match'] = String(version)
+    const res = await fetch(
+      `/api/admin/template/restore?${queryString({ name, operator })}`,
+      { method: 'POST', headers },
+    )
+    return handleStructured<DraftSaveResult>(res)
+  },
 }
 
 /**
