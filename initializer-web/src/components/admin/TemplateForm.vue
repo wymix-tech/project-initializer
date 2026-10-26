@@ -73,6 +73,45 @@ function isYmlFragment(name: string): boolean {
   return !name.endsWith('.ftl')
 }
 
+/**
+ * 平台内置的构建脚本模板：生成链路的契约性骨架。
+ *
+ * 可保存为覆盖（优先于内置版本）、可恢复为内置版本，但不允许删除——
+ * 发布快照缺失时由平台内置内容兜底。
+ */
+const builtInBuildTemplates = ['pom.xml.ftl', 'build.gradle.ftl', 'settings.gradle.ftl']
+
+function isBuiltIn(name: string | null): boolean {
+  return name !== null && builtInBuildTemplates.includes(name)
+}
+
+/** 恢复内置：把当前内置构建脚本的草稿内容重写为平台内置版本。 */
+async function restoreBuiltIn(): Promise<void> {
+  if (selected.value === null || !isBuiltIn(selected.value)) return
+  if (!window.confirm(`确认将 ${selected.value} 恢复为平台内置版本？当前覆盖内容会被覆盖。`)) {
+    return
+  }
+  saving.value = true
+  const result = await props.session.run(
+    () =>
+      adminStructuredApi.restoreTemplate(
+        props.session.token.value,
+        selected.value as string,
+        version.value,
+        props.session.operator.value,
+      ),
+    '已恢复为平台内置版本',
+    '恢复内置失败',
+  )
+  if (result) {
+    version.value = result.version
+    summary.value = result.summary
+    await select(selected.value)
+    await load()
+  }
+  saving.value = false
+}
+
 /** 读取模板列表（不含 content）。 */
 async function load(): Promise<void> {
   loading.value = true
@@ -149,6 +188,10 @@ async function saveCurrent(): Promise<void> {
 /** 删除当前选中模板（保留其余模板）。 */
 async function removeCurrent(): Promise<void> {
   if (selected.value === null) return
+  if (isBuiltIn(selected.value)) {
+    window.alert('内置构建脚本模板不允许删除；如需还原为平台版本，请使用「恢复内置」。')
+    return
+  }
   if (!window.confirm(`确认删除模板 ${selected.value}？发布预检会拒绝缺失引用的配置。`)) {
     return
   }
@@ -188,8 +231,8 @@ defineExpose({ load })
       <div>
         <h3>生成模板</h3>
         <p class="hint">
-          模板集就是数据库里的这一份（T5 起为唯一数据源，运行时不再回退 classpath 内置模板）。
-          列表只取模板名与更新时间，全文按需加载。
+          模板集就是数据库里的这一份（T5 起为唯一数据源）。列表只取模板名与更新时间，全文按需加载。
+          构建脚本（pom.xml.ftl / build.gradle.ftl / settings.gradle.ftl）由平台内置兜底：可保存为覆盖、可恢复为内置，不允许删除。
         </p>
       </div>
       <div class="card-actions">
@@ -216,6 +259,7 @@ defineExpose({ load })
             @click="select(t.name)"
           >
             <code>{{ t.name }}</code>
+            <em v-if="isBuiltIn(t.name)" class="tag tag-builtin" title="平台内置构建脚本：可覆盖、可恢复，不允许删除">内置</em>
             <span class="tpl-meta">{{ t.updatedAt ?? '' }}</span>
           </li>
           <li v-if="!loading && templates.length === 0" class="empty">暂无模板</li>
@@ -235,7 +279,24 @@ defineExpose({ load })
             </span>
             <span class="editor-actions">
               <span v-if="dirty" class="dirty">有未保存修改</span>
-              <button type="button" class="btn btn-sm" :disabled="saving" @click="removeCurrent">删除</button>
+              <button
+                v-if="isBuiltIn(selected)"
+                type="button"
+                class="btn btn-sm"
+                :disabled="saving"
+                @click="restoreBuiltIn"
+              >
+                恢复内置
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm"
+                :disabled="saving || isBuiltIn(selected)"
+                :title="isBuiltIn(selected) ? '内置构建脚本模板不允许删除，可恢复为平台内置版本' : undefined"
+                @click="removeCurrent"
+              >
+                删除
+              </button>
               <button type="button" class="btn btn-primary btn-sm" :disabled="saving" @click="saveCurrent">
                 {{ saving ? '保存中…' : '保存模板' }}
               </button>
@@ -310,6 +371,7 @@ defineExpose({ load })
 .editor-actions { display: flex; gap: 8px; align-items: center; }
 .tag { font-style: normal; font-size: 11px; background: #fff8c5; border: 1px solid #d4a72c; color: #7d4e00; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
 .tag-ftl { background: #dafbe1; border-color: #aceebb; color: #1a7f37; }
+.tag-builtin { background: #ddf4ff; border-color: #b6e0ff; color: #0550ae; }
 .dirty { color: #9a6700; font-size: 12px; }
 .tpl-content {
   width: 100%; min-height: 320px; font-family: 'SFMono-Regular', Consolas, monospace;

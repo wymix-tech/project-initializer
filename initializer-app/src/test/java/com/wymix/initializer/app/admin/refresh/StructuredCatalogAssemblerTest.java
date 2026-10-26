@@ -142,11 +142,14 @@ class StructuredCatalogAssemblerTest {
     }
 
     @Test
-    void assemble_emptyDraft_producesEmptySnapshot() {
+    void assemble_emptyDraft_onlyBackfillsBuiltInBuildScripts() {
+        // 空草稿：目录与规则仍为空，构建脚本由平台内置兜底（不因缺失而拖垮生成）
         CatalogSnapshot snapshot = assembler.assemble(ConfigRepository.DRAFT_RELEASE_ID);
         assertThat(snapshot.metadataCatalog().javaVersions()).isEmpty();
         assertThat(snapshot.starterCatalog().size()).isZero();
-        assertThat(snapshot.templateOverrides()).isEmpty();
+        assertThat(snapshot.templateOverrides()).containsOnlyKeys(
+                "pom.xml.ftl", "build.gradle.ftl", "settings.gradle.ftl");
+        assertThat(snapshot.templateOverrides().get("pom.xml.ftl")).contains("<project");
         assertThat(snapshot.conflictCatalog().size()).isZero();
     }
 

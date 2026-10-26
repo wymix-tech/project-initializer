@@ -49,6 +49,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.wymix.initializer.core.generator.BuiltInBuildTemplates;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -477,6 +478,10 @@ public class StructuredDraftService {
     public DraftSaveResult deleteTemplate(String name, String operator, Integer ifMatch) {
         requireOperator(operator);
         String key = requireText(name, "name");
+        if (BuiltInBuildTemplates.isBuiltIn(key)) {
+            throw new BusinessException(ErrorCode.CONFIG_VALIDATION_FAILED,
+                    "内置构建脚本模板不允许删除，如需还原请使用恢复内置: " + key);
+        }
         List<TemplateDetail> existing = repository.listDraftTemplates().stream()
                 .map(r -> new TemplateDetail(r.getName(), r.getContent(), r.getUpdatedAt(), r.getSort()))
                 .toList();
@@ -487,6 +492,44 @@ public class StructuredDraftService {
             throw new BusinessException(ErrorCode.CONFIG_DRAFT_NOT_FOUND, "模板草稿不存在: " + key);
         }
         return writeTemplates(remaining, ifMatch, operator);
+    }
+
+    /**
+     * 恢复内置构建脚本模板：把同名草稿条目重写为平台内置内容（名称不存在时追加）。
+     *
+     * @param name     内置模板名（pom.xml.ftl / build.gradle.ftl / settings.gradle.ftl）
+     * @param operator 操作人
+     * @param ifMatch  乐观锁期望版本
+     * @return 保存结果
+     * @throws BusinessException 名称非内置（1002）或乐观锁冲突（4003）
+     */
+    @Transactional
+    public DraftSaveResult restoreTemplate(String name, String operator, Integer ifMatch) {
+        requireOperator(operator);
+        String key = requireText(name, "name");
+        if (!BuiltInBuildTemplates.isBuiltIn(key)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "非内置构建脚本模板，不支持恢复: " + key);
+        }
+        String content = BuiltInBuildTemplates.contentOf(key);
+        requireTemplateLength(key, content);
+        List<TemplateDetail> existing = repository.listDraftTemplates().stream()
+                .map(r -> new TemplateDetail(r.getName(), r.getContent(), r.getUpdatedAt(), r.getSort()))
+                .toList();
+        List<TemplateDetail> merged = new ArrayList<>();
+        boolean replaced = false;
+        for (TemplateDetail item : existing) {
+            if (item.name().equals(key)) {
+                merged.add(new TemplateDetail(key, content, Instant.now(), item.sort()));
+                replaced = true;
+            } else {
+                merged.add(item);
+            }
+        }
+        if (!replaced) {
+            int nextSort = merged.stream().mapToInt(t -> sortKey(t.sort())).max().orElse(-1) + 1;
+            merged.add(new TemplateDetail(key, content, Instant.now(), nextSort));
+        }
+        return writeTemplates(merged, ifMatch, operator);
     }
 
     // ==================== 内部：写入 ====================
