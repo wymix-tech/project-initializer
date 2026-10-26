@@ -138,7 +138,7 @@ public class StructuredDraftService {
                         !Boolean.FALSE.equals(r.getOfficial()),
                         javaRefs.getOrDefault(r.getId(), List.of()),
                         starterRefs.getOrDefault(r.getId(), List.of()),
-                        frameworkParentOf(r), r.getSort()))
+                        frameworkParentOf(r), r.getSort(), r.getSbVersion()))
                 .toList();
         return new MetadataView(javaVersions, bootVersions);
     }
@@ -193,6 +193,7 @@ public class StructuredDraftService {
             row.setLabel(dto.label() == null || dto.label().isBlank() ? "Spring Boot " + id : dto.label());
             row.setOfficial(!Boolean.FALSE.equals(dto.official()));
             applyFrameworkParent(row, dto.frameworkParent());
+            row.setSbVersion(blankToNull(dto.springBootVersion()));
             row.setSort(dto.sort() == null ? sort : dto.sort());
             sort++;
             snapshot.bootVersions().add(row);

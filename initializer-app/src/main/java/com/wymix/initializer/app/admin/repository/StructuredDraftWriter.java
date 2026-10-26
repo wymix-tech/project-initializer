@@ -158,6 +158,7 @@ public class StructuredDraftWriter {
                 row.setFpArtifact(boot.frameworkParent().artifactId());
                 row.setFpVersion(boot.frameworkParent().version());
             }
+            row.setSbVersion(boot.springBootVersion());
             row.setSort(sort++);
             parents.bootVersions().add(row);
             bootById.put(boot.id(), row);
@@ -235,7 +236,8 @@ public class StructuredDraftWriter {
                     !Boolean.FALSE.equals(map.get("official")),
                     toStringList(map.get("supportedJavaVersions"), "bootVersions[].supportedJavaVersions"),
                     toStringList(map.get("starters"), "bootVersions[].starters"),
-                    parseFrameworkParent(map.get("frameworkParent"))));
+                    parseFrameworkParent(map.get("frameworkParent")),
+                    stringOrNull(map, "springBootVersion")));
         }
         return new MetadataDoc.Parsed(javaRows, bootRows);
     }

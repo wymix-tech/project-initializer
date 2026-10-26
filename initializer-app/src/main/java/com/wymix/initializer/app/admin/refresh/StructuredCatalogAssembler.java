@@ -153,7 +153,7 @@ public class StructuredCatalogAssembler {
                     !Boolean.FALSE.equals(row.getOfficial()),
                     javaRefs.getOrDefault(row.getId(), List.of()),
                     starterRefs.getOrDefault(row.getId(), List.of()),
-                    frameworkParentOf(row)));
+                    frameworkParentOf(row), row.getSbVersion()));
         }
         try {
             return MetadataCatalog.of(javaVersions, bootVersions);

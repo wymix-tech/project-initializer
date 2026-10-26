@@ -52,9 +52,10 @@ final class MetadataDoc {
      * @param supportedJavaVersions 兼容 Java 版本 ID 清单（可能含悬空引用）
      * @param starters              可选 starter 白名单（可能含未登记条目）
      * @param frameworkParent       框架父 POM（可空）
+     * @param springBootVersion     真实 Spring Boot 版本（可空，null 时回退 id）
      */
     record BootRow(String id, String label, boolean official, List<String> supportedJavaVersions,
-                   List<String> starters, Parent frameworkParent) {
+                   List<String> starters, Parent frameworkParent, String springBootVersion) {
 
         BootRow {
             supportedJavaVersions = List.copyOf(supportedJavaVersions);

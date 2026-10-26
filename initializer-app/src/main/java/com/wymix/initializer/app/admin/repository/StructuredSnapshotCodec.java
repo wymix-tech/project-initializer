@@ -145,6 +145,7 @@ public class StructuredSnapshotCodec {
                 row.setFpArtifact(boot.frameworkParent().artifactId());
                 row.setFpVersion(boot.frameworkParent().version());
             }
+            row.setSbVersion(boot.springBootVersion());
             row.setSort(sort++);
             // 保留查询顺序的父行清单（重复 ID 校验以它为准），映射仅用于子行父键定位；
             // 若直接以映射 keys 做重复校验，重复业务 ID 会在建映射时静默折叠而漏检
@@ -561,7 +562,8 @@ public class StructuredSnapshotCodec {
                     !Boolean.FALSE.equals(map.get("official")),
                     toStringList(map.get("supportedJavaVersions"), "bootVersions[].supportedJavaVersions"),
                     toStringList(map.get("starters"), "bootVersions[].starters"),
-                    parseFrameworkParent(map.get("frameworkParent"))));
+                    parseFrameworkParent(map.get("frameworkParent")),
+                    stringOrNull(map, "springBootVersion")));
         }
         return new MetadataDoc.Parsed(javaRows, bootRows);
     }

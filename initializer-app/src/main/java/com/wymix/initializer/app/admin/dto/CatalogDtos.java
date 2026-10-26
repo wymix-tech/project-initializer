@@ -80,11 +80,19 @@ public final class CatalogDtos {
      */
     public record BootVersionDto(String id, String label, Boolean official,
                                  List<String> supportedJavaVersions, List<String> starters,
-                                 FrameworkParentDto frameworkParent, Integer sort) {
+                                 FrameworkParentDto frameworkParent, Integer sort,
+                                 String springBootVersion) {
 
         public BootVersionDto {
             supportedJavaVersions = supportedJavaVersions == null ? List.of() : List.copyOf(supportedJavaVersions);
             starters = starters == null ? List.of() : List.copyOf(starters);
+        }
+
+        /** 兼容构造：未声明 Spring Boot 版本（等价 {@code springBootVersion = null}，回退版本 ID）。 */
+        public BootVersionDto(String id, String label, Boolean official,
+                              List<String> supportedJavaVersions, List<String> starters,
+                              FrameworkParentDto frameworkParent, Integer sort) {
+            this(id, label, official, supportedJavaVersions, starters, frameworkParent, sort, null);
         }
     }
 

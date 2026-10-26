@@ -42,8 +42,19 @@ public class CfgBootVersionEntity {
     /** 框架父 POM version（可空，支持 ${revision} 等占位符） */
     private String fpVersion;
 
+    /** 真实 Spring Boot 版本（可空，null 时回退 versionId）；版本 ID 可能是内部框架版本号 */
+    private String sbVersion;
+
     /** 同 release 内展示顺序（升序） */
     private Integer sort;
+
+    public String getSbVersion() {
+        return sbVersion;
+    }
+
+    public void setSbVersion(String sbVersion) {
+        this.sbVersion = sbVersion;
+    }
 
     public Long getId() {
         return id;
