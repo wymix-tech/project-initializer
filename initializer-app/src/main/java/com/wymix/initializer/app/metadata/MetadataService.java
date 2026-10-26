@@ -145,10 +145,13 @@ public class MetadataService {
     }
 
     /** Boot 版本 DTO。 */
-    public record BootVersionDto(String id, String label, boolean official) {
+    public record BootVersionDto(String id, String label, boolean official, List<String> supportedBuildTools) {
+        public BootVersionDto(String id, String label, boolean official) {
+            this(id, label, official, List.of("maven", "gradle"));
+        }
 
         static BootVersionDto from(BootVersion bv) {
-            return new BootVersionDto(bv.id(), bv.label(), bv.official());
+            return new BootVersionDto(bv.id(), bv.label(), bv.official(), bv.supportedBuildTools());
         }
     }
 

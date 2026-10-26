@@ -9,6 +9,7 @@ const view = ref<'wizard' | 'admin'>('wizard')
 </script>
 
 <template>
+  <a class="skip-link" href="#main-content">跳至主要内容</a>
   <div class="app" :class="{ 'app-wide': view === 'admin' }">
     <header class="app-header">
       <div class="header-inner">
@@ -47,13 +48,14 @@ const view = ref<'wizard' | 'admin'>('wizard')
               stroke-linejoin="round"
             />
           </svg>
-          <span class="brand-name">项目初始化向导</span>
+          <div><span class="brand-name">项目初始化向导</span><span class="brand-caption">PROJECT INITIALIZER</span></div>
         </div>
-        <nav class="app-nav">
+        <nav class="app-nav" aria-label="主导航">
           <button
             type="button"
             class="nav-btn"
             :class="{ active: view === 'wizard' }"
+            :aria-current="view === 'wizard' ? 'page' : undefined"
             @click="view = 'wizard'"
           >
             项目生成
@@ -62,6 +64,7 @@ const view = ref<'wizard' | 'admin'>('wizard')
             type="button"
             class="nav-btn"
             :class="{ active: view === 'admin' }"
+            :aria-current="view === 'admin' ? 'page' : undefined"
             @click="view = 'admin'"
           >
             管理后台
@@ -69,7 +72,7 @@ const view = ref<'wizard' | 'admin'>('wizard')
         </nav>
       </div>
     </header>
-    <main class="app-main">
+    <main id="main-content" class="app-main" tabindex="-1">
       <WizardForm v-if="view === 'wizard'" />
       <AdminPanel v-else />
     </main>
@@ -79,50 +82,40 @@ const view = ref<'wizard' | 'admin'>('wizard')
 
 <style>
 :root {
-  font-family: -apple-system, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
-  color: #1b1f23;
-  background: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #21342e; background: #f4f7f5; font-synthesis: none;
+  --accent: #167653; --accent-soft: #edf7f1; --line: #dee7e1; --muted: #65776e;
 }
 * { box-sizing: border-box; margin: 0; }
-body { min-height: 100vh; background: #fff; }
-.app {
-  max-width: 100%;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
+html { scroll-padding-bottom: 160px; }
+body { min-width: 320px; min-height: 100vh; }
+button, input, select, textarea { font: inherit; }
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button { touch-action: manipulation; }
+button:not(:disabled), a, input, select, textarea { transition: background-color .16s, border-color .16s, box-shadow .16s; }
+:focus-visible { outline: 3px solid #3a9a77; outline-offset: 3px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #3a9a77; outline-offset: 2px; }
+input[type=checkbox], input[type=radio] { accent-color: var(--accent); width: 16px; height: 16px; }
+a { color: var(--accent); text-underline-offset: 3px; }
+.skip-link { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.skip-link:focus { position: fixed; top: 12px; left: 16px; width: auto; height: auto; padding: 12px; clip-path: none; background: white; border-radius: 8px; z-index: 1100; }
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+.app-header { background: #fff; border-bottom: 1px solid var(--line); }
+.header-inner { max-width: 1440px; width: 100%; margin: 0 auto; padding: 0 40px; min-height: 80px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-mark { display: block; width: 42px; height: 42px; }
+.brand-name { display: block; font-size: 17px; font-weight: 700; letter-spacing: .3px; }
+.brand-caption { display: block; margin-top: 4px; font-size: 10px; letter-spacing: 1.8px; color: var(--muted); }
+.app-nav { display: flex; gap: 4px; background: #f1f5f2; padding: 5px; border-radius: 12px; }
+.nav-btn { padding: 10px 18px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; }
+.nav-btn:hover { color: var(--accent); background: #e6eee8; }
+.nav-btn.active { background: white; color: var(--accent); font-weight: 600; border-color: var(--line); box-shadow: 0 2px 4px #193c2310; }
+.app-main { width: 100%; max-width: 1440px; margin: 0 auto; flex: 1; padding: 36px 40px; }
+@media (max-width: 600px) {
+  .header-inner { padding: 14px 20px; flex-wrap: wrap; }
+  .app-nav { width: 100%; }
+  .nav-btn { flex: 1; }
+  .app-main { padding: 24px 16px; }
 }
-.app-header {
-  background: #1b1f23;
-}
-.header-inner {
-  max-width: inherit;
-  margin: 0 auto;
-  padding: 0 16px;
-  height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.brand { display: flex; align-items: center; gap: 10px; color: #fff; }
-.brand-mark { display: block; border-radius: 5px; }
-.brand-name { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
-.app-nav { display: flex; gap: 4px; }
-.nav-btn {
-  padding: 8px 14px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.72);
-  cursor: pointer;
-  font-size: 14px;
-}
-.nav-btn:hover { color: #fff; }
-.nav-btn.active { color: #6db33f; border-bottom-color: #6db33f; font-weight: 600; }
-.app-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding: 32px 16px 24px;
-}
-.app-main > * { flex: 1; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 </style>

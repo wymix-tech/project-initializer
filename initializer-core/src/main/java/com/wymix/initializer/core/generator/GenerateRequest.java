@@ -33,6 +33,7 @@ public record GenerateRequest(
      */
     public GenerateRequest {
         starters = starters == null ? List.of() : List.copyOf(starters);
+        buildTool = buildTool == null ? BuildTool.defaultTool() : buildTool;
     }
 
     /**

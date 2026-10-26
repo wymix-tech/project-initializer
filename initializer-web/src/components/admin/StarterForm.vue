@@ -256,7 +256,7 @@ async function save(): Promise<void> {
     () =>
       adminStructuredApi.putStarters(
         props.session.token.value,
-        { starters: starters.value },
+        { starters: starters.value, operator: props.session.operator.value },
         version.value,
       ),
     'starter 清单草稿已保存',
@@ -318,7 +318,7 @@ defineExpose({ load })
 
     <p v-if="summary" class="summary">{{ summary }}</p>
 
-    <StarterConfigWizard v-if="mode === 'wizard'" :token="session.token.value" @saved="load" />
+    <StarterConfigWizard v-if="mode === 'wizard'" :token="session.token.value" :operator="session.operator.value" @saved="load" />
 
     <template v-else>
       <p v-if="loading" class="empty">载入中…</p>

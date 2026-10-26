@@ -68,6 +68,11 @@ function queryString(params: Record<string, string>): string {
   return new URLSearchParams(params).toString()
 }
 
+/** Nested template names use query parameters; encoded slashes in paths are rejected by servlet containers. */
+function templateResource(name: string): string {
+  return name.includes('/') ? `/api/admin/template?${queryString({ name })}` : `/api/admin/templates/${encodeURIComponent(name)}`
+}
+
 /** 元数据与生成相关接口封装。 */
 export const api = {
   /** Java 版本清单（含推荐 Boot 版本）。 */
@@ -190,11 +195,11 @@ export const adminApi = {
   },
 
   /** 发布：全量校验 → 快照原子切换。校验失败抛 ApiError（4002 + 明细）。 */
-  publish(token: string): Promise<AdminPublishResult> {
+  publish(token: string, operator = 'admin', remark: string | null = null): Promise<AdminPublishResult> {
     return fetch('/api/admin/config/publish', {
       method: 'POST',
       headers: adminHeaders(token),
-      body: JSON.stringify({ operator: 'admin' }),
+      body: JSON.stringify({ operator, remark }),
     }).then(handleResponse<AdminPublishResult>)
   },
 
@@ -206,11 +211,11 @@ export const adminApi = {
   },
 
   /** 回滚到指定发布（重新走完整校验通道）。 */
-  rollback(token: string, releaseId: number): Promise<AdminPublishResult> {
+  rollback(token: string, releaseId: number, operator = 'admin'): Promise<AdminPublishResult> {
     return fetch(`/api/admin/releases/${releaseId}/rollback`, {
       method: 'POST',
       headers: adminHeaders(token),
-      body: JSON.stringify({ operator: 'admin' }),
+      body: JSON.stringify({ operator }),
     }).then(handleResponse<AdminPublishResult>)
   },
 
@@ -221,7 +226,7 @@ export const adminApi = {
     )
   },
 
-  /** 手动触发制品库同步（M3.3）：拉取 → 合并 → 同步层草稿重建 → 热生效。 */
+  /** 手动同步只更新草稿，发布后生效。 */
   sync(token: string, operator = 'admin'): Promise<AdminSyncOutcome> {
     return fetch('/api/admin/sync', {
       method: 'POST',
@@ -265,7 +270,7 @@ export const adminStructuredApi = {
   },
 
   /** 整体保存元数据草稿（乐观锁：携带 GET 返回的 version）。 */
-  putMetadata(token: string, req: Omit<MetadataUpsertRequest, 'operator'>, version: number | null): Promise<DraftSaveResult> {
+  putMetadata(token: string, req: Omit<MetadataUpsertRequest, 'operator'> & { operator?: string }, version: number | null): Promise<DraftSaveResult> {
     return putStructured(token, '/api/admin/metadata', req, version)
   },
 
@@ -277,7 +282,7 @@ export const adminStructuredApi = {
   },
 
   /** 整体保存手工 starter 清单草稿（只写 source = MANUAL 行）。 */
-  putStarters(token: string, req: Omit<StarterCatalogUpsertRequest, 'operator'>, version: number | null): Promise<DraftSaveResult> {
+  putStarters(token: string, req: Omit<StarterCatalogUpsertRequest, 'operator'> & { operator?: string }, version: number | null): Promise<DraftSaveResult> {
     return putStructured(token, '/api/admin/starters', req, version)
   },
 
@@ -289,7 +294,7 @@ export const adminStructuredApi = {
   },
 
   /** 整体保存冲突规则草稿。 */
-  putConflictRules(token: string, req: Omit<ConflictRuleUpsertRequest, 'operator'>, version: number | null): Promise<DraftSaveResult> {
+  putConflictRules(token: string, req: Omit<ConflictRuleUpsertRequest, 'operator'> & { operator?: string }, version: number | null): Promise<DraftSaveResult> {
     return putStructured(token, '/api/admin/conflict-rules', req, version)
   },
 
@@ -302,7 +307,7 @@ export const adminStructuredApi = {
 
   /** 模板详情（含全文，按需单独取）。 */
   getTemplate(token: string, name: string): Promise<TemplateDetail> {
-    return fetch(`/api/admin/templates/${encodeURIComponent(name)}`, {
+    return fetch(templateResource(name), {
       headers: adminHeaders(token),
     }).then(handleResponse<TemplateDetail>)
   },
@@ -318,14 +323,14 @@ export const adminStructuredApi = {
   ): Promise<DraftSaveResult> {
     return putStructured(
       token,
-      `/api/admin/templates/${encodeURIComponent(name)}`,
+      templateResource(name),
       { name, content, operator, sort },
       version,
     )
   },
 
   /** 模板集整体替换（全量）。 */
-  putTemplates(token: string, req: Omit<TemplateCatalogUpsertRequest, 'operator'>, version: number | null): Promise<DraftSaveResult> {
+  putTemplates(token: string, req: Omit<TemplateCatalogUpsertRequest, 'operator'> & { operator?: string }, version: number | null): Promise<DraftSaveResult> {
     return putStructured(token, '/api/admin/templates', req, version)
   },
 
@@ -339,7 +344,7 @@ export const adminStructuredApi = {
     const headers = adminHeaders(token)
     if (version !== null) headers['If-Match'] = String(version)
     const res = await fetch(
-      `/api/admin/templates/${encodeURIComponent(name)}?${queryString({ operator })}`,
+      `${templateResource(name)}${name.includes('/') ? '&' : '?'}${queryString({ operator })}`,
       { method: 'DELETE', headers },
     )
     return handleStructured<DraftSaveResult>(res)
@@ -365,7 +370,7 @@ async function putStructured<T>(
   const res = await fetch(url, {
     method: 'PUT',
     headers,
-    body: JSON.stringify({ ...(body as Record<string, unknown>), operator: 'admin' }),
+    body: JSON.stringify({ operator: 'admin', ...(body as Record<string, unknown>) }),
   })
   return handleStructured<T>(res)
 }
@@ -387,9 +392,25 @@ async function handleStructured<T>(res: Response): Promise<T> {
 
 /** 归档导入导出接口（T4 契约）。 */
 export const adminArchiveApi = {
+  /** 解析归档并展示基于当前版本的差异；不修改草稿。 */
+  async previewImport(token: string, file: File): Promise<import('@/types/admin').ImportPreview> {
+    const form = new FormData()
+    form.append('file', file)
+    return fetch('/api/admin/config/import/preview', {
+      method: 'POST', headers: { [ADMIN_TOKEN_HEADER]: token }, body: form,
+    }).then(handleStructured<import('@/types/admin').ImportPreview>)
+  },
+
+  /** 应用已预览归档；版本变化或预览过期时服务端拒绝。 */
+  async applyImport(token: string, previewId: string, operator: string): Promise<ImportView> {
+    return fetch('/api/admin/config/import/apply', {
+      method: 'POST', headers: adminHeaders(token), body: JSON.stringify({ previewId, operator }),
+    }).then(handleStructured<ImportView>)
+  },
+
   /** 导出当前草稿为 ZIP 并触发浏览器下载。 */
-  async exportArchive(token: string): Promise<string> {
-    const res = await fetch('/api/admin/config/export', { headers: { [ADMIN_TOKEN_HEADER]: token } })
+  async exportArchive(token: string, operator = 'admin'): Promise<string> {
+    const res = await fetch(`/api/admin/config/export?${queryString({ operator })}`, { headers: { [ADMIN_TOKEN_HEADER]: token } })
     if (!res.ok) {
       let errorResponse: ErrorResponse = adminErrorFallback(res.status)
       try {

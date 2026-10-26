@@ -22,6 +22,7 @@ function pick(id: string): void {
         :key="jv.id"
         type="button"
         class="option"
+        :aria-pressed="wizard.selectedJava === jv.id"
         :class="{ selected: wizard.selectedJava === jv.id }"
         :disabled="jv.deprecated"
         @click="pick(jv.id)"
@@ -39,38 +40,18 @@ function pick(id: string): void {
 </template>
 
 <style scoped>
-.section-title { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
-.option-row { display: flex; flex-wrap: wrap; gap: 4px 20px; }
-.option {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 0;
-  border: none;
-  background: none;
-  font-size: 14px;
-  color: #1b1f23;
-  cursor: pointer;
-}
-.option-dot {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 1px solid #9a9a9a;
-  position: relative;
-  flex-shrink: 0;
-}
-.option.selected .option-dot { border-color: #6db33f; }
-.option.selected .option-dot::after {
-  content: '';
-  position: absolute;
-  inset: 3px;
-  border-radius: 50%;
-  background: #6db33f;
-}
-.option.selected .option-label { color: #4e8a2c; font-weight: 600; }
-.option:disabled { opacity: 0.5; cursor: not-allowed; }
-.option-badge { color: #9a6700; font-size: 12px; }
-.option-hint { color: #6a737d; font-size: 12px; }
-.empty { color: #6a737d; font-size: 14px; }
+.section-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.section-sub { display: inline-block; font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 8px; }
+.option-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.option { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: white; font-size: 13px; color: #354a3f; cursor: pointer; text-align: left; min-height: 42px; }
+.option:hover:not(:disabled) { border-color: #71aa8e; background: #f7faf8; }
+.option.selected { background: var(--accent-soft); border-color: #318662; color: var(--accent); }
+.option-dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #a4b5aa; position: relative; flex-shrink: 0; }
+.option.selected .option-dot { border-color: var(--accent); }
+.option.selected .option-dot::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--accent); }
+.option.selected .option-label { font-weight: 600; }
+.option:disabled { opacity: .5; cursor: not-allowed; }
+.option-badge { font-size: 10px; padding: 1px 5px; background: #e5efe7; color: #476c52; border-radius: 4px; }
+.option-hint { color: var(--muted); font-size: 11px; }
+.empty { color: var(--muted); font-size: 13px; line-height: 1.7; padding: 8px 0; }
 </style>

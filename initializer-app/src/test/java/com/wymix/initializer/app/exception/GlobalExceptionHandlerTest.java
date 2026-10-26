@@ -63,4 +63,16 @@ class GlobalExceptionHandlerTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
         assertThat(resp.getBody().message()).doesNotContain("boom");
     }
+    @Test
+    void unsupportedMethodReturns405AndAllowHeader() {
+        var response = handler.handleUnsupportedMethod(
+                new org.springframework.web.HttpRequestMethodNotSupportedException("GET", java.util.List.of("POST")));
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
+        assertThat(response.getHeaders().getAllow()).containsExactly(org.springframework.http.HttpMethod.POST);
+        assertThat(response.getBody().code()).isEqualTo(ErrorCode.INVALID_REQUEST.getCode());
+        var unknownAllowed = handler.handleUnsupportedMethod(
+                new org.springframework.web.HttpRequestMethodNotSupportedException("DELETE"));
+        assertThat(unknownAllowed.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
+    }
+
 }

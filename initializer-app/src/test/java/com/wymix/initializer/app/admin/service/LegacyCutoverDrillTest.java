@@ -150,6 +150,8 @@ class LegacyCutoverDrillTest {
                 .anyMatch(audit -> LegacyYamlMigration.ACTION_MIGRATE.equals(audit.getAction()));
 
         // ---- 3. 迁移后发布一版 = 回滚基线 ----
+        configService.saveDraft(ConfigKind.TEMPLATE,
+                com.wymix.initializer.app.generator.TestTemplates.templateYaml(), null, "ops");
         ConfigService.PublishResult baseline = configService.publish("ops", "迁移后首版");
         long baselineId = baseline.releaseId();
         assertThat(baselineId).isPositive();
@@ -185,8 +187,11 @@ class LegacyCutoverDrillTest {
     @Test
     void drill_rollbackBaselineIsPostMigrationRelease() throws Exception {
         insertLegacy("METADATA", METADATA_YAML);
+        insertLegacy("STARTER", STARTER_YAML);
         migration.migrateFromLegacyDraftTable("ops");
 
+        configService.saveDraft(ConfigKind.TEMPLATE,
+                com.wymix.initializer.app.generator.TestTemplates.templateYaml(), null, "ops");
         ConfigService.PublishResult baseline = configService.publish("ops", "基线");
         List<ConfigReleaseEntity> releases = configService.listReleases();
         assertThat(releases).extracting(ConfigReleaseEntity::getId).contains(baseline.releaseId());

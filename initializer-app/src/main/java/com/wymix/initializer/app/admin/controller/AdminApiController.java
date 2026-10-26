@@ -246,6 +246,44 @@ public class AdminApiController {
         return structuredDraftService.deleteTemplate(name, operator, ifMatch);
     }
 
+    /**
+     * 按查询参数读取模板，支持包含目录分隔符的模板名，避免容器拒绝编码斜杠。
+     * @param name 模板相对路径
+     * @return 模板详情
+     */
+    @GetMapping("/template")
+    public TemplateDetail getTemplateByName(@RequestParam("name") String name) {
+        return getTemplate(name);
+    }
+
+    /**
+     * 按查询参数保存模板；与原路径接口共享校验、乐观锁和审计。
+     * @param name 模板相对路径
+     * @param ifMatch 草稿版本
+     * @param request 模板内容与操作人
+     * @return 保存结果
+     */
+    @PutMapping("/template")
+    public DraftSaveResult putTemplateByName(@RequestParam("name") String name,
+            @RequestHeader(value = IF_MATCH_HEADER, required = false) Integer ifMatch,
+            @Valid @RequestBody TemplateUpsertRequest request) {
+        return putTemplate(name, ifMatch, request);
+    }
+
+    /**
+     * 按查询参数删除模板；保留原路径接口兼容既有调用方。
+     * @param name 模板相对路径
+     * @param ifMatch 草稿版本
+     * @param operator 操作人
+     * @return 保存结果
+     */
+    @DeleteMapping("/template")
+    public DraftSaveResult deleteTemplateByName(@RequestParam("name") String name,
+            @RequestHeader(value = IF_MATCH_HEADER, required = false) Integer ifMatch,
+            @RequestParam("operator") String operator) {
+        return deleteTemplate(name, ifMatch, operator);
+    }
+
     // ==================== 导入导出（T4） ====================
 
     /**
@@ -258,8 +296,8 @@ public class AdminApiController {
      * @return ZIP 下载响应（附件文件名 {@code initializer-config.zip}）
      */
     @GetMapping("/config/export")
-    public ResponseEntity<Resource> exportConfig() {
-        ConfigImportExportService.ExportResult result = importExportService.export("admin");
+    public ResponseEntity<Resource> exportConfig(@RequestParam(value = "operator", defaultValue = "admin") String operator) {
+        ConfigImportExportService.ExportResult result = importExportService.export(operator);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + result.fileName() + "\"")
                 .contentType(MediaType.parseMediaType("application/zip"))
@@ -287,6 +325,40 @@ public class AdminApiController {
             result = importExportService.importArchive(in, operator, ifMatch);
         }
         return ImportView.from(result);
+    }
+
+    /**
+     * 解析归档并预览差异，不修改草稿。
+     * @param file 上传的 ZIP
+     * @return 绑定版本向量的预览
+     * @throws IOException 上传流读取失败
+     */
+    @PostMapping(value = "/config/import/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ConfigImportExportService.ImportPreview previewImport(@RequestPart(IMPORT_FILE_FIELD) MultipartFile file)
+            throws IOException {
+        try (var in = file.getInputStream()) {
+            return importExportService.previewImport(in);
+        }
+    }
+
+    /** 只应用指定预览，操作人是填写信息，不作为认证身份。 */
+    public record ApplyImportRequest(@jakarta.validation.constraints.NotBlank String previewId,
+                                     @jakarta.validation.constraints.NotBlank String operator) { }
+
+    /** @return 当前草稿的引用与样例试渲染报告，不包含外部构建结果 */
+    @PostMapping("/config/validate")
+    public ConfigService.ValidationReport validateDraft() {
+        return configService.validateDraft();
+    }
+
+    /**
+     * 确认应用预览；草稿基线变化或预览过期时拒绝。
+     * @param request 预览标识与操作人
+     * @return 导入结果
+     */
+    @PostMapping("/config/import/apply")
+    public ImportView applyImport(@Valid @RequestBody ApplyImportRequest request) {
+        return ImportView.from(importExportService.applyPreview(request.previewId(), request.operator()));
     }
 
     // ==================== 存量迁移（T8） ====================
@@ -403,17 +475,17 @@ public class AdminApiController {
     /** 草稿保存请求体（YAML 契约，T1 过渡）。 */
     public record SaveDraftRequest(
             @NotNull(message = "contentYaml 不能为空") String contentYaml,
-            @NotNull(message = "operator 不能为空") String operator) {
+            @jakarta.validation.constraints.NotBlank(message = "operator 不能为空") String operator) {
     }
 
     /** 手动同步请求体（M3.3）。 */
     public record SyncRequest(
-            @NotNull(message = "operator 不能为空") String operator) {
+            @jakarta.validation.constraints.NotBlank(message = "operator 不能为空") String operator) {
     }
 
     /** 发布请求体。 */
     public record PublishRequest(
-            @NotNull(message = "operator 不能为空") String operator,
+            @jakarta.validation.constraints.NotBlank(message = "operator 不能为空") String operator,
             String remark) {
     }
 

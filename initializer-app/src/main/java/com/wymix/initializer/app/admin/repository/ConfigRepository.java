@@ -170,7 +170,16 @@ public class ConfigRepository {
      * @param kind 配置种类
      * @return 元信息实体；无记录时返回 {@code null}
      */
+    /** Hold until transaction completion; every draft writer takes this lock before reading versions. */
+    public void lockDraftWorkspace() {
+        draftMetaMapper.lockWorkspace();
+    }
+
     public ConfigDraftMetaEntity findDraftMeta(ConfigKind kind) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
+                && !org.springframework.transaction.support.TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+            lockDraftWorkspace();
+        }
         return draftMetaMapper.selectOne(new LambdaQueryWrapper<ConfigDraftMetaEntity>()
                 .eq(ConfigDraftMetaEntity::getKind, kind.name()));
     }
@@ -354,7 +363,7 @@ public class ConfigRepository {
      * @param targetReleaseId 目标作用域
      * @return 实际写入的行数合计
      */
-    private int insertScope(StructuredSnapshot snapshot, long targetReleaseId) {
+    public int insertScope(StructuredSnapshot snapshot, long targetReleaseId) {
         return insertScope(snapshot, targetReleaseId, false);
     }
 

@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS config_release (
 
 -- 草稿种类级元信息：承载 kind 级乐观锁（替代原 config_draft.content_yaml）
 -- 一 kind 一行；version 为乐观锁版本，结构表行本身不带版本列
+CREATE TABLE IF NOT EXISTS config_workspace_lock (id INT PRIMARY KEY);
+INSERT INTO config_workspace_lock (id)
+SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM config_workspace_lock WHERE id = 1);
+
 CREATE TABLE IF NOT EXISTS config_draft_meta (
     id         BIGINT AUTO_INCREMENT PRIMARY KEY,
     kind       VARCHAR(32) NOT NULL,
@@ -250,11 +254,10 @@ CREATE INDEX IF NOT EXISTS idx_cfg_template_release ON cfg_template (release_id)
 -- T1 补丁：starter 主表补 hidden 列（对应 StarterCatalogEntry.hidden，前端依赖选择列表默认隐藏）
 ALTER TABLE cfg_starter ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
 
--- T4 补丁：starter 唯一约束口径修正
--- 原 uk_cfg_starter(release_id, starter_id) 未包含 source，与「手工 MANUAL / 同步 SYNC 两通道并存」
--- 的语义冲突：同一 release 作用域内，两个通道各有一条同名 starter 是合法状态
--- （「同名手工优先」由发布期 CatalogMerger 的合并保留集保证，而非靠唯一约束互斥）。
--- 改为 (release_id, source, starter_id) 后，两通道可各自持有同名条目，且各通道内部仍禁止重名。
+-- Starter 身份由主键标识；同 ID 可拥有全局条目以及不同 Boot 范围的专用条目。
+-- Boot 范围存于子表，父表的 (release_id, source, starter_id) 唯一约束无法表达范围交集。
+-- 重叠范围由 StructuredDraftService 在工作区锁内检查，发布时由 StarterCatalog 再次校验。
+-- 保留非唯一查询索引；幂等移除旧版本的两种唯一约束，兼容既有数据库升级。
 ALTER TABLE cfg_starter DROP CONSTRAINT IF EXISTS uk_cfg_starter;
-ALTER TABLE cfg_starter ADD CONSTRAINT IF NOT EXISTS uk_cfg_starter_source
-    UNIQUE (release_id, source, starter_id);
+ALTER TABLE cfg_starter DROP CONSTRAINT IF EXISTS uk_cfg_starter_source;
+CREATE INDEX IF NOT EXISTS idx_cfg_starter_identity ON cfg_starter (release_id, source, starter_id);

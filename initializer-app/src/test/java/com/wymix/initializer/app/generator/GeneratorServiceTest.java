@@ -163,4 +163,53 @@ class GeneratorServiceTest {
         // 校验失败时输出流不应被写入（无半成品）
         assertThat(out.size()).isZero();
     }
+    @Test
+    void omittedRequiredStarterStillParticipatesInConflictValidation() {
+        StarterCatalog starters = StarterCatalog.of(List.of(
+                new StarterCatalogEntry("required-a", "tool", Maintainer.INTERNAL, "A",
+                        List.of(new DependencyCoord("com.example", "a", "1")),
+                        new LinkageSpec(null, List.of(), List.of(), List.of()), true, List.of()), webEntry()));
+        MetadataCatalog metadata = MetadataCatalog.of(
+                List.of(new com.wymix.initializer.core.metadata.JavaVersion("17", "Java 17", false, null)),
+                List.of(new com.wymix.initializer.core.metadata.BootVersion("3.2.5", "Boot", true,
+                        List.of("17"), List.of()))).merge(starters);
+        var conflicts = new com.wymix.initializer.core.conflict.ConflictCatalog(List.of(
+                new com.wymix.initializer.core.conflict.ConflictRule("required-vs-web",
+                        com.wymix.initializer.core.conflict.ConflictRule.Type.PAIR,
+                        List.of("required-a", "web"), "不能同时选择")));
+        CatalogSnapshotHolder holder = new CatalogSnapshotHolder();
+        holder.seed(new CatalogSnapshot(metadata, starters, TestTemplates.load(), conflicts));
+        GeneratorService target = new GeneratorService(holder, null, new ValidationService(
+                com.wymix.initializer.core.validation.ValidationRules.load(
+                        getClass().getResourceAsStream("/catalog/validation.yml"))));
+        for (List<String> selection : List.of(List.of("web"), List.of("required-a", "web"))) {
+            var out = new java.io.ByteArrayOutputStream();
+            var req = new GenerateRequest("com.example", "demo", "com.example.demo", "17", "3.2.5", selection);
+            assertThatThrownBy(() -> target.generate(req, out))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.DEPENDENCY_CONFLICT));
+            assertThat(out.size()).isZero();
+        }
+    }
+
+    @Test
+    void generationCapturesOnlyOneSnapshotEvenWhenReleaseChanges() {
+        StarterCatalog starters = webStarterCatalog();
+        MetadataCatalog metadata = MetadataCatalog.of(
+                List.of(new com.wymix.initializer.core.metadata.JavaVersion("17", "Java 17", false, null)),
+                List.of(new com.wymix.initializer.core.metadata.BootVersion("3.2.5", "Boot", true,
+                        List.of("17"), List.of()))).merge(starters);
+        CatalogSnapshot old = new CatalogSnapshot(metadata, starters, TestTemplates.load());
+        CatalogSnapshot newer = new CatalogSnapshot(metadata, starters, java.util.Map.of());
+        CatalogSnapshotHolder holder = org.mockito.Mockito.mock(CatalogSnapshotHolder.class);
+        org.mockito.Mockito.when(holder.current()).thenReturn(old, newer);
+        GeneratorService target = new GeneratorService(holder, null, new ValidationService(
+                com.wymix.initializer.core.validation.ValidationRules.load(
+                        getClass().getResourceAsStream("/catalog/validation.yml"))));
+        var out = new java.io.ByteArrayOutputStream();
+        target.generate(request(), out);
+        assertThat(out.size()).isPositive();
+        org.mockito.Mockito.verify(holder, org.mockito.Mockito.times(1)).current();
+    }
+
 }

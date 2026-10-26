@@ -481,4 +481,20 @@ class AdminApiControllerIntegrationTest {
             throw new IllegalStateException(e);
         }
     }
+    @Test
+    void nestedTemplateCanBeReadSavedAndDeletedThroughQueryName() {
+        String path = "/api/admin/template?name=nested/redis.yml";
+        var saved = putStructured(path,
+                "{\"name\":\"nested/redis.yml\",\"content\":\"host: ${REDIS_HOST:localhost}\",\"operator\":\"tester\"}", null);
+        assertThat(saved.getStatusCode().value()).isEqualTo(200);
+        var read = rest.exchange(path, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(read.getStatusCode().value()).isEqualTo(200);
+        assertThat(read.getBody()).contains("${REDIS_HOST:localhost}").contains("nested/redis.yml");
+        var deleted = rest.exchange(path + "&operator=tester", HttpMethod.DELETE,
+                new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(deleted.getStatusCode().value()).isEqualTo(200);
+        var list = rest.exchange("/api/admin/templates", HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(list.getBody()).doesNotContain("nested/redis.yml");
+    }
+
 }

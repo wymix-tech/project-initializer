@@ -17,7 +17,7 @@ import ImportExportPanel from '@/components/admin/ImportExportPanel.vue'
  * 所有分区共享同一 {@link useAdminSession}（token / 登录态 / 忙碌态 / 提示条），
  * 数据全部走 T3 结构化契约与 T4 归档契约，**不再拼 YAML 文本**。
  *
- * <p>视觉沿用小清新企业风：深色顶栏（`App.vue`）+ Spring 绿 `#6DB33F` 选中态；
+ * <p>视觉使用统一的浅色绿色主题，与项目生成页共享颜色与焦点样式；
  * 校验错误明细（4002 / 4008 / 4009）以提示条整段呈现，不弹窗打断。
  *
  * <p><b>发布即全量生效</b>：各分区「保存草稿」只写 `release_id = 0` 草稿区，
@@ -38,7 +38,7 @@ const sections: { key: AdminSection; label: string; icon: string; desc: string }
 const active = ref<AdminSection>('publish')
 
 /** 操作人（写入草稿与审计；当前为固定值，后续可做成可配置项）。 */
-const operator = ref('admin')
+const operator = session.operator
 
 /**
  * 登录：先验证 token 有效性再进入工作台。
@@ -73,24 +73,26 @@ onMounted(() => {
 
 <template>
   <section class="admin-panel">
-    <div v-if="!session.loggedIn.value" class="admin-login">
-      <h2>管理后台</h2>
+    <header class="admin-intro"><p class="eyebrow">CONFIGURATION WORKSPACE</p><h1>配置工作台</h1><p>从依赖到模板，集中维护项目生成规则。</p></header>
+    <form v-if="!session.loggedIn.value" class="admin-login" @submit.prevent="login">
+      <span class="login-symbol" aria-hidden="true">PI</span><h2>登录管理后台</h2>
       <p class="login-hint">
         表单化维护元数据 / starter 清单 / 冲突规则 / 模板，草稿保存后可一键发布热生效，
         也支持 ZIP 归档导入导出。
       </p>
+      <label class="token-label" for="admin-token">管理令牌</label>
       <input
+        id="admin-token"
+        autocomplete="current-password"
         v-model="session.token.value"
         class="admin-token"
         type="password"
         placeholder="管理端 token（X-Admin-Token）"
-        @keyup.enter="login"
       />
       <button
-        type="button"
+        type="submit"
         class="btn btn-primary"
         :disabled="session.busy.value || session.token.value === ''"
-        @click="login"
       >
         登录
       </button>
@@ -102,7 +104,7 @@ onMounted(() => {
       >
         {{ session.message.value }}
       </p>
-    </div>
+    </form>
 
     <div v-else class="admin-body">
       <aside class="admin-nav">
@@ -116,6 +118,7 @@ onMounted(() => {
           type="button"
           class="nav-item"
           :class="{ active: active === s.key }"
+          :aria-current="active === s.key ? 'page' : undefined"
           @click="go(s.key)"
         >
           <span class="nav-icon" aria-hidden="true">{{ s.icon }}</span>
@@ -157,11 +160,17 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.admin-panel { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 20px 24px; }
+.admin-panel { min-width: 0; }
+.admin-intro { margin-bottom: 28px; }
+.admin-intro h1 { font-size: 28px; margin: 10px 0; }
+.admin-intro > p:last-child { font-size: 14px; color: var(--muted); }
+.eyebrow { color: var(--accent); font-size: 11px; letter-spacing: 1.6px; font-weight: 700; }
+.login-symbol { display: grid; place-items: center; width: 48px; height: 48px; background: var(--accent-soft); color: var(--accent); border-radius: 14px; font-weight: 700; margin-bottom: 12px; }
+.token-label { color: #52675b; font-size: 12px; margin-top: 12px; }
 .admin-panel h2 { font-size: 18px; margin-bottom: 12px; }
-.admin-login { display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
+.admin-login { display: flex; flex-direction: column; gap: 12px; max-width: 480px; margin: 48px auto; padding: 36px; background: white; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 12px 40px #244b3008; }
 .login-hint { color: #57606a; font-size: 13px; line-height: 1.6; }
-.admin-token { padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 14px; }
+.admin-token { padding: 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; width: 100%; }
 
 .admin-body { display: grid; gap: 18px; grid-template-columns: 1fr; }
 @media (min-width: 960px) {
@@ -179,10 +188,10 @@ onMounted(() => {
 .nav-item {
   display: flex; gap: 10px; align-items: flex-start; text-align: left;
   border: 1px solid transparent; background: transparent; border-radius: 6px;
-  padding: 8px 10px; cursor: pointer; font-size: 13px; color: #24292f;
+  padding: 13px 10px; cursor: pointer; font-size: 13px; color: #24292f;
 }
-.nav-item:hover { background: #eaeef2; }
-.nav-item.active { background: #fff; border-color: #6db33f; box-shadow: inset 3px 0 0 #6db33f; }
+.nav-item:hover { background: #eaf1ec; }
+.nav-item.active { background: var(--accent-soft); border-color: #b5d3bf; box-shadow: inset 3px 0 0 var(--accent); color: var(--accent); }
 .nav-icon { font-size: 15px; line-height: 1.4; }
 .nav-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .nav-text strong { font-weight: 600; }
@@ -196,7 +205,9 @@ onMounted(() => {
 .admin-msg-info { background: #ddf4ff; color: #0550ae; }
 .admin-msg-error { background: #ffebe9; color: #cf222e; }
 
-.btn { padding: 6px 12px; border-radius: 6px; border: 1px solid #d0d7de; background: #f6f8fa; cursor: pointer; font-size: 13px; }
+.btn { padding: 11px 16px; border-radius: 8px; border: 1px solid #d0d7de; background: #f6f8fa; cursor: pointer; font-size: 13px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-primary { background: #0969da; border-color: #0969da; color: #fff; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (max-width: 959px) { .admin-nav { position: static; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .nav-brand, .nav-operator { grid-column: 1 / -1; } }
+@media (max-width: 480px) { .admin-login { padding: 24px; margin: 24px auto; } .nav-text em { display: none; } }
 </style>

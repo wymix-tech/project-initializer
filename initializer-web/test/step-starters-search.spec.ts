@@ -76,6 +76,41 @@ describe('StepStarters 搜索与分类（M3.4）', () => {
     expect(wrapper.findAll('.category-tag')).toHaveLength(2)
     expect(wrapper.text()).toContain('web')
     expect(wrapper.text()).toContain('middleware')
+    expect(wrapper.findAll('.starter-label').map(node => node.text())).toEqual(['Spring Web', '内部 Redis'])
+    expect(wrapper.findAll('.starter-id').map(node => node.text())).toEqual(['web', 'xxx-redis'])
+    expect(wrapper.findAll('.starter-desc').map(node => node.text())).toEqual(['Spring MVC', 'Redis 封装'])
+  })
+
+  it('仅看已选保留选择状态，取消最后一项后提示可恢复全部列表', async () => {
+    const wrapper = mountWithPinia(StepStarters)
+    const wizard = useWizardStore()
+    wizard.starters = starters
+    wizard.registerStarters(starters)
+    wizard.toggleStarter('web')
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.selected-filter').trigger('click')
+    expect(wrapper.find('.selected-filter').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.findAll('.starter-label').map(node => node.text())).toEqual(['Spring Web'])
+    await wrapper.find('.starter input').setValue(false)
+    expect(wrapper.find('.starter-empty').text()).toContain('取消「仅看已选」')
+    await wrapper.find('.selected-filter').trigger('click')
+    expect(wrapper.findAll('.starter')).toHaveLength(2)
+    expect(wizard.selectedStarters.size).toBe(0)
+  })
+
+  it('卸载后不再触发待执行的搜索请求', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountWithPinia(StepStarters)
+    const spy = vi.spyOn(useWizardStore(), 'setSearch').mockResolvedValue(undefined)
+    try {
+      await wrapper.find('.starter-search').setValue('redis')
+      wrapper.unmount()
+      await vi.advanceTimersByTimeAsync(350)
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      spy.mockRestore()
+    }
   })
 
   it('输入关键字防抖后触发条件检索', async () => {
@@ -120,11 +155,11 @@ describe('StepStarters 搜索与分类（M3.4）', () => {
     wizard.registerStarters(list)
     await wrapper.vm.$nextTick()
     const labels = () => wrapper.findAll('.starter-label').map((node) => node.text())
-    expect(labels()).toEqual(['app'])
+    expect(labels()).toEqual(['应用'])
     // 选中依赖方后隐藏条目被强制展示
     wizard.toggleStarter('app')
     await wrapper.vm.$nextTick()
-    expect(labels().sort()).toEqual(['app', 'ghost'])
+    expect(labels().sort()).toEqual(['应用', '幽灵依赖'].sort())
   })
 })
 

@@ -85,7 +85,7 @@ public class StructuredSnapshotCodec {
     /** 单条模板 content 字符数上限（与 {@code StructuredDraftService.MAX_TEMPLATE_LENGTH} 同口径）。 */
     public static final int MAX_TEMPLATE_LENGTH = 512 * 1024;
 
-    /** 模板语法校验器（坏模板导入即拒绝，与发布期同源）。 */
+    /** FreeMarker 语法校验器（仅 .ftl；YAML 片段由生成预检解析）。 */
     private final TemplateRenderer templateValidator = new TemplateRenderer();
 
     /**
@@ -203,7 +203,6 @@ public class StructuredSnapshotCodec {
             validateStarterCatalog(entries, source);
         }
         int sort = 0;
-        Map<String, CfgStarterEntity> starterById = new LinkedHashMap<>();
         long placeholderPk = 0L;
         for (StarterCatalogEntry entry : entries) {
             CfgStarterEntity row = new CfgStarterEntity();
@@ -217,11 +216,12 @@ public class StructuredSnapshotCodec {
             row.setConfigPackage(entry.linkages() == null ? null : entry.linkages().configPackage());
             row.setSource(source);
             row.setSort(sort++);
-            starterById.put(entry.id(), row);
+            snapshot.starters().add(row);
         }
         long groupPlaceholderPk = 0L;
+        int entryIndex = 0;
         for (StarterCatalogEntry entry : entries) {
-            CfgStarterEntity starterRow = starterById.get(entry.id());
+            CfgStarterEntity starterRow = snapshot.starters().get(entryIndex++);
             int childSort = 0;
             for (DependencyCoord dep : entry.dependencies()) {
                 CfgStarterDependencyEntity row = new CfgStarterDependencyEntity();
@@ -290,7 +290,6 @@ public class StructuredSnapshotCodec {
                 }
             }
         }
-        snapshot.starters().addAll(starterById.values());
         requireWithinRows(snapshot.rowCount());
         return snapshot;
     }
@@ -381,7 +380,10 @@ public class StructuredSnapshotCodec {
             }
             requireTemplateSize(templateName, templateContent);
             try {
-                templateValidator.validate(templateName, templateContent);
+                // Only .ftl is FreeMarker; YAML fragments may contain Spring runtime placeholders.
+                if (templateName.endsWith(".ftl")) {
+                    templateValidator.validate(templateName, templateContent);
+                }
             } catch (BusinessException e) {
                 throw invalid("模板语法非法: " + templateName + "（" + e.getMessage() + "）", e);
             }
@@ -502,10 +504,12 @@ public class StructuredSnapshotCodec {
      * @throws BusinessException 结构非法（4002）
      */
     private void validateStarterMeta(List<StarterCatalogEntry> entries) {
-        Set<String> ids = new LinkedHashSet<>();
+        StarterScopeIndex identities = new StarterScopeIndex();
         for (StarterCatalogEntry entry : entries) {
-            if (!ids.add(entry.id())) {
-                throw invalid("starter ID 重复: " + entry.id());
+            try {
+                identities.add(entry.id(), entry.bootVersions());
+            } catch (IllegalArgumentException e) {
+                throw invalid(e.getMessage(), e);
             }
             if (entry.category() == null || entry.category().isBlank()) {
                 throw invalid("starter " + entry.id() + " 缺少必需字段: category");

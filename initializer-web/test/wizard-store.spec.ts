@@ -42,6 +42,7 @@ const starters: Starter[] = [
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  mockApi.validate.mockReset().mockResolvedValue({ valid: true, errors: null })
 })
 
 function happyMocks(): void {
@@ -468,5 +469,98 @@ describe('依赖联动与必选（M3.8）', () => {
     wizard.registerStarters([st('app', [['ghost']]), st('ghost', [], { hidden: true })])
     wizard.toggleStarter('app')
     expect(wizard.displayStarters.map((s) => s.id).sort()).toEqual(['app', 'ghost'])
+  })
+})
+
+describe('可靠性评审回归', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((done) => { resolve = done })
+    return { promise, resolve }
+  }
+  it('推导乱序只采纳新输入，手动编辑使在途推导失效', async () => {
+    const old = deferred<{ packageName: string }>()
+    mockApi.derivePackage.mockReturnValueOnce(old.promise).mockResolvedValueOnce({ packageName: 'com.example.new' })
+    const w = useWizardStore()
+    w.meta.group = 'com.example'
+    const pending = w.updateMeta('artifact', 'old')
+    await w.updateMeta('artifact', 'new')
+    old.resolve({ packageName: 'com.example.old' })
+    await pending
+    expect(w.meta.packageName).toBe('com.example.new')
+    const auto = deferred<{ packageName: string }>()
+    mockApi.derivePackage.mockReturnValueOnce(auto.promise)
+    const next = w.updateMeta('artifact', 'third')
+    await w.updateMeta('packageTouched', 'true')
+    await w.updateMeta('packageName', 'com.custom')
+    auto.resolve({ packageName: 'com.example.third' })
+    await next
+    expect(w.meta.packageName).toBe('com.custom')
+  })
+  it('旧搜索不能污染新 Boot 的注册表', async () => {
+    happyMocks()
+    const old = deferred<Starter[]>()
+    const w = useWizardStore()
+    w.selectedBoot = '2.7.18'
+    mockApi.listStarters.mockReturnValueOnce(old.promise)
+    const pending = w.setSearch('old', '')
+    await w.selectBoot('3.2.5')
+    old.resolve([{ ...starters[0], id: 'obsolete' }])
+    await pending
+    expect(w.starters).toEqual(starters)
+    expect(w.starterRegistry.obsolete).toBeUndefined()
+  })
+  it('过期元信息校验不能覆盖新结果', async () => {
+    const old = deferred<ValidationResult>()
+    mockApi.validate.mockReturnValueOnce(old.promise).mockResolvedValueOnce({ valid: true, errors: null })
+    const w = useWizardStore()
+    w.meta.group = 'old'
+    const pending = w.validateMeta()
+    await w.updateMeta('group', 'com.new')
+    await w.validateMeta()
+    old.resolve({ valid: false, errors: { group: '过期错误' } })
+    await pending
+    expect(w.validationErrors).toEqual({})
+  })
+  it('加载、校验、冲突与缺依赖均禁止生成，解除后恢复', async () => {
+    const w = useWizardStore()
+    w.selectedJava = '17'
+    w.selectedBoot = '3.2.5'
+    w.meta = { group: 'com.example', artifact: 'demo', packageName: 'com.example.demo', packageTouched: true, buildTool: 'maven' }
+    expect(w.canGenerate).toBe(true)
+    for (const key of ['loading', 'validating', 'deriving'] as const) {
+      w[key] = true
+      expect(w.canGenerate).toBe(false)
+      w[key] = false
+    }
+    w.starterRegistry = { web: { ...starters[0], requires: [['data-jpa']] } }
+    w.selectedStarters = new Set(['web'])
+    expect(w.canGenerate).toBe(false)
+    w.selectedStarters.add('data-jpa')
+    expect(w.canGenerate).toBe(true)
+    w.conflictRules = [{ id: 'mutex', type: 'pair', starters: ['web', 'data-jpa'], message: '冲突' }]
+    expect(await w.submit()).toBe(false)
+    expect(mockApi.generateProject).not.toHaveBeenCalled()
+  })
+})
+
+describe('生成提交与后台校验并发', () => {
+  it('后台字段校验进行中不会静默取消已经提交的生成请求', async () => {
+    const w = useWizardStore()
+    w.selectedJava = '17'
+    w.selectedBoot = '3.2.5'
+    w.meta = { group: 'com.example', artifact: 'demo', packageName: 'com.example.demo', packageTouched: true, buildTool: 'maven' }
+    let finish!: (result: ValidationResult) => void
+    let background!: (result: ValidationResult) => void
+    mockApi.validate.mockReturnValueOnce(new Promise((done) => { finish = done }))
+      .mockReturnValueOnce(new Promise((done) => { background = done }))
+    mockApi.generateProject.mockResolvedValueOnce(undefined)
+    const submitted = w.submit()
+    const validation = w.validateMeta()
+    finish({ valid: true, errors: null })
+    expect(await submitted).toBe(true)
+    expect(mockApi.generateProject).toHaveBeenCalledTimes(1)
+    background({ valid: true, errors: null })
+    await validation
   })
 })

@@ -127,7 +127,11 @@ class LinkageEndToEndSnapshotTest {
 
         // 2. 构建脚本之外逐文件一致（联动渲染与构建工具无关）
         Map<String, String> mavenCommon = withoutBuildScripts(maven);
+        mavenCommon.remove("README.md");
         Map<String, String> gradleCommon = withoutBuildScripts(gradle);
+        gradleCommon.remove("README.md");
+        assertThat(maven.get("README.md")).contains("mvn spring-boot:run");
+        assertThat(gradle.get("README.md")).contains("gradle bootRun");
         assertThat(mavenCommon).as("除构建脚本外双轨产物文件树应一致")
                 .containsExactlyInAnyOrderEntriesOf(gradleCommon);
     }
