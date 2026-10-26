@@ -53,6 +53,7 @@ function addBoot(): void {
     starters: [],
     frameworkParent: null,
     sort: bootVersions.value.length,
+    springBootVersion: '',
   })
   syncTextDrafts()
 }
@@ -333,6 +334,13 @@ defineExpose({ load })
           <input v-model="bv.frameworkParent.version" type="text" :placeholder="FRAMEWORK_VERSION_PLACEHOLDER" />
         </label>
       </div>
+      <label v-if="bv.frameworkParent" class="field">
+        <span>Spring Boot 版本</span>
+        <input v-model="bv.springBootVersion" type="text" placeholder="3.2.5" />
+        <small class="field-hint">
+          父 POM 版本可能是内部框架版本号；这里填真实的 Spring Boot 版本，Gradle 插件与依赖解析以它为准（留空 = 用版本 ID）
+        </small>
+      </label>
     </div>
     <button type="button" class="btn btn-sm" @click="addBoot">+ 新增 Boot 版本</button>
   </section>

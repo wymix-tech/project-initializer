@@ -49,6 +49,8 @@ export interface BootVersionDto {
   starters: string[]
   /** 框架父 POM（null = 回退官方父 POM） */
   frameworkParent: FrameworkParentDto | null
+  /** 真实 Spring Boot 版本（可空）：Gradle 插件与依赖解析以它为准，留空回退版本 ID */
+  springBootVersion?: string | null
   /** 展示顺序 */
   sort: number | null
 }

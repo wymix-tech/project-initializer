@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS cfg_boot_version (
     CONSTRAINT uk_cfg_boot_version UNIQUE (release_id, version_id)
 );
 CREATE INDEX IF NOT EXISTS idx_cfg_boot_version_release ON cfg_boot_version (release_id);
+-- 真实 Spring Boot 版本：版本 ID 可能是内部框架版本号，Gradle 插件与依赖解析以本列为准
+ALTER TABLE cfg_boot_version ADD COLUMN IF NOT EXISTS sb_version VARCHAR(64);
 
 -- Boot ↔ Java 兼容矩阵（多对多）。
 -- 注意：这里存的是业务 ID（version_id 字符串）而非父行自增主键 ——

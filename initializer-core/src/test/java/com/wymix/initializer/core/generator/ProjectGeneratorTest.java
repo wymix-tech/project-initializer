@@ -373,6 +373,46 @@ class ProjectGeneratorTest {
                 .doesNotContain("mavenBom");
     }
 
+    /** 版本 ID 与真实 Spring Boot 版本不一致的 catalog（内部框架版本线）。 */
+    private static MetadataCatalog frameworkVersionLineCatalog() throws Exception {
+        String yaml = """
+                javaVersions:
+                  - id: "17"
+                    label: "Java 17"
+                    recommendedBootVersion: "3.0.0-SNAPSHOT"
+                bootVersions:
+                  - id: "3.0.0-SNAPSHOT"
+                    label: "内部框架 3.0.0-SNAPSHOT"
+                    official: true
+                    supportedJavaVersions: ["17"]
+                    springBootVersion: "3.2.5"
+                frameworkParent:
+                  groupId: "com.company"
+                  artifactId: "company-framework-parent"
+                  version: "3.0.0-SNAPSHOT"
+                """;
+        return MetadataCatalog.load(
+                new java.io.ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)))
+                .merge(testStarterCatalog());
+    }
+
+    @Test
+    void gradlePluginVersionShouldUseSpringBootVersionNotVersionId() throws Exception {
+        MetadataCatalog catalog = frameworkVersionLineCatalog();
+        ProjectGenerator gen = new ProjectGenerator(catalog, ClasspathTemplates.renderer(), testStarterCatalog());
+
+        byte[] zip = gen.generate(GenerateRequest.of("com.example", "demo-app", "com.example.demo",
+                "17", "3.0.0-SNAPSHOT", List.of("web"), "gradle"));
+        String build = readEntry(zip, "demo-app/build.gradle");
+        // 插件版本取真实 Spring Boot 版本，父 POM 版本只用于 BOM 导入
+        assertThat(build).contains("id 'org.springframework.boot' version '3.2.5'")
+                .contains("mavenBom 'com.company:company-framework-parent:3.0.0-SNAPSHOT'");
+
+        // 未声明 springBootVersion 时回退版本 ID
+        assertThat(readEntry(generator.generate(gradleRequest(List.of("web"))), "demo-app/build.gradle"))
+                .contains("id 'org.springframework.boot' version '3.2.5'");
+    }
+
     @Test
     void gradleRequestShouldKeepLinkagePipelineOutputs() throws Exception {
         // M2.4：构建脚本双轨不影响联动管线——配置类 + yml 合并产物一致

@@ -227,6 +227,9 @@ public class StructuredYamlCodec {
                 parent.put("version", boot.getFpVersion());
                 item.put("frameworkParent", parent);
             }
+            if (boot.getSbVersion() != null && !boot.getSbVersion().isBlank()) {
+                item.put("springBootVersion", boot.getSbVersion());
+            }
             result.add(item);
         }
         return result;

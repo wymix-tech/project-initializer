@@ -119,7 +119,8 @@ final class YamlMetadataParser {
             if (parent == null) {
                 parent = globalFallback;
             }
-            result.add(new BootVersion(id, label, official, javaIds, starters, parent));
+            String springBoot = stringOrNull(map, "springBootVersion");
+            result.add(new BootVersion(id, label, official, javaIds, starters, parent, springBoot));
         }
         return result;
     }

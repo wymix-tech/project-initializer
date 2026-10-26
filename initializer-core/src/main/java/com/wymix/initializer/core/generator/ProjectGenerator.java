@@ -347,6 +347,9 @@ public class ProjectGenerator {
         model.put("parentGroupId", fp.groupId());
         model.put("parentArtifactId", fp.artifactId());
         model.put("parentVersion", fp.version());
+        // Gradle 插件与依赖解析用真实的 Spring Boot 版本（版本 ID 可能是内部框架版本号）
+        BootVersion bootVersion = catalog.bootVersion(request.bootVersion());
+        model.put("springBootVersion", bootVersion.springBootVersion());
         // Gradle 无 parent 概念：自定义框架父 POM 时由 build.gradle 以 dependencyManagement 导入其 BOM，
         // 官方 spring-boot-starter-parent 的版本管理已由 Spring Boot 插件覆盖，无需重复导入
         model.put("customFrameworkParent", !fp.equals(

@@ -295,7 +295,7 @@ public class MetadataCatalog {
                 }
             }
             bootList.add(new BootVersion(bv.id(), bv.label(), bv.official(),
-                    bv.supportedJavaVersions(), starters, bv.frameworkParent()));
+                    bv.supportedJavaVersions(), starters, bv.frameworkParent(), bv.springBootVersion()));
         }
         return new MetadataCatalog(List.copyOf(javaVersions.values()), bootList, defs);
     }
@@ -346,7 +346,7 @@ public class MetadataCatalog {
             // 关联校验：清单条目声明了 bootVersions 但不含本版本 → 本版本不可引用
             starters.removeIf(id -> allCatalogIds.contains(id) && !available.contains(id));
             boots.add(new BootVersion(bv.id(), bv.label(), bv.official(),
-                    bv.supportedJavaVersions(), starters, bv.frameworkParent()));
+                    bv.supportedJavaVersions(), starters, bv.frameworkParent(), bv.springBootVersion()));
         }
         return new MetadataCatalog(List.copyOf(javaVersions.values()), boots, defs);
     }
